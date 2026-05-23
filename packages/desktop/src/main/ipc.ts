@@ -11,6 +11,7 @@ import type {
   TitlebarTheme,
   WindowConfig,
   WslConfig,
+  BharatCodeAuthState,
 } from "../preload/types"
 import { runDesktopMenuAction } from "./desktop-menu-actions"
 import { getStore } from "./store"
@@ -43,6 +44,8 @@ type Deps = {
   setBackgroundColor: (color: string) => void
   exportDebugLogs: () => Promise<string>
   recordFatalRendererError: (error: FatalRendererError) => Promise<void> | void
+  getBharatCodeAuthState: () => Promise<BharatCodeAuthState>
+  signInToBharatCode: () => Promise<BharatCodeAuthState>
 }
 
 export function registerIpcHandlers(deps: Deps) {
@@ -78,6 +81,8 @@ export function registerIpcHandlers(deps: Deps) {
   ipcMain.handle("record-fatal-renderer-error", (_event: IpcMainInvokeEvent, error: FatalRendererError) =>
     deps.recordFatalRendererError(error),
   )
+  ipcMain.handle("get-bharatcode-auth-state", () => deps.getBharatCodeAuthState())
+  ipcMain.handle("sign-in-to-bharatcode", () => deps.signInToBharatCode())
   ipcMain.handle("store-get", (_event: IpcMainInvokeEvent, name: string, key: string) => {
     try {
       const store = getStore(name)

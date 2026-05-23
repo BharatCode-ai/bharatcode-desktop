@@ -1,129 +1,94 @@
-<p align="center">
-  <a href="https://opencode.ai">
-    <picture>
-      <source srcset="packages/console/app/src/asset/logo-ornate-dark.svg" media="(prefers-color-scheme: dark)">
-      <source srcset="packages/console/app/src/asset/logo-ornate-light.svg" media="(prefers-color-scheme: light)">
-      <img src="packages/console/app/src/asset/logo-ornate-light.svg" alt="OpenCode logo">
-    </picture>
-  </a>
-</p>
-<p align="center">The open source AI coding agent.</p>
-<p align="center">
-  <a href="https://opencode.ai/discord"><img alt="Discord" src="https://img.shields.io/discord/1391832426048651334?style=flat-square&label=discord" /></a>
-  <a href="https://www.npmjs.com/package/opencode-ai"><img alt="npm" src="https://img.shields.io/npm/v/opencode-ai?style=flat-square" /></a>
-  <a href="https://github.com/anomalyco/opencode/actions/workflows/publish.yml"><img alt="Build status" src="https://img.shields.io/github/actions/workflow/status/anomalyco/opencode/publish.yml?style=flat-square&branch=dev" /></a>
-</p>
+# BharatCode OpenCode Fork
 
-<p align="center">
-  <a href="README.md">English</a> |
-  <a href="README.zh.md">简体中文</a> |
-  <a href="README.zht.md">繁體中文</a> |
-  <a href="README.ko.md">한국어</a> |
-  <a href="README.de.md">Deutsch</a> |
-  <a href="README.es.md">Español</a> |
-  <a href="README.fr.md">Français</a> |
-  <a href="README.it.md">Italiano</a> |
-  <a href="README.da.md">Dansk</a> |
-  <a href="README.ja.md">日本語</a> |
-  <a href="README.pl.md">Polski</a> |
-  <a href="README.ru.md">Русский</a> |
-  <a href="README.bs.md">Bosanski</a> |
-  <a href="README.ar.md">العربية</a> |
-  <a href="README.no.md">Norsk</a> |
-  <a href="README.br.md">Português (Brasil)</a> |
-  <a href="README.th.md">ไทย</a> |
-  <a href="README.tr.md">Türkçe</a> |
-  <a href="README.uk.md">Українська</a> |
-  <a href="README.bn.md">বাংলা</a> |
-  <a href="README.gr.md">Ελληνικά</a> |
-  <a href="README.vi.md">Tiếng Việt</a>
-</p>
+This private fork builds the BharatCode Desktop app and BharatCode VS Code extension path from OpenCode.
 
-[![OpenCode Terminal UI](packages/web/src/assets/lander/screenshot.png)](https://opencode.ai)
-
----
-
-### Installation
+The beta user path is OAuth-first:
 
 ```bash
-# YOLO
-curl -fsSL https://opencode.ai/install | bash
-
-# Package managers
-npm i -g opencode-ai@latest        # or bun/pnpm/yarn
-scoop install opencode             # Windows
-choco install opencode             # Windows
-brew install anomalyco/tap/opencode # macOS and Linux (recommended, always up to date)
-brew install opencode              # macOS and Linux (official brew formula, updated less)
-sudo pacman -S opencode            # Arch Linux (Stable)
-paru -S opencode-bin               # Arch Linux (Latest from AUR)
-mise use -g opencode               # Any OS
-nix run nixpkgs#opencode           # or github:anomalyco/opencode for latest dev branch
+npm install -g bharatcode@latest
+bharatcode auth login
+bharatcode opencode configure
 ```
 
-> [!TIP]
-> Remove versions older than 0.1.x before installing.
+No user-facing provider API key is required. Model traffic goes through:
 
-### Desktop App (BETA)
+```text
+https://bharatcode.ai/api/model/v1
+```
 
-OpenCode is also available as a desktop application. Download directly from the [releases page](https://github.com/anomalyco/opencode/releases) or [opencode.ai/download](https://opencode.ai/download).
+## Shared OAuth Backend
 
-| Platform              | Download                           |
-| --------------------- | ---------------------------------- |
-| macOS (Apple Silicon) | `opencode-desktop-mac-arm64.dmg`   |
-| macOS (Intel)         | `opencode-desktop-mac-x64.dmg`     |
-| Windows               | `opencode-desktop-windows-x64.exe` |
-| Linux                 | `.deb`, `.rpm`, or `.AppImage`     |
+- Supabase issuer: `https://evgvlcaxfpwupaiwzqqm.supabase.co/auth/v1`
+- Native client ID: `4cad332a-232f-4ef2-9363-12fea4420635`
+- Desktop deep link: `bharatcode://auth/callback`
+- CLI loopback callback: `http://127.0.0.1:27182/callback`
+- VS Code callback reserved for future direct callback flow: `vscode://bharatcode.bharatcode/auth/callback`
+
+The current MVP delegates token storage and OpenCode config generation to the BharatCode CLI so Desktop and VS Code share the same auth implementation.
+
+## Desktop Development
 
 ```bash
-# macOS (Homebrew)
-brew install --cask opencode-desktop
-# Windows (Scoop)
-scoop bucket add extras; scoop install extras/opencode-desktop
+bun install
+bun --cwd packages/desktop dev
 ```
 
-#### Installation Directory
-
-The install script respects the following priority order for the installation path:
-
-1. `$OPENCODE_INSTALL_DIR` - Custom installation directory
-2. `$XDG_BIN_DIR` - XDG Base Directory Specification compliant path
-3. `$HOME/bin` - Standard user binary directory (if it exists or can be created)
-4. `$HOME/.opencode/bin` - Default fallback
+Desktop first-run shows **Sign in to BharatCode**. The button runs:
 
 ```bash
-# Examples
-OPENCODE_INSTALL_DIR=/usr/local/bin curl -fsSL https://opencode.ai/install | bash
-XDG_BIN_DIR=$HOME/.local/bin curl -fsSL https://opencode.ai/install | bash
+bharatcode auth login
+bharatcode opencode configure
 ```
 
-### Agents
+After successful sign-in, Desktop relaunches so the local sidecar picks up the generated BharatCode OpenCode config.
 
-OpenCode includes two built-in agents you can switch between with the `Tab` key.
+## VS Code Development
 
-- **build** - Default, full-access agent for development work
-- **plan** - Read-only agent for analysis and code exploration
-  - Denies file edits by default
-  - Asks permission before running bash commands
-  - Ideal for exploring unfamiliar codebases or planning changes
+```bash
+cd sdks/vscode
+bun install
+code .
+```
 
-Also included is a **general** subagent for complex searches and multistep tasks.
-This is used internally and can be invoked using `@general` in messages.
+Press `F5` in VS Code. The extension contributes:
 
-Learn more about [agents](https://opencode.ai/docs/agents).
+- `BharatCode: Sign in to BharatCode`
+- `BharatCode: Open BharatCode`
+- `BharatCode: Open BharatCode in new tab`
+- `BharatCode: Add Filepath to BharatCode Terminal`
 
-### Documentation
+The default terminal command is:
 
-For more info on how to configure OpenCode, [**head over to our docs**](https://opencode.ai/docs).
+```bash
+bharatcode --port <port>
+```
 
-### Contributing
+## Local Smoke Checks
 
-If you're interested in contributing to OpenCode, please read our [contributing docs](./CONTRIBUTING.md) before submitting a pull request.
+```bash
+cd packages/desktop
+bun test src/main/branding.test.ts src/main/bharatcode-auth.test.ts
 
-### Building on OpenCode
+cd ../../sdks/vscode
+bun test src/bharatcode.test.ts
+```
 
-If you are working on a project that's related to OpenCode and is using "opencode" as part of its name, for example "opencode-dashboard" or "opencode-mobile", please add a note to your README to clarify that it is not built by the OpenCode team and is not affiliated with us in any way.
+Some broader app tests require the full monorepo Bun install.
 
----
+## Release Plan
 
-**Join our community** [Discord](https://discord.gg/opencode) | [X.com](https://x.com/opencode)
+1. Confirm the BharatCode CLI auth bug-fix release is published and `bharatcode auth login` succeeds on macOS, Windows, and Linux.
+2. Generate final BharatCode icon assets for Desktop and VS Code, replacing the current placeholder icon set.
+3. Build signed Desktop installers from CI for macOS, Windows, and Linux using private GitHub releases in `BharatCode-ai/opencode`.
+4. Package the VS Code extension as `bharatcode.bharatcode` and test with `vsce package` locally.
+5. Publish private/internal artifacts first. Do not publish public installers or marketplace extensions without an explicit release approval.
+
+## Remaining Blockers
+
+- Desktop and VS Code depend on the public beta CLI command `bharatcode auth login`. If that command regresses, these surfaces should keep showing the documented auth error instead of adding a separate token store.
+- Final signed installer release needs BharatCode production signing credentials and final artwork.
+- Direct VS Code URI callback and Desktop `bharatcode://auth/callback` token exchange are reserved for a later deeper integration. The current MVP uses the CLI loopback callback.
+
+## Attribution
+
+BharatCode Desktop and the BharatCode VS Code extension are based on OpenCode and retain the upstream MIT license.

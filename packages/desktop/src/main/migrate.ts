@@ -4,6 +4,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { CHANNEL } from "./constants"
+import { appIdForChannel } from "./branding"
 import { getStore } from "./store"
 
 const TAURI_MIGRATED_KEY = "tauriMigrated"
@@ -23,16 +24,16 @@ function tauriDir(id: string) {
 
 // The Tauri app identifier changes between dev/beta/prod builds.
 const TAURI_APP_IDS: Record<string, string> = {
-  dev: "ai.opencode.desktop.dev",
-  beta: "ai.opencode.desktop.beta",
-  prod: "ai.opencode.desktop",
+  dev: appIdForChannel("dev"),
+  beta: appIdForChannel("beta"),
+  prod: appIdForChannel("prod"),
 }
 function tauriAppId() {
-  return app.isPackaged ? TAURI_APP_IDS[CHANNEL] : "ai.opencode.desktop.dev"
+  return app.isPackaged ? TAURI_APP_IDS[CHANNEL] : appIdForChannel("dev")
 }
 
 // Migrate a single Tauri .dat file into the corresponding electron-store.
-// `opencode.settings.dat` is special: it maps to the `opencode.settings` store
+// `bharatcode.settings.dat` is special: it maps to the `bharatcode.settings` store
 // (the electron-store name without the `.dat` extension). All other .dat files
 // keep their full filename as the electron-store name so they match what the
 // renderer already passes via IPC (e.g. `"default.dat"`, `"opencode.global.dat"`).
@@ -45,10 +46,10 @@ function migrateFile(datPath: string, filename: string) {
     return
   }
 
-  // opencode.settings.dat → the electron settings store ("opencode.settings").
+  // bharatcode.settings.dat → the electron settings store ("bharatcode.settings").
   // All other .dat files keep their full filename as the store name so they match
   // what the renderer passes via IPC (e.g. "default.dat", "opencode.global.dat").
-  const storeName = filename === "opencode.settings.dat" ? "opencode.settings" : filename
+  const storeName = filename === "bharatcode.settings.dat" ? "bharatcode.settings" : filename
   const target = getStore(storeName)
   const migrated: string[] = []
   const skipped: string[] = []

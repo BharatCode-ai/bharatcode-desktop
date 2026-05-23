@@ -17,8 +17,9 @@ import {
 import * as Sentry from "@sentry/solid"
 import type { AsyncStorage } from "@solid-primitives/storage"
 import { MemoryRouter } from "@solidjs/router"
-import { createEffect, createResource, onCleanup, onMount, Show } from "solid-js"
+import { createEffect, createResource, createSignal, onCleanup, onMount, Show, type ParentProps } from "solid-js"
 import { render } from "solid-js/web"
+import { Button } from "@opencode-ai/ui/button"
 import pkg from "../../package.json"
 import { initI18n, t } from "./i18n"
 import { resetZoom, setPinchZoomEnabled, webviewZoom, zoomIn, zoomOut } from "./webview-zoom"
@@ -55,7 +56,7 @@ if (import.meta.env.VITE_SENTRY_DSN) {
 
 void initI18n()
 
-const deepLinkEvent = "opencode:deep-link"
+const deepLinkEvent = "bharatcode:deep-link"
 
 const emitDeepLinks = (urls: string[]) => {
   if (urls.length === 0) return
@@ -231,7 +232,7 @@ const createPlatform = (): Platform => {
 
       const notification = new Notification(title, {
         body: description ?? "",
-        icon: "https://opencode.ai/favicon-96x96-v3.png",
+        icon: "https://bharatcode.ai/icon.png",
       })
       notification.onclick = () => {
         void window.api.showWindow()
@@ -293,6 +294,67 @@ const createPlatform = (): Platform => {
       })
     },
   }
+}
+
+function BharatCodeAuthGate(props: ParentProps) {
+  const [auth, { refetch }] = createResource(() => window.api.getBharatCodeAuthState())
+  const [signingIn, setSigningIn] = createSignal(false)
+  const [error, setError] = createSignal<string | null>(null)
+  const ready = () => auth()?.authenticated && auth()?.configured
+
+  async function signIn() {
+    setSigningIn(true)
+    setError(null)
+    try {
+      const next = await window.api.signInToBharatCode()
+      if (next.authenticated && next.configured) {
+        window.api.relaunch()
+        return
+      }
+      await refetch()
+      setError("BharatCode sign-in finished, but the local model config was not updated. Run bharatcode doctor.")
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSigningIn(false)
+    }
+  }
+
+  return (
+    <Show
+      when={!auth.loading && ready()}
+      fallback={
+        <div class="w-screen h-screen bg-background-base text-text-strong flex items-center justify-center px-6">
+          <div class="w-full max-w-md flex flex-col gap-5">
+            <div class="flex flex-col gap-2">
+              <div class="text-28-bold">BharatCode</div>
+              <div class="text-14-regular text-text-base">
+                Sign in with BharatCode OAuth to configure the local model provider. No provider API key is required.
+              </div>
+            </div>
+            <Button
+              class="w-fit"
+              type="button"
+              size="large"
+              variant="primary"
+              disabled={auth.loading || signingIn()}
+              onClick={() => void signIn()}
+            >
+              {signingIn() ? "Signing in..." : "Sign in to BharatCode"}
+            </Button>
+            <Show when={error()}>
+              {(message) => <div class="text-12-regular text-text-danger-base whitespace-pre-wrap">{message()}</div>}
+            </Show>
+            <div class="text-12-regular text-text-weak">
+              Uses the shared native OAuth client and stores credentials in ~/.bharatcode/credentials.json.
+            </div>
+          </div>
+        </div>
+      }
+    >
+      {props.children}
+    </Show>
+  )
 }
 
 let menuTrigger = null as null | ((id: string) => void)
@@ -391,13 +453,15 @@ render(() => {
         >
           {(_) => {
             return (
-              <AppInterface
-                defaultServer={defaultServer.latest ?? ServerConnection.Key.make("sidecar")}
-                servers={servers()}
-                router={MemoryRouter}
-              >
-                <Inner />
-              </AppInterface>
+              <BharatCodeAuthGate>
+                <AppInterface
+                  defaultServer={defaultServer.latest ?? ServerConnection.Key.make("sidecar")}
+                  servers={servers()}
+                  router={MemoryRouter}
+                >
+                  <Inner />
+                </AppInterface>
+              </BharatCodeAuthGate>
             )
           }}
         </Show>

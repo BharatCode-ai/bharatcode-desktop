@@ -1,13 +1,13 @@
 {
-  "name": "@opencode-ai/desktop",
+  "name": "@bharatcode/desktop",
   "private": true,
   "version": "1.15.10",
   "type": "module",
   "license": "MIT",
-  "homepage": "https://opencode.ai",
+  "homepage": "https://bharatcode.ai",
   "author": {
-    "name": "OpenCode",
-    "email": "hello@opencode.ai"
+    "name": "BharatCode",
+    "email": "hello@bharatcode.ai"
   },
   "scripts": {
     "typecheck": "tsgo -b",

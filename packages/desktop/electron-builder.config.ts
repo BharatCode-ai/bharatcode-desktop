@@ -4,6 +4,13 @@ import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
 
 import type { Configuration } from "electron-builder"
+import {
+  BRANDING,
+  appIdForChannel,
+  normalizeChannel,
+  packageNameForChannel,
+  productNameForChannel,
+} from "./src/main/branding"
 
 const execFileAsync = promisify(execFile)
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
@@ -21,13 +28,11 @@ async function signWindows(configuration: { path: string }) {
 }
 
 const channel = (() => {
-  const raw = process.env.OPENCODE_CHANNEL
-  if (raw === "dev" || raw === "beta" || raw === "prod") return raw
-  return "dev"
+  return normalizeChannel(process.env.BHARATCODE_CHANNEL || process.env.OPENCODE_CHANNEL)
 })()
 
 const getBase = (): Configuration => ({
-  artifactName: "opencode-desktop-${os}-${arch}.${ext}",
+  artifactName: "bharatcode-desktop-${os}-${arch}.${ext}",
   directories: {
     output: "dist",
     buildResources: "resources",
@@ -54,8 +59,8 @@ const getBase = (): Configuration => ({
     sign: true,
   },
   protocols: {
-    name: "OpenCode",
-    schemes: ["opencode"],
+    name: BRANDING.appName,
+    schemes: [BRANDING.protocol],
   },
   win: {
     icon: `resources/icons/icon.ico`,
@@ -73,6 +78,7 @@ const getBase = (): Configuration => ({
   },
   linux: {
     icon: `resources/icons`,
+    executableName: packageNameForChannel(channel),
     category: "Development",
     target: ["AppImage", "deb", "rpm"],
   },
@@ -85,29 +91,29 @@ function getConfig() {
     case "dev": {
       return {
         ...base,
-        appId: "ai.opencode.desktop.dev",
-        productName: "OpenCode Dev",
-        rpm: { packageName: "opencode-dev" },
+        appId: appIdForChannel(channel),
+        productName: productNameForChannel(channel),
+        rpm: { packageName: packageNameForChannel(channel) },
       }
     }
     case "beta": {
       return {
         ...base,
-        appId: "ai.opencode.desktop.beta",
-        productName: "OpenCode Beta",
-        protocols: { name: "OpenCode Beta", schemes: ["opencode"] },
-        publish: { provider: "github", owner: "anomalyco", repo: "opencode-beta", channel: "latest" },
-        rpm: { packageName: "opencode-beta" },
+        appId: appIdForChannel(channel),
+        productName: productNameForChannel(channel),
+        protocols: { name: productNameForChannel(channel), schemes: [BRANDING.protocol] },
+        publish: { provider: "github", owner: BRANDING.repo.owner, repo: BRANDING.repo.name, channel: "latest" },
+        rpm: { packageName: packageNameForChannel(channel) },
       }
     }
     case "prod": {
       return {
         ...base,
-        appId: "ai.opencode.desktop",
-        productName: "OpenCode",
-        protocols: { name: "OpenCode", schemes: ["opencode"] },
-        publish: { provider: "github", owner: "anomalyco", repo: "opencode", channel: "latest" },
-        rpm: { packageName: "opencode" },
+        appId: appIdForChannel(channel),
+        productName: productNameForChannel(channel),
+        protocols: { name: productNameForChannel(channel), schemes: [BRANDING.protocol] },
+        publish: { provider: "github", owner: BRANDING.repo.owner, repo: BRANDING.repo.name, channel: "latest" },
+        rpm: { packageName: packageNameForChannel(channel) },
       }
     }
   }

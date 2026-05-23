@@ -9,7 +9,7 @@ import { createEffect, createMemo, createSignal, onCleanup, onMount } from "soli
 import type { InitStep, SqliteMigrationProgress } from "../preload/types"
 
 const root = document.getElementById("root")!
-const lines = ["Just a moment...", "Migrating your database", "This may take a couple of minutes"]
+const lines = ["Just a moment...", "Migrating your BharatCode database", "This may take a couple of minutes"]
 const delays = [3000, 9000]
 
 render(() => {

@@ -1,6 +1,8 @@
-# Tauri Icons
+# BharatCode Desktop Icons
 
-Here's the process I've been using to create icons:
+The current MVP keeps the upstream raster icon set as a placeholder until final BharatCode app artwork is approved.
+
+Use this process when replacing the placeholder set:
 
 - Save source image as `app-icon.png` in `packages/desktop`
 - `cd` to `packages/desktop`

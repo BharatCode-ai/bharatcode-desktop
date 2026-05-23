@@ -1,10 +1,13 @@
-export const deepLinkEvent = "opencode:deep-link"
+export const deepLinkEvent = "bharatcode:deep-link"
+
+const supportedProtocols = new Set(["bharatcode:", "opencode:"])
 
 const parseUrl = (input: string) => {
-  if (!input.startsWith("opencode://")) return
   if (typeof URL.canParse === "function" && !URL.canParse(input)) return
   try {
-    return new URL(input)
+    const url = new URL(input)
+    if (!supportedProtocols.has(url.protocol)) return
+    return url
   } catch {
     return
   }

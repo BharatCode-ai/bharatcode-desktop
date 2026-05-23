@@ -43,6 +43,7 @@ export function DialogConnectProvider(props: { provider: string }) {
   const provider = createMemo(
     () => providers.all().get(props.provider) ?? globalSync.data.provider.all.get(props.provider)!,
   )
+  const isBharatCode = () => props.provider === "bharatcode"
   const fallback = createMemo<ProviderAuthMethod[]>(() => [
     {
       type: "api" as const,
@@ -322,6 +323,7 @@ export function DialogConnectProvider(props: { provider: string }) {
   let auto = false
   createEffect(() => {
     if (auto) return
+    if (isBharatCode()) return
     if (loading()) return
     if (methods().length === 1) {
       auto = true
@@ -455,6 +457,21 @@ export function DialogConnectProvider(props: { provider: string }) {
             {language.t("common.continue")}
           </Button>
         </form>
+      </div>
+    )
+  }
+
+  function BharatCodeCliAuthView() {
+    return (
+      <div class="flex flex-col items-start gap-4">
+        <div class="text-14-regular text-text-base">{language.t("provider.connect.bharatcode.line1")}</div>
+        <div class="text-13-regular font-mono bg-surface-raised-base text-text-strong px-3 py-2 rounded-sm">
+          {language.t("provider.connect.bharatcode.command")}
+        </div>
+        <div class="text-14-regular text-text-base">{language.t("provider.connect.bharatcode.line2")}</div>
+        <Button class="w-auto" type="button" size="large" variant="primary" onClick={() => dialog.close()}>
+          {language.t("common.close")}
+        </Button>
       </div>
     )
   }
@@ -607,6 +624,9 @@ export function DialogConnectProvider(props: { provider: string }) {
                     <span>{language.t("provider.connect.status.inProgress")}</span>
                   </div>
                 </div>
+              </Match>
+              <Match when={isBharatCode()}>
+                <BharatCodeCliAuthView />
               </Match>
               <Match when={store.methodIndex === undefined}>
                 <MethodSelection />

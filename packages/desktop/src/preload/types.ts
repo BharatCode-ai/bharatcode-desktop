@@ -20,6 +20,13 @@ export type WindowConfig = {
   updaterEnabled: boolean
 }
 
+export type BharatCodeAuthState = {
+  authenticated: boolean
+  configured: boolean
+  credentialsPath: string
+  configPath: string
+}
+
 export type FatalRendererError = {
   error: string
   url: string
@@ -92,4 +99,6 @@ export type ElectronAPI = {
   setBackgroundColor: (color: string) => Promise<void>
   exportDebugLogs: () => Promise<string>
   recordFatalRendererError: (error: FatalRendererError) => Promise<void>
+  getBharatCodeAuthState: () => Promise<BharatCodeAuthState>
+  signInToBharatCode: () => Promise<BharatCodeAuthState>
 }

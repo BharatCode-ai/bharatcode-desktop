@@ -81,6 +81,8 @@ const api: ElectronAPI = {
   setBackgroundColor: (color: string) => ipcRenderer.invoke("set-background-color", color),
   exportDebugLogs: () => ipcRenderer.invoke("export-debug-logs"),
   recordFatalRendererError: (error) => ipcRenderer.invoke("record-fatal-renderer-error", error),
+  getBharatCodeAuthState: () => ipcRenderer.invoke("get-bharatcode-auth-state"),
+  signInToBharatCode: () => ipcRenderer.invoke("sign-in-to-bharatcode"),
 }
 
 contextBridge.exposeInMainWorld("api", api)

@@ -1,5 +1,6 @@
 interface ImportMetaEnv {
   readonly OPENCODE_CHANNEL: string
+  readonly BHARATCODE_CHANNEL: string
 }
 
 interface ImportMeta {
