@@ -21,8 +21,13 @@ $vars = @{
 }
 
 if ($vars.Values | Where-Object { -not $_ }) {
-  Write-Host "Skipping Windows signing because Azure Artifact Signing is not configured"
-  exit 0
+  $allowUnsigned = $env:BHARATCODE_ALLOW_UNSIGNED_WINDOWS -eq "1" -or $env:BHARATCODE_ALLOW_UNSIGNED_WINDOWS -eq "true"
+  if ($allowUnsigned) {
+    Write-Host "Skipping Windows signing because this build explicitly allows unsigned Windows artifacts"
+    exit 0
+  }
+
+  throw "Windows signing is not configured. Set Azure Trusted Signing variables or set BHARATCODE_ALLOW_UNSIGNED_WINDOWS=1 for an unsigned beta build."
 }
 
 $moduleVersion = "0.5.8"

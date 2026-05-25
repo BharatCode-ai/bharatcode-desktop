@@ -1,0 +1,52 @@
+name: BharatCode Desktop Windows
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: BharatCode release channel
+        required: true
+        default: beta
+        type: choice
+        options:
+          - beta
+          - prod
+          - dev
+
+permissions:
+  contents: read
+
+jobs:
+  package-windows:
+    name: Package unsigned Windows app
+    runs-on: windows-latest
+    env:
+      BHARATCODE_CHANNEL: ${{ inputs.channel }}
+      BHARATCODE_ALLOW_UNSIGNED_WINDOWS: "1"
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+
+      - name: Typecheck desktop
+        run: bun --cwd packages/desktop run typecheck
+
+      - name: Build desktop
+        run: bun --cwd packages/desktop run build
+
+      - name: Package unsigned Windows installer
+        run: bun --cwd packages/desktop x electron-builder --win nsis --config electron-builder.config.ts --publish never
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: bharatcode-desktop-windows-${{ inputs.channel }}-${{ github.sha }}
+          if-no-files-found: error
+          path: |
+            packages/desktop/dist/*.exe
+            packages/desktop/dist/*.blockmap
+            packages/desktop/dist/latest.yml

@@ -62,12 +62,17 @@ bun test src/bharatcode.test.ts
 
 1. Verify Desktop can complete native OAuth through `bharatcode://auth/callback` and write `~/.bharatcode/credentials.json`.
 2. Verify the latest public beta CLI can complete `bharatcode auth login`, refresh credentials, and run `bharatcode opencode configure` for VS Code.
-3. Build Desktop artifacts for macOS, Windows, and Linux with `BHARATCODE_CHANNEL=beta bun --cwd packages/desktop run package`.
-4. Sign and notarize installers in CI with BharatCode-controlled signing credentials.
-5. Package the VS Code extension with `vsce package`, verify the command palette and terminal launch path, then publish only after explicit approval.
-6. Keep public DNS and the A100 serving VM unchanged; this work does not require infrastructure migration.
+3. Build Linux Desktop artifacts with `BHARATCODE_CHANNEL=beta bun --cwd packages/desktop run package:linux`.
+4. Build the current unsigned Windows beta through the `BharatCode Desktop Windows` GitHub Actions workflow.
+   The workflow sets `BHARATCODE_ALLOW_UNSIGNED_WINDOWS=1` intentionally; users should expect Windows
+   SmartScreen to show an unknown-publisher warning until BharatCode has a signing certificate path.
+5. Sign and notarize macOS installers in CI with BharatCode-controlled Apple signing credentials before public macOS distribution.
+6. Package the VS Code extension with `vsce package`, verify the command palette and terminal launch path, then publish only after explicit approval.
+7. Keep public DNS and the A100 serving VM unchanged; this work does not require infrastructure migration.
 
 ## Blockers
 
 - If `bharatcode auth login` is unstable, VS Code remains blocked on that CLI fix.
-- Public installer and marketplace release need final signing credentials.
+- Windows beta can be published as an unsigned direct-download artifact for now. Signed Windows distribution still
+  needs Azure Trusted Signing or an OV/EV code-signing certificate.
+- Public macOS release still needs Apple signing and notarization credentials.
