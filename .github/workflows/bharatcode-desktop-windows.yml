@@ -39,7 +39,8 @@ jobs:
         run: bun --cwd packages/desktop run build
 
       - name: Package unsigned Windows installer
-        run: bun --cwd packages/desktop x electron-builder --win nsis --config electron-builder.config.ts --publish never
+        working-directory: packages/desktop
+        run: bunx electron-builder --win nsis --config electron-builder.config.ts --publish never
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
