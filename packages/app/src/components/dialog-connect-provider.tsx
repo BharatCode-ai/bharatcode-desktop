@@ -465,9 +465,6 @@ export function DialogConnectProvider(props: { provider: string }) {
     return (
       <div class="flex flex-col items-start gap-4">
         <div class="text-14-regular text-text-base">{language.t("provider.connect.bharatcode.line1")}</div>
-        <div class="text-13-regular font-mono bg-surface-raised-base text-text-strong px-3 py-2 rounded-sm">
-          {language.t("provider.connect.bharatcode.command")}
-        </div>
         <div class="text-14-regular text-text-base">{language.t("provider.connect.bharatcode.line2")}</div>
         <Button class="w-auto" type="button" size="large" variant="primary" onClick={() => dialog.close()}>
           {language.t("common.close")}

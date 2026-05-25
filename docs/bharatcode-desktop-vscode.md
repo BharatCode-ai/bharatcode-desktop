@@ -1,6 +1,6 @@
-# BharatCode Desktop And VS Code MVP
+# BharatCode Desktop And VS Code Beta
 
-This fork implements a minimal BharatCode-branded path on top of OpenCode Desktop and the OpenCode VS Code extension.
+This fork implements the BharatCode-branded desktop app and VS Code extension on top of OpenCode.
 
 ## Product Contract
 
@@ -13,24 +13,22 @@ This fork implements a minimal BharatCode-branded path on top of OpenCode Deskto
 
 ## Auth Flow
 
-The MVP uses the BharatCode CLI as the single token owner:
+Desktop uses the native BharatCode Supabase OAuth client directly. The first-run **Continue with BharatCode** action opens
+the browser, waits for `bharatcode://auth/callback`, exchanges the PKCE authorization code, stores credentials in
+`~/.bharatcode/credentials.json`, and adds the `bharatcode` plugin to the local OpenCode config.
+
+The VS Code extension still delegates to the BharatCode CLI for beta:
 
 ```bash
 bharatcode auth login
 bharatcode opencode configure
 ```
 
-Desktop exposes **Sign in to BharatCode** and runs those commands through IPC. VS Code exposes **BharatCode: Sign in to BharatCode** and runs the same commands in an integrated terminal. Both paths use the CLI loopback callback `http://127.0.0.1:27182/callback`.
-
-The Desktop app registers `bharatcode://auth/callback` and the VS Code extension reserves `vscode://bharatcode.bharatcode/auth/callback`, but direct token exchange is intentionally deferred so the beta does not fork auth behavior while CLI auth is still the source of truth.
+VS Code exposes **BharatCode: Sign in to BharatCode** and runs those commands in an integrated terminal.
 
 ## Local Desktop Dev
 
 ```bash
-npm install -g bharatcode@latest
-bharatcode auth login
-bharatcode opencode configure
-
 bun install
 bun --cwd packages/desktop dev
 ```
@@ -62,15 +60,14 @@ bun test src/bharatcode.test.ts
 
 ## Release Plan
 
-1. Verify the latest public beta CLI can complete `bharatcode auth login`, refresh credentials, and run `bharatcode opencode configure`.
-2. Replace placeholder Desktop and VS Code icons with final BharatCode assets.
-3. Build Desktop artifacts for macOS, Windows, and Linux with `bun --cwd packages/desktop run package`.
+1. Verify Desktop can complete native OAuth through `bharatcode://auth/callback` and write `~/.bharatcode/credentials.json`.
+2. Verify the latest public beta CLI can complete `bharatcode auth login`, refresh credentials, and run `bharatcode opencode configure` for VS Code.
+3. Build Desktop artifacts for macOS, Windows, and Linux with `BHARATCODE_CHANNEL=beta bun --cwd packages/desktop run package`.
 4. Sign and notarize installers in CI with BharatCode-controlled signing credentials.
 5. Package the VS Code extension with `vsce package`, verify the command palette and terminal launch path, then publish only after explicit approval.
 6. Keep public DNS and the A100 serving VM unchanged; this work does not require infrastructure migration.
 
 ## Blockers
 
-- If `bharatcode auth login` is unstable, Desktop and VS Code remain blocked on that CLI fix.
-- Public installer and marketplace release need final signing credentials and artwork.
-- Direct Desktop/VS Code callback token storage requires a separate security review before replacing the CLI-owned token store.
+- If `bharatcode auth login` is unstable, VS Code remains blocked on that CLI fix.
+- Public installer and marketplace release need final signing credentials.

@@ -7,11 +7,11 @@ import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import { getCACertificates, setDefaultCACertificates } from "node:tls"
 import type { Event } from "electron"
-import { app, BrowserWindow } from "electron"
+import { app, BrowserWindow, shell } from "electron"
 
 import contextMenu from "electron-context-menu"
 
-import { getBharatCodeAuthState, signInToBharatCode } from "./bharatcode-auth"
+import { getBharatCodeAuthState, handleBharatCodeAuthCallback, signInToBharatCode } from "./bharatcode-auth"
 import { BRANDING, appIdForChannel, productNameForChannel } from "./branding"
 import type { InitStep, ServerReadyData, SqliteMigrationProgress, WslConfig } from "../preload/types"
 import { checkAppExists, resolveAppPath, wslPath } from "./apps"
@@ -66,6 +66,18 @@ function emitDeepLinks(urls: string[]) {
   if (urls.length === 0) return
   pendingDeepLinks.push(...urls)
   if (mainWindow) sendDeepLinks(mainWindow, urls)
+}
+
+function handleIncomingDeepLinks(urls: string[]) {
+  for (const url of urls) {
+    void handleBharatCodeAuthCallback(url)
+      .then((handled) => {
+        if (!handled) emitDeepLinks([url])
+      })
+      .catch((error) => {
+        logger.warn("failed to handle BharatCode auth callback", error)
+      })
+  }
 }
 
 function supportedDeepLinks(argv: string[]) {
@@ -171,7 +183,7 @@ const main = Effect.gen(function* () {
     const urls = supportedDeepLinks(argv)
     if (urls.length) {
       logger.log("deep link received via second-instance", { urls })
-      emitDeepLinks(urls)
+      handleIncomingDeepLinks(urls)
     }
     if (mainWindow) {
       mainWindow.show()
@@ -182,7 +194,7 @@ const main = Effect.gen(function* () {
   app.on("open-url", (event: Event, url: string) => {
     event.preventDefault()
     logger.log("deep link received via open-url", { url })
-    emitDeepLinks([url])
+    handleIncomingDeepLinks([url])
   })
 
   app.on("before-quit", () => {
@@ -255,7 +267,7 @@ const main = Effect.gen(function* () {
     exportDebugLogs: () => exportDebugLogs(),
     recordFatalRendererError: (error) => writeLog("renderer", "fatal renderer error", { ...error }, "error"),
     getBharatCodeAuthState: () => getBharatCodeAuthState(),
-    signInToBharatCode: () => signInToBharatCode(),
+    signInToBharatCode: () => signInToBharatCode({ openExternal: (url) => shell.openExternal(url) }),
   })
 
   yield* Effect.promise(() => app.whenReady())

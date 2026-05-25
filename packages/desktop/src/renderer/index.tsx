@@ -312,7 +312,7 @@ function BharatCodeAuthGate(props: ParentProps) {
         return
       }
       await refetch()
-      setError("BharatCode sign-in finished, but the local model config was not updated. Run bharatcode doctor.")
+      setError("BharatCode sign-in finished, but the local OpenCode config was not updated. Restart and sign in again.")
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -329,7 +329,8 @@ function BharatCodeAuthGate(props: ParentProps) {
             <div class="flex flex-col gap-2">
               <div class="text-28-bold">BharatCode</div>
               <div class="text-14-regular text-text-base">
-                Sign in with BharatCode OAuth to configure the local model provider. No provider API key is required.
+                Sign in with your BharatCode account to connect this desktop app to the public beta model proxy. No API
+                keys are required.
               </div>
             </div>
             <Button
@@ -340,13 +341,14 @@ function BharatCodeAuthGate(props: ParentProps) {
               disabled={auth.loading || signingIn()}
               onClick={() => void signIn()}
             >
-              {signingIn() ? "Signing in..." : "Sign in to BharatCode"}
+              {signingIn() ? "Waiting for browser sign-in..." : "Continue with BharatCode"}
             </Button>
             <Show when={error()}>
               {(message) => <div class="text-12-regular text-text-danger-base whitespace-pre-wrap">{message()}</div>}
             </Show>
             <div class="text-12-regular text-text-weak">
-              Uses the shared native OAuth client and stores credentials in ~/.bharatcode/credentials.json.
+              BharatCode opens your browser for OAuth and stores the resulting session locally in
+              ~/.bharatcode/credentials.json.
             </div>
           </div>
         </div>

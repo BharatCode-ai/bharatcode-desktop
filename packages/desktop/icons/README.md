@@ -1,6 +1,7 @@
 # BharatCode Desktop Icons
 
-The current MVP keeps the upstream raster icon set as a placeholder until final BharatCode app artwork is approved.
+The icon set uses the BharatCode beta mark: a black `B` with a green terminal chevron and orange block on the beta green
+field.
 
 Use this process when replacing the placeholder set:
 

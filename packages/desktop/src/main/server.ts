@@ -4,6 +4,7 @@ import { app, utilityProcess } from "electron"
 import type { Details } from "electron"
 import { DEFAULT_SERVER_URL_KEY, WSL_ENABLED_KEY } from "./constants"
 import { getUserShell, loadShellEnv } from "./shell-env"
+import { getLogger } from "./logging"
 import { getStore } from "./store"
 import type { SqliteMigrationProgress } from "../preload/types"
 
@@ -58,7 +59,7 @@ export function setWslConfig(config: WslConfig) {
 export function preferAppEnv(userDataPath: string) {
   const shell = process.platform === "win32" ? null : getUserShell()
   Object.assign(process.env, {
-    ...(shell ? loadShellEnv(shell) : null),
+    ...(shell ? loadShellEnv(shell, getLogger()) : null),
     OPENCODE_EXPERIMENTAL_ICON_DISCOVERY: "true",
     OPENCODE_EXPERIMENTAL_FILEWATCHER: "true",
     OPENCODE_CLIENT: "desktop",

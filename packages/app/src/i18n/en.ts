@@ -97,7 +97,7 @@ export const dict = {
   "palette.group.files": "Files",
 
   "dialog.provider.search.placeholder": "Search BharatCode",
-  "dialog.provider.empty": "BharatCode is not configured. Run bharatcode auth login and bharatcode opencode configure.",
+  "dialog.provider.empty": "BharatCode is not configured. Sign in from the BharatCode Desktop welcome screen.",
   "dialog.provider.group.popular": "BharatCode",
   "dialog.provider.group.other": "Other",
   "dialog.provider.tag.recommended": "Recommended",
@@ -133,15 +133,15 @@ export const dict = {
   "provider.connect.status.waiting": "Waiting for authorization...",
   "provider.connect.status.failed": "Authorization failed: {{error}}",
   "provider.connect.apiKey.description":
-    "BharatCode uses OAuth. Run bharatcode auth login instead of pasting provider API keys.",
+    "BharatCode uses OAuth. Sign in through the desktop browser flow instead of pasting provider API keys.",
   "provider.connect.apiKey.label": "{{provider}} OAuth token",
   "provider.connect.apiKey.placeholder": "OAuth token",
   "provider.connect.apiKey.required": "OAuth token is required",
   "provider.connect.bharatcode.line1":
-    "BharatCode account setup is managed by the shared public beta CLI OAuth flow.",
-  "provider.connect.bharatcode.command": "bharatcode auth login && bharatcode opencode configure",
+    "BharatCode account setup is handled by the desktop OAuth flow.",
+  "provider.connect.bharatcode.command": "Use the BharatCode Desktop welcome screen to sign in.",
   "provider.connect.bharatcode.line2":
-    "After the command completes, restart BharatCode Desktop or open a new BharatCode terminal.",
+    "If you are seeing this dialog, close it, restart BharatCode Desktop, and continue from the sign-in screen.",
   "provider.connect.opencodeZen.line1":
     "BharatCode gives you OAuth access to optimized coding models through the public beta proxy.",
   "provider.connect.opencodeZen.line2": "Sign in once with BharatCode OAuth to use the configured beta models.",

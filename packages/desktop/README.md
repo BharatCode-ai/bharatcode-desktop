@@ -9,14 +9,9 @@ bun install
 bun --cwd packages/desktop dev
 ```
 
-The first-run screen shows **Sign in to BharatCode**. The MVP delegates auth to the public beta CLI:
-
-```bash
-bharatcode auth login
-bharatcode opencode configure
-```
-
-That flow uses the native Supabase OAuth client and the loopback callback `http://127.0.0.1:27182/callback`.
+The first-run screen shows **Continue with BharatCode**. It opens the browser with the native BharatCode Supabase OAuth
+client, receives the `bharatcode://auth/callback` deep link, stores credentials in `~/.bharatcode/credentials.json`, and
+adds the `bharatcode` plugin to the local OpenCode config. No separate OpenCode install or CLI auth step is required.
 
 ## Build
 
@@ -25,7 +20,8 @@ bun --cwd packages/desktop run build
 bun --cwd packages/desktop run package
 ```
 
-Artifacts are written to `packages/desktop/dist/` with BharatCode app metadata, the `bharatcode://` deep-link protocol, and private GitHub release configuration for `BharatCode-ai/opencode`.
+Artifacts are written to `packages/desktop/dist/` with BharatCode app metadata, the `bharatcode://` deep-link protocol,
+and private GitHub release configuration for `BharatCode-ai/opencode`.
 
 ## Attribution
 
