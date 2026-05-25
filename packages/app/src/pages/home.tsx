@@ -180,7 +180,7 @@ function HomeDesign() {
         selectProject={selectProject}
         chooseProject={() => void chooseProject()}
         openSettings={openSettings}
-        openHelp={() => platform.openLink("https://opencode.ai/desktop-feedback")}
+        openHelp={() => platform.openLink("https://bharatcode.ai")}
         language={language}
       />
 

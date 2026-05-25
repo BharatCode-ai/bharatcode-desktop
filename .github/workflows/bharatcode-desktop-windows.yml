@@ -1,6 +1,9 @@
 name: BharatCode Desktop Windows
 
 on:
+  release:
+    types:
+      - published
   workflow_dispatch:
     inputs:
       channel:
@@ -12,21 +15,73 @@ on:
           - beta
           - prod
           - dev
+      tag:
+        description: GitHub Release tag to create/update. Defaults to desktop-<channel>-<date>-<run>.
+        required: false
+        type: string
+      publish_release:
+        description: Upload the Windows installer to a GitHub Release.
+        required: true
+        default: true
+        type: boolean
+      prerelease:
+        description: Mark a newly-created workflow-dispatch release as a prerelease.
+        required: true
+        default: true
+        type: boolean
+      draft:
+        description: Create a workflow-dispatch release as draft.
+        required: true
+        default: false
+        type: boolean
+      notify_website:
+        description: Send a repository_dispatch to BharatCode website after release upload.
+        required: true
+        default: true
+        type: boolean
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   package-windows:
-    name: Package unsigned Windows app
+    name: Package and publish unsigned Windows app
     runs-on: windows-latest
     env:
-      BHARATCODE_CHANNEL: ${{ inputs.channel }}
       BHARATCODE_ALLOW_UNSIGNED_WINDOWS: "1"
       CSC_IDENTITY_AUTO_DISCOVERY: "false"
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
       GH_TOKEN: ${{ github.token }}
     steps:
+      - name: Resolve release metadata
+        shell: pwsh
+        run: |
+          $eventName = "${{ github.event_name }}"
+          if ($eventName -eq "release") {
+            $tag = "${{ github.event.release.tag_name }}"
+            $name = "${{ github.event.release.name }}"
+            $channel = if ("${{ github.event.release.prerelease }}" -eq "true") { "beta" } else { "prod" }
+            if ($tag -match "dev") { $channel = "dev" }
+            elseif ($tag -match "beta") { $channel = "beta" }
+            elseif ($tag -match "prod") { $channel = "prod" }
+          } else {
+            $channel = "${{ inputs.channel }}"
+            $tag = "${{ inputs.tag }}"
+            if ([string]::IsNullOrWhiteSpace($tag)) {
+              $tag = "desktop-$channel-$(Get-Date -Format 'yyyy-MM-dd')-${{ github.run_number }}"
+            }
+            $titleChannel = $channel.Substring(0, 1).ToUpperInvariant() + $channel.Substring(1)
+            $name = "BharatCode Desktop $titleChannel $tag"
+          }
+
+          if ([string]::IsNullOrWhiteSpace($name)) {
+            $name = "BharatCode Desktop $tag"
+          }
+
+          "BHARATCODE_CHANNEL=$channel" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "RELEASE_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "RELEASE_NAME=$name" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Checkout
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
 
@@ -54,12 +109,83 @@ jobs:
         working-directory: packages/desktop
         run: bunx electron-builder --win nsis --config electron-builder.config.ts --publish never
 
+      - name: Print Windows checksums
+        shell: pwsh
+        run: |
+          Get-ChildItem packages/desktop/dist -File |
+            Where-Object { $_.Name -like "*.exe" -or $_.Name -like "*.blockmap" -or $_.Name -eq "latest.yml" } |
+            ForEach-Object {
+              if ($_.Extension -eq ".exe") {
+                $hash = Get-FileHash $_.FullName -Algorithm SHA256
+                Write-Host "$($_.Name) sha256:$($hash.Hash.ToLowerInvariant())"
+              } else {
+                Write-Host "$($_.Name)"
+              }
+            }
+
       - name: Upload Windows artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: bharatcode-desktop-windows-${{ inputs.channel }}-${{ github.sha }}
+          name: bharatcode-desktop-windows-${{ env.BHARATCODE_CHANNEL }}-${{ github.sha }}
           if-no-files-found: error
           path: |
             packages/desktop/dist/*.exe
             packages/desktop/dist/*.blockmap
             packages/desktop/dist/latest.yml
+
+      - name: Create GitHub Release for workflow dispatch
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_release }}
+        shell: pwsh
+        run: |
+          gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release $env:RELEASE_TAG already exists; assets will be updated."
+            exit 0
+          }
+
+          $args = @(
+            "release", "create", $env:RELEASE_TAG,
+            "--repo", $env:GITHUB_REPOSITORY,
+            "--target", $env:GITHUB_SHA,
+            "--title", $env:RELEASE_NAME,
+            "--notes", "BharatCode Desktop Windows installer generated by GitHub Actions. Attach Linux/macOS assets separately when those builds are available."
+          )
+          if ("${{ inputs.draft }}" -eq "true") { $args += "--draft" }
+          if ("${{ inputs.prerelease }}" -eq "true") { $args += "--prerelease" }
+          & gh @args
+
+      - name: Upload Windows installer to GitHub Release
+        if: ${{ github.event_name == 'release' || inputs.publish_release }}
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem packages/desktop/dist -File |
+            Where-Object { $_.Name -like "*.exe" -or $_.Name -like "*.blockmap" -or $_.Name -eq "latest.yml" }
+          if (-not $files) {
+            throw "No Windows release files found in packages/desktop/dist"
+          }
+
+          $paths = $files | ForEach-Object { $_.FullName }
+          & gh release upload $env:RELEASE_TAG @paths --clobber --repo $env:GITHUB_REPOSITORY
+
+      - name: Notify website to redeploy
+        if: ${{ (github.event_name == 'release' || inputs.publish_release) && (github.event_name == 'release' || inputs.notify_website) }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.BHARATCODE_WEBSITE_DISPATCH_TOKEN }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) {
+            Write-Host "Skipping website notification; BHARATCODE_WEBSITE_DISPATCH_TOKEN is not configured."
+            exit 0
+          }
+
+          $payload = @{
+            event_type = "desktop_release_published"
+            client_payload = @{
+              repo = $env:GITHUB_REPOSITORY
+              tag = $env:RELEASE_TAG
+              channel = $env:BHARATCODE_CHANNEL
+              release_url = "https://github.com/$env:GITHUB_REPOSITORY/releases/tag/$env:RELEASE_TAG"
+            }
+          } | ConvertTo-Json -Depth 5
+
+          $payload | gh api repos/BharatCode-ai/bharatcode/dispatches --method POST --input -

@@ -306,7 +306,7 @@ export const dict = {
   "dialog.mcp.empty": "No MCPs configured",
 
   "dialog.lsp.empty": "LSPs auto-detected from file types",
-  "dialog.plugins.empty": "Plugins configured in opencode.json",
+  "dialog.plugins.empty": "Plugins configured in the local config",
 
   "mcp.status.connected": "connected",
   "mcp.status.failed": "failed",
@@ -482,7 +482,7 @@ export const dict = {
   "error.page.action.updateTo": "Update to {{version}}",
   "error.page.circular": "[Circular]",
   "error.page.report.prefix": "Please report this error to the BharatCode team",
-  "error.page.report.discord": "on Discord",
+  "error.page.report.discord": "via BharatCode support",
   "error.page.version": "Version: {{version}}",
 
   "error.dev.rootNotFound":
@@ -506,7 +506,7 @@ export const dict = {
   "error.chain.responseBody": "Response body:\n{{body}}",
   "error.chain.didYouMean": "Did you mean: {{suggestions}}",
   "error.chain.modelNotFound": "Model not found: {{provider}}/{{model}}",
-  "error.chain.checkConfig": "Check your config (opencode.json) provider/model names",
+  "error.chain.checkConfig": "Check your local provider and model configuration",
   "error.chain.mcpFailed": 'MCP server "{{name}}" failed. Note, BharatCode does not support MCP authentication yet.',
   "error.chain.providerAuthFailed": "Provider authentication failed ({{provider}}): {{message}}",
   "error.chain.providerInitFailed":
