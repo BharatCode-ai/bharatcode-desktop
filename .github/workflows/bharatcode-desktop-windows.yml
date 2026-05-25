@@ -24,13 +24,23 @@ jobs:
       BHARATCODE_CHANNEL: ${{ inputs.channel }}
       BHARATCODE_ALLOW_UNSIGNED_WINDOWS: "1"
       CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
       GH_TOKEN: ${{ github.token }}
     steps:
       - name: Checkout
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
 
       - name: Setup Bun
-        uses: ./.github/actions/setup-bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+
+      - name: Install setuptools
+        run: python -m pip install setuptools
+
+      - name: Install dependencies
+        timeout-minutes: 20
+        run: bun install --linker hoisted
 
       - name: Typecheck desktop
         run: bun --cwd packages/desktop run typecheck
