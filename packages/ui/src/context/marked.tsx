@@ -500,7 +500,7 @@ export const { use: useMarked, provider: MarkedProvider } = createSimpleContext(
             tabindex: false,
           })
         },
-      }),
+      }) as MarkedExtension<string, string>,
     )
 
     if (props.nativeParser) {
