@@ -43,10 +43,12 @@ jobs:
         run: bun install --linker hoisted
 
       - name: Typecheck desktop
-        run: bun --cwd packages/desktop run typecheck
+        working-directory: packages/desktop
+        run: bun run typecheck
 
       - name: Build desktop
-        run: bun --cwd packages/desktop run build
+        working-directory: packages/desktop
+        run: bun run build
 
       - name: Package unsigned Windows installer
         working-directory: packages/desktop
