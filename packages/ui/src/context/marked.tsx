@@ -1,4 +1,4 @@
-import { marked } from "marked"
+import { marked, type MarkedExtension } from "marked"
 import markedKatex from "marked-katex-extension"
 import markedShiki from "marked-shiki"
 import katex from "katex"
@@ -480,7 +480,7 @@ export const { use: useMarked, provider: MarkedProvider } = createSimpleContext(
       markedKatex({
         throwOnError: false,
         nonStandard: true,
-      }),
+      }) as MarkedExtension<string, string>,
       markedShiki({
         async highlight(code, lang) {
           const highlighter = await getSharedHighlighter({
