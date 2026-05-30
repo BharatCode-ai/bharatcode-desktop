@@ -4,11 +4,11 @@ export const BRANDING = {
   appName: "BharatCode",
   protocol: "bharatcode",
   homepage: "https://bharatcode.ai",
-  bugtracker: "https://github.com/BharatCode-ai/opencode/issues",
+  bugtracker: "https://github.com/BharatCode-ai/bharatcode-desktop/issues",
   repo: {
     owner: "BharatCode-ai",
-    name: "opencode",
-    url: "https://github.com/BharatCode-ai/opencode",
+    name: "bharatcode-desktop",
+    url: "https://github.com/BharatCode-ai/bharatcode-desktop",
   },
 }
 

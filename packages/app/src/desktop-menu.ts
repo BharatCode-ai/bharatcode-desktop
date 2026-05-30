@@ -207,12 +207,12 @@ export const DESKTOP_MENU: DesktopMenu[] = [
       {
         type: "item",
         label: "Share Feedback",
-        href: "https://github.com/BharatCode-ai/opencode/issues/new",
+        href: "https://github.com/BharatCode-ai/bharatcode-desktop/issues/new",
       },
       {
         type: "item",
         label: "Report a Bug",
-        href: "https://github.com/BharatCode-ai/opencode/issues/new",
+        href: "https://github.com/BharatCode-ai/bharatcode-desktop/issues/new",
       },
     ],
   },

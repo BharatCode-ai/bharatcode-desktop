@@ -504,7 +504,7 @@ export const SettingsGeneral: Component = () => {
           description={
             <>
               {language.t("settings.general.row.theme.description")}{" "}
-              <Link href="https://github.com/BharatCode-ai/opencode/blob/dev/packages/tui/THEMES.md">
+              <Link href="https://github.com/BharatCode-ai/bharatcode-desktop/blob/dev/packages/tui/THEMES.md">
                 {language.t("common.learnMore")}
               </Link>
             </>

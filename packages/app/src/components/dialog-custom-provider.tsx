@@ -184,7 +184,7 @@ export function DialogCustomProvider(props: Props) {
           <p class="text-14-regular text-text-base">
             {language.t("provider.custom.description.prefix")}
             <Link
-              href="https://github.com/BharatCode-ai/opencode/blob/dev/packages/opencode/src/config/config.ts"
+              href="https://github.com/BharatCode-ai/bharatcode-desktop/blob/dev/packages/opencode/src/config/config.ts"
               tabIndex={-1}
             >
               {language.t("provider.custom.description.link")}

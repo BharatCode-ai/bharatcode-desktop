@@ -21,7 +21,7 @@ bun --cwd packages/desktop run package
 ```
 
 Artifacts are written to `packages/desktop/dist/` with BharatCode app metadata, the `bharatcode://` deep-link protocol,
-and private GitHub release configuration for `BharatCode-ai/opencode`.
+and GitHub release configuration for `BharatCode-ai/bharatcode-desktop`.
 
 ## Attribution
 

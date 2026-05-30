@@ -1,6 +1,6 @@
 # BharatCode OpenCode Fork
 
-This private fork builds the BharatCode Desktop app and BharatCode VS Code extension path from OpenCode.
+This public fork builds the BharatCode Desktop app and BharatCode VS Code extension path from OpenCode.
 
 The beta user path is OAuth-first:
 
@@ -79,7 +79,7 @@ Some broader app tests require the full monorepo Bun install.
 
 1. Confirm the BharatCode CLI auth bug-fix release is published and `bharatcode auth login` succeeds on macOS, Windows, and Linux.
 2. Generate final BharatCode icon assets for Desktop and VS Code, replacing the current placeholder icon set.
-3. Build signed Desktop installers from CI for macOS, Windows, and Linux using private GitHub releases in `BharatCode-ai/opencode`.
+3. Build signed Desktop installers from CI for macOS, Windows, and Linux using GitHub releases in `BharatCode-ai/bharatcode-desktop`.
 4. Package the VS Code extension as `bharatcode.bharatcode` and test with `vsce package` locally.
 5. Publish private/internal artifacts first. Do not publish public installers or marketplace extensions without an explicit release approval.
 
