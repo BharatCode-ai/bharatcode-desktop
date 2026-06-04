@@ -69,6 +69,8 @@ import { useQueries } from "@tanstack/solid-query"
 import { useQueryOptions } from "@/context/global-sync"
 import { pathKey } from "@/utils/path-key"
 import { getFilename } from "@opencode-ai/core/util/path"
+import { showToast } from "@opencode-ai/ui/toast"
+import { dictationFilename, dictationInsertionText, preferredDictationMimeType } from "./prompt-input/dictation"
 
 interface PromptInputProps {
   class?: string
@@ -277,6 +279,21 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     mode: "normal",
     applyingHistory: false,
   })
+
+  const [dictationState, setDictationState] = createSignal<"idle" | "recording" | "transcribing">("idle")
+  let dictationRecorder: MediaRecorder | null = null
+  let dictationStream: MediaStream | null = null
+  let dictationChunks: Blob[] = []
+  let dictationCancelled = false
+
+  const dictationAvailable = createMemo(
+    () =>
+      platform.platform === "desktop" &&
+      typeof platform.transcribeAudio === "function" &&
+      typeof navigator !== "undefined" &&
+      !!navigator.mediaDevices?.getUserMedia &&
+      typeof MediaRecorder !== "undefined",
+  )
 
   const buttonsSpring = useSpring(() => (store.mode === "normal" ? 1 : 0), { visualDuration: 0.2, bounce: 0 })
   const motion = (value: number) => ({
@@ -997,6 +1014,138 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     return true
   }
 
+  const stopDictationTracks = () => {
+    dictationStream?.getTracks().forEach((track) => track.stop())
+    dictationStream = null
+  }
+
+  const resetDictation = ({ focus = true, clearCancelled = true } = {}) => {
+    setDictationState("idle")
+    dictationRecorder = null
+    dictationChunks = []
+    if (clearCancelled) dictationCancelled = false
+    stopDictationTracks()
+    if (focus) restoreFocus()
+  }
+
+  const addDictationTranscript = (transcript: string) => {
+    const cursor = currentCursor() ?? prompt.cursor() ?? promptLength(prompt.current())
+    const text = prompt
+      .current()
+      .map((part) => ("content" in part ? part.content : ""))
+      .join("")
+    const content = dictationInsertionText({
+      textBeforeCursor: text.slice(0, cursor),
+      transcript,
+      textAfterCursor: text.slice(cursor),
+    })
+    if (!content) return false
+
+    editorRef.focus()
+    setCursorPosition(editorRef, cursor)
+    return addPart({ type: "text", content, start: 0, end: 0 })
+  }
+
+  const finishDictation = async (blob: Blob) => {
+    try {
+      if (!blob.size) throw new Error("Dictation recording was empty.")
+      const result = await platform.transcribeAudio?.({
+        buffer: await blob.arrayBuffer(),
+        mimeType: blob.type,
+        filename: dictationFilename(blob.type),
+      })
+      if (!result?.text.trim()) {
+        showToast({
+          title: "No speech detected",
+          description: "Try again with the microphone closer or less background noise.",
+        })
+        return
+      }
+      addDictationTranscript(result.text)
+    } catch (error) {
+      showToast({
+        title: "Dictation failed",
+        description: error instanceof Error ? error.message : String(error),
+      })
+    } finally {
+      resetDictation()
+    }
+  }
+
+  const stopDictation = () => {
+    if (!dictationRecorder || dictationRecorder.state === "inactive") return
+    dictationCancelled = false
+    dictationRecorder.stop()
+  }
+
+  const startDictation = async () => {
+    if (!dictationAvailable() || dictationState() !== "idle") return
+
+    try {
+      dictationCancelled = false
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      })
+      const mimeType = preferredDictationMimeType()
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
+
+      dictationStream = stream
+      dictationRecorder = recorder
+      dictationChunks = []
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) dictationChunks.push(event.data)
+      }
+      recorder.onerror = () => {
+        dictationCancelled = true
+        if (recorder.state !== "inactive") {
+          recorder.stop()
+        } else {
+          resetDictation()
+        }
+        showToast({ title: "Dictation failed", description: "The microphone recorder stopped unexpectedly." })
+      }
+      recorder.onstop = () => {
+        if (dictationCancelled) {
+          resetDictation()
+          return
+        }
+        const type = recorder.mimeType || mimeType || "audio/webm"
+        const blob = new Blob(dictationChunks, { type })
+        setDictationState("transcribing")
+        void finishDictation(blob)
+      }
+
+      setDictationState("recording")
+      recorder.start()
+    } catch (error) {
+      resetDictation()
+      showToast({
+        title: "Microphone unavailable",
+        description: error instanceof Error ? error.message : String(error),
+      })
+    }
+  }
+
+  const toggleDictation = (event?: Event) => {
+    event?.preventDefault()
+    event?.stopPropagation()
+    if (dictationState() === "recording") {
+      stopDictation()
+      return
+    }
+    if (dictationState() === "idle") void startDictation()
+  }
+
+  onCleanup(() => {
+    dictationCancelled = true
+    if (dictationRecorder && dictationRecorder.state !== "inactive") dictationRecorder.stop()
+    stopDictationTracks()
+  })
+
   const addToHistory = (prompt: Prompt, mode: "normal" | "shell") => {
     const currentHistory = mode === "shell" ? shellHistory : history
     const setCurrentHistory = mode === "shell" ? setShellHistory : setHistory
@@ -1374,6 +1523,33 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     </Show>
   )
 
+  const dictationTooltip = () => {
+    if (dictationState() === "recording") return "Stop dictation"
+    if (dictationState() === "transcribing") return "Transcribing dictation..."
+    return "Dictate"
+  }
+
+  const dictationButton = (size: "small" | "normal") => (
+    <Show when={dictationAvailable()}>
+      <Tooltip placement="top" value={dictationTooltip()}>
+        <IconButton
+          data-action="prompt-dictate"
+          type="button"
+          disabled={dictationState() === "transcribing"}
+          tabIndex={store.mode === "normal" ? undefined : -1}
+          icon={dictationState() === "recording" ? "stop" : "mic"}
+          variant={dictationState() === "recording" ? "primary" : "ghost"}
+          class={size === "small" ? "size-7 rounded-md p-[6px]" : "size-8"}
+          classList={{
+            "text-v2-icon-icon-muted": size === "small" && dictationState() !== "recording",
+          }}
+          aria-label={dictationTooltip()}
+          onClick={toggleDictation}
+        />
+      </Tooltip>
+    </Show>
+  )
+
   const newSession = () => props.variant === "new-session"
   const worktrees = createMemo(() => [MAIN_WORKTREE, ...(sync.project?.sandboxes ?? []), CREATE_WORKTREE])
   const currentWorktree = createMemo(() => {
@@ -1450,7 +1626,12 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
               onMouseDown={(e) => {
                 const target = e.target
                 if (!(target instanceof HTMLElement)) return
-                if (target.closest('[data-action="prompt-attach"], [data-action="prompt-submit"]')) return
+                if (
+                  target.closest(
+                    '[data-action="prompt-attach"], [data-action="prompt-dictate"], [data-action="prompt-submit"]',
+                  )
+                )
+                  return
                 editorRef?.focus()
               }}
             >
@@ -1515,6 +1696,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
                     aria-label={language.t("prompt.action.attachFile")}
                   />
                 </TooltipKeybind>
+                {dictationButton("small")}
                 <Show when={newSession()}>
                   <div class="relative">
                     <div class="pointer-events-none absolute left-2 top-1/2 z-10 flex size-4 -translate-y-1/2 items-center justify-center">
@@ -1600,7 +1782,11 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
               onMouseDown={(e) => {
                 const target = e.target
                 if (!(target instanceof HTMLElement)) return
-                if (target.closest('[data-action="prompt-attach"], [data-action="prompt-submit"]')) {
+                if (
+                  target.closest(
+                    '[data-action="prompt-attach"], [data-action="prompt-dictate"], [data-action="prompt-submit"]',
+                  )
+                ) {
                   return
                 }
                 editorRef?.focus()
@@ -1676,6 +1862,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
                 />
 
                 <div class="flex items-center gap-1 pointer-events-auto">
+                  {dictationButton("normal")}
                   <Tooltip placement="top" inactive={!working() && blank()} value={tip()}>
                     <IconButton
                       data-action="prompt-submit"

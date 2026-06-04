@@ -12,7 +12,9 @@ import type {
   WindowConfig,
   WslConfig,
   BharatCodeAuthState,
+  DictationAudioInput,
 } from "../preload/types"
+import type { CapabilitySnapshot } from "./capabilities"
 import { runDesktopMenuAction } from "./desktop-menu-actions"
 import { getStore } from "./store"
 import { getPinchZoomEnabled, setPinchZoomEnabled, setTitlebar, updateTitlebar } from "./windows"
@@ -46,6 +48,12 @@ type Deps = {
   recordFatalRendererError: (error: FatalRendererError) => Promise<void> | void
   getBharatCodeAuthState: () => Promise<BharatCodeAuthState>
   signInToBharatCode: () => Promise<BharatCodeAuthState>
+  transcribeDictation: (audio: DictationAudioInput) => Promise<unknown>
+  getCapabilitySnapshot: () => Promise<CapabilitySnapshot> | CapabilitySnapshot
+  installCapability: (id: string) => Promise<CapabilitySnapshot> | CapabilitySnapshot
+  setCapabilityEnabled: (id: string, enabled: boolean) => Promise<CapabilitySnapshot> | CapabilitySnapshot
+  uninstallCapability: (id: string) => Promise<CapabilitySnapshot> | CapabilitySnapshot
+  applyCapabilityRuntime: () => Promise<CapabilitySnapshot> | CapabilitySnapshot
 }
 
 export function registerIpcHandlers(deps: Deps) {
@@ -83,6 +91,16 @@ export function registerIpcHandlers(deps: Deps) {
   )
   ipcMain.handle("get-bharatcode-auth-state", () => deps.getBharatCodeAuthState())
   ipcMain.handle("sign-in-to-bharatcode", () => deps.signInToBharatCode())
+  ipcMain.handle("transcribe-dictation", (_event: IpcMainInvokeEvent, audio: DictationAudioInput) =>
+    deps.transcribeDictation(audio),
+  )
+  ipcMain.handle("capabilities:get-snapshot", () => deps.getCapabilitySnapshot())
+  ipcMain.handle("capabilities:install", (_event: IpcMainInvokeEvent, id: string) => deps.installCapability(id))
+  ipcMain.handle("capabilities:set-enabled", (_event: IpcMainInvokeEvent, id: string, enabled: boolean) =>
+    deps.setCapabilityEnabled(id, enabled),
+  )
+  ipcMain.handle("capabilities:uninstall", (_event: IpcMainInvokeEvent, id: string) => deps.uninstallCapability(id))
+  ipcMain.handle("capabilities:apply-runtime", () => deps.applyCapabilityRuntime())
   ipcMain.handle("store-get", (_event: IpcMainInvokeEvent, name: string, key: string) => {
     try {
       const store = getStore(name)

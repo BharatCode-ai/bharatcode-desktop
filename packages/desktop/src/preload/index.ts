@@ -83,6 +83,12 @@ const api: ElectronAPI = {
   recordFatalRendererError: (error) => ipcRenderer.invoke("record-fatal-renderer-error", error),
   getBharatCodeAuthState: () => ipcRenderer.invoke("get-bharatcode-auth-state"),
   signInToBharatCode: () => ipcRenderer.invoke("sign-in-to-bharatcode"),
+  transcribeDictation: (audio) => ipcRenderer.invoke("transcribe-dictation", audio),
+  getCapabilitySnapshot: () => ipcRenderer.invoke("capabilities:get-snapshot"),
+  installCapability: (id) => ipcRenderer.invoke("capabilities:install", id),
+  setCapabilityEnabled: (id, enabled) => ipcRenderer.invoke("capabilities:set-enabled", id, enabled),
+  uninstallCapability: (id) => ipcRenderer.invoke("capabilities:uninstall", id),
+  applyCapabilityRuntime: () => ipcRenderer.invoke("capabilities:apply-runtime"),
 }
 
 contextBridge.exposeInMainWorld("api", api)

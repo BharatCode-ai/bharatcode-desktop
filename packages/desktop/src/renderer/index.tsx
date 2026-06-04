@@ -293,6 +293,18 @@ const createPlatform = (): Platform => {
         type: "image/png",
       })
     },
+
+    transcribeAudio: (audio) => window.api.transcribeDictation(audio),
+
+    getCapabilitySnapshot: () => window.api.getCapabilitySnapshot(),
+
+    installCapability: (id) => window.api.installCapability(id),
+
+    setCapabilityEnabled: (id, enabled) => window.api.setCapabilityEnabled(id, enabled),
+
+    uninstallCapability: (id) => window.api.uninstallCapability(id),
+
+    applyCapabilityRuntime: () => window.api.applyCapabilityRuntime(),
   }
 }
 
@@ -312,7 +324,7 @@ function BharatCodeAuthGate(props: ParentProps) {
         return
       }
       await refetch()
-      setError("BharatCode sign-in finished, but the local OpenCode config was not updated. Restart and sign in again.")
+      setError("BharatCode sign-in finished, but the local app config was not updated. Restart and sign in again.")
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {

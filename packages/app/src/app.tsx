@@ -14,6 +14,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/solid-query"
 import { Effect } from "effect"
 import {
   type Component,
+  createEffect,
   createMemo,
   createResource,
   createSignal,
@@ -28,6 +29,7 @@ import {
 } from "solid-js"
 import { Dynamic } from "solid-js/web"
 import { CommandProvider } from "@/context/command"
+import { CapabilitiesProvider } from "@/context/capabilities"
 import { CommentsProvider } from "@/context/comments"
 import { FileProvider } from "@/context/file"
 import { GlobalSDKProvider } from "@/context/global-sdk"
@@ -38,6 +40,7 @@ import { LayoutProvider } from "@/context/layout"
 import { ModelsProvider } from "@/context/models"
 import { NotificationProvider } from "@/context/notification"
 import { PermissionProvider } from "@/context/permission"
+import { usePlatform } from "@/context/platform"
 import { PromptProvider } from "@/context/prompt"
 import { ServerConnection, ServerProvider, serverName, useServer } from "@/context/server"
 import { SettingsProvider } from "@/context/settings"
@@ -46,6 +49,9 @@ import DirectoryLayout from "@/pages/directory-layout"
 import Layout from "@/pages/layout"
 import { ErrorPage } from "./pages/error"
 import { useCheckServerHealth } from "./utils/server-health"
+import { resolveDesktopStartupChatDirectory, startupChatPath } from "./app-startup"
+import { useGlobalSync } from "./context/global-sync"
+import { useLayout } from "./context/layout"
 
 const HomeRoute = lazy(() => import("@/pages/home"))
 const Session = lazy(() => import("@/pages/session"))
@@ -58,6 +64,36 @@ const SessionRoute = Object.assign(
   ),
   { preload: Session.preload },
 )
+
+function RootRoute() {
+  const platform = usePlatform()
+  const sync = useGlobalSync()
+  const layout = useLayout()
+  const server = useServer()
+
+  const directory = createMemo(() =>
+    resolveDesktopStartupChatDirectory({
+      platform: platform.platform,
+      ready: sync.ready && server.ready() && layout.ready(),
+      projects: layout.projects.list(),
+      lastProject: server.projects.last(),
+      home: sync.data.path.home,
+    }),
+  )
+
+  createEffect(() => {
+    const target = directory()
+    if (!target) return
+    layout.projects.open(target)
+    server.projects.touch(target)
+  })
+
+  return (
+    <Show when={directory()} fallback={<HomeRoute />}>
+      {(target) => <Navigate href={startupChatPath(target())} />}
+    </Show>
+  )
+}
 
 function UiI18nBridge(props: ParentProps) {
   const language = useLanguage()
@@ -306,16 +342,18 @@ export function AppInterface(props: {
           <QueryProvider>
             <GlobalSDKProvider>
               <GlobalSyncProvider>
-                <Dynamic
-                  component={props.router ?? Router}
-                  root={(routerProps) => <RouterRoot appChildren={props.children}>{routerProps.children}</RouterRoot>}
-                >
-                  <Route path="/" component={HomeRoute} />
-                  <Route path="/:dir" component={DirectoryLayout}>
-                    <Route path="/" component={() => <Navigate href="session" />} />
-                    <Route path="/session/:id?" component={SessionRoute} />
-                  </Route>
-                </Dynamic>
+                <CapabilitiesProvider>
+                  <Dynamic
+                    component={props.router ?? Router}
+                    root={(routerProps) => <RouterRoot appChildren={props.children}>{routerProps.children}</RouterRoot>}
+                  >
+                    <Route path="/" component={RootRoute} />
+                    <Route path="/:dir" component={DirectoryLayout}>
+                      <Route path="/" component={() => <Navigate href="session" />} />
+                      <Route path="/session/:id?" component={SessionRoute} />
+                    </Route>
+                  </Dynamic>
+                </CapabilitiesProvider>
               </GlobalSyncProvider>
             </GlobalSDKProvider>
           </QueryProvider>

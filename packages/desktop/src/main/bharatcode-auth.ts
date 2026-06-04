@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto"
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises"
+import { createServer, type Server } from "node:http"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 
@@ -30,12 +31,14 @@ type BharatCodeCredentials = {
 }
 
 type FetchImpl = typeof fetch
+type ReauthorizeBharatCode = (error: unknown) => Promise<BharatCodeCredentials | null | undefined>
 
 type SignInOptions = {
   openExternal?: (url: string) => Promise<void> | void
   fetchImpl?: FetchImpl
   home?: string
   timeoutMs?: number
+  pluginSpec?: string
 }
 
 type PendingSignIn = {
@@ -44,7 +47,9 @@ type PendingSignIn = {
   redirectUri: string
   fetchImpl: FetchImpl
   home: string
+  pluginSpec?: string
   timer: ReturnType<typeof setTimeout>
+  loopbackServer?: Server
   resolve: (state: BharatCodeAuthState) => void
   reject: (error: unknown) => void
 }
@@ -81,7 +86,13 @@ export function buildBharatCodeSignInUrl({
 export function isBharatCodeAuthCallback(input: string) {
   try {
     const url = new URL(input)
-    return url.protocol === "bharatcode:" && url.hostname === "auth" && url.pathname === "/callback"
+    if (url.protocol === "bharatcode:" && url.hostname === "auth" && url.pathname === "/callback") return true
+    return (
+      url.protocol === "http:" &&
+      url.pathname === "/callback" &&
+      url.port === "27182" &&
+      (url.hostname === "127.0.0.1" || url.hostname === "localhost")
+    )
   } catch {
     return false
   }
@@ -93,6 +104,10 @@ export function bharatCodeCredentialsPath(home = process.env.BHARATCODE_HOME || 
 
 export function opencodeConfigPath(home = process.env.BHARATCODE_HOME || homedir()) {
   return join(home, ".config", "opencode", "opencode.jsonc")
+}
+
+export function resolveBundledBharatCodePluginPath(resourcesPath: string) {
+  return join(resourcesPath, "provider", "bharatcode", "index.js")
 }
 
 export function base64Url(input: Buffer | Uint8Array | string) {
@@ -111,7 +126,10 @@ export function randomState() {
   return base64Url(randomBytes(24))
 }
 
-export function shouldRefreshToken(credentials: BharatCodeCredentials | null, { now = Math.floor(Date.now() / 1000) } = {}) {
+export function shouldRefreshToken(
+  credentials: BharatCodeCredentials | null,
+  { now = Math.floor(Date.now() / 1000) } = {},
+) {
   if (!credentials?.access_token || !credentials?.expires_at) return true
   return credentials.expires_at - now <= TOKEN_REFRESH_SKEW_SECONDS
 }
@@ -137,7 +155,10 @@ async function saveBharatCodeCredentials(
   await chmod(path, 0o600)
 }
 
-function normalizeTokenResponse(tokenResponse: Record<string, any>, previousCredentials: BharatCodeCredentials | null = null) {
+function normalizeTokenResponse(
+  tokenResponse: Record<string, any>,
+  previousCredentials: BharatCodeCredentials | null = null,
+) {
   const now = Math.floor(Date.now() / 1000)
   return {
     access_token: tokenResponse.access_token,
@@ -207,7 +228,46 @@ export async function refreshBharatCodeCredentials(
   return normalizeTokenResponse(tokenResponse, credentials)
 }
 
-export async function fetchBharatCodeUserInfo(accessToken: string, { fetchImpl = fetch }: { fetchImpl?: FetchImpl } = {}) {
+export async function getBharatCodeAccessToken({
+  home = process.env.BHARATCODE_HOME || homedir(),
+  fetchImpl = fetch,
+  reauthorize,
+}: {
+  home?: string
+  fetchImpl?: FetchImpl
+  reauthorize?: ReauthorizeBharatCode
+} = {}) {
+  let credentials = await readBharatCodeCredentials(home)
+  if (!credentials?.access_token && !credentials?.refresh_token) {
+    if (!reauthorize) throw new Error("No BharatCode credentials found. Sign in to BharatCode first.")
+    credentials = (await reauthorize(new Error("No BharatCode credentials found."))) ?? null
+    if (credentials) await saveBharatCodeCredentials(credentials, home)
+  }
+
+  if (!credentials) throw new Error("No BharatCode credentials found. Sign in to BharatCode first.")
+
+  if (shouldRefreshToken(credentials)) {
+    try {
+      credentials = await refreshBharatCodeCredentials(credentials, { fetchImpl })
+      await saveBharatCodeCredentials(credentials, home)
+    } catch (error) {
+      if (!reauthorize) throw error
+      credentials = (await reauthorize(error)) ?? null
+      if (credentials) await saveBharatCodeCredentials(credentials, home)
+    }
+  }
+
+  if (!credentials?.access_token) {
+    throw new Error("No BharatCode access token found. Sign in to BharatCode again.")
+  }
+
+  return credentials.access_token
+}
+
+export async function fetchBharatCodeUserInfo(
+  accessToken: string,
+  { fetchImpl = fetch }: { fetchImpl?: FetchImpl } = {},
+) {
   const response = await fetchImpl(new URL(`${BHARATCODE_OAUTH.issuer}/oauth/userinfo`), {
     headers: { authorization: `Bearer ${accessToken}` },
   })
@@ -237,13 +297,15 @@ export async function signInToBharatCode({
   fetchImpl = fetch,
   home = process.env.BHARATCODE_HOME || homedir(),
   timeoutMs = DEFAULT_SIGN_IN_TIMEOUT_MS,
+  pluginSpec,
 }: SignInOptions = {}) {
   if (!openExternal) throw new Error("BharatCode sign-in requires an external browser opener.")
   if (pendingSignIn) throw new Error("BharatCode sign-in is already in progress.")
 
   const codeVerifier = randomVerifier()
   const state = randomState()
-  const redirectUri = BHARATCODE_OAUTH.desktopRedirectUri
+  const redirectUri = BHARATCODE_OAUTH.loopbackRedirectUri
+  const loopbackServer = await startLoopbackCallbackServer(redirectUri)
   const authorizationUrl = buildBharatCodeSignInUrl({
     state,
     redirectUri,
@@ -255,6 +317,7 @@ export async function signInToBharatCode({
       if (!pendingSignIn || pendingSignIn.state !== state) return
       const pending = pendingSignIn
       pendingSignIn = null
+      closeLoopbackServer(pending.loopbackServer)
       pending.reject(new Error("Timed out waiting for BharatCode OAuth callback."))
     }, timeoutMs)
     pendingSignIn = {
@@ -263,7 +326,9 @@ export async function signInToBharatCode({
       redirectUri,
       fetchImpl,
       home,
+      pluginSpec,
       timer,
+      loopbackServer,
       resolve,
       reject,
     }
@@ -276,6 +341,51 @@ export async function signInToBharatCode({
   }
 
   return completion
+}
+
+function startLoopbackCallbackServer(redirectUri: string) {
+  const redirect = new URL(redirectUri)
+  const port = Number(redirect.port)
+  return new Promise<Server>((resolve, reject) => {
+    const server = createServer((request, response) => {
+      const requestUrl = new URL(request.url || "/", redirect)
+      const callbackUrl = `${redirect.origin}${requestUrl.pathname}${requestUrl.search}`
+      void handleBharatCodeAuthCallback(callbackUrl)
+        .then((handled) => {
+          response.statusCode = handled ? 200 : 404
+          response.setHeader("content-type", "text/html; charset=utf-8")
+          response.end(
+            handled
+              ? "<!doctype html><title>BharatCode sign-in complete</title><p>BharatCode sign-in complete. You can close this tab.</p>"
+              : "<!doctype html><title>BharatCode sign-in failed</title><p>This BharatCode sign-in callback was not recognized.</p>",
+          )
+        })
+        .catch((error) => {
+          response.statusCode = 500
+          response.setHeader("content-type", "text/html; charset=utf-8")
+          response.end(
+            `<!doctype html><title>BharatCode sign-in failed</title><p>${escapeHtml(
+              error instanceof Error ? error.message : String(error),
+            )}</p>`,
+          )
+        })
+    })
+
+    const onError = (error: NodeJS.ErrnoException) => {
+      server.close()
+      if (error.code === "EADDRINUSE") {
+        reject(new Error(`OAuth callback port ${port} is already in use. Close the other process and try again.`))
+        return
+      }
+      reject(error)
+    }
+
+    server.once("error", onError)
+    server.listen(port, redirect.hostname, () => {
+      server.off("error", onError)
+      resolve(server)
+    })
+  })
 }
 
 export async function handleBharatCodeAuthCallback(input: string) {
@@ -313,7 +423,7 @@ export async function handleBharatCodeAuthCallback(input: string) {
       credentials = { ...credentials, user: null }
     }
     await saveBharatCodeCredentials(credentials, pending.home)
-    await ensureBharatCodePlugin({ configPath: opencodeConfigPath(pending.home) })
+    await ensureBharatCodePlugin({ configPath: opencodeConfigPath(pending.home), pluginSpec: pending.pluginSpec })
     completePendingSignIn(await getBharatCodeAuthState(pending.home))
   } catch (callbackError) {
     failPendingSignIn(callbackError)
@@ -327,6 +437,7 @@ function completePendingSignIn(state: BharatCodeAuthState) {
   if (!pending) return
   pendingSignIn = null
   clearTimeout(pending.timer)
+  closeLoopbackServer(pending.loopbackServer)
   pending.resolve(state)
 }
 
@@ -335,7 +446,23 @@ function failPendingSignIn(error: unknown) {
   if (!pending) return
   pendingSignIn = null
   clearTimeout(pending.timer)
+  closeLoopbackServer(pending.loopbackServer)
   pending.reject(error)
+}
+
+function closeLoopbackServer(server: Server | undefined) {
+  if (!server) return
+  if (!server.listening) return
+  server.close()
+}
+
+function escapeHtml(input: string) {
+  return input
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;")
 }
 
 function stripJsonComments(input: string) {
@@ -349,25 +476,71 @@ function formatConfig(config: unknown) {
   return `${JSON.stringify(config, null, 2)}\n`
 }
 
-function patchJsonConfig(raw: string) {
-  const config = JSON.parse(stripJsonComments(raw || "{}"))
-  const plugins = Array.isArray(config.plugin) ? config.plugin : []
-  if (plugins.includes("bharatcode")) return { changed: false, content: raw }
-  config.plugin = [...plugins, "bharatcode"]
-  if (!config.$schema) config.$schema = "https://opencode.ai/config.json"
-  return { changed: true, content: formatConfig(config) }
+function defaultConfig(pluginSpec: string) {
+  return {
+    ...DEFAULT_CONFIG,
+    plugin: [pluginSpec],
+  }
 }
 
-function patchJsoncFallback(raw: string) {
+function pluginSpecifier(value: unknown) {
+  if (typeof value === "string") return value
+  if (Array.isArray(value) && typeof value[0] === "string") return value[0]
+}
+
+function isBharatCodePluginSpec(value: unknown) {
+  const spec = pluginSpecifier(value)
+  if (!spec) return false
+  if (spec === "bharatcode") return true
+  return spec.replace(/\\/g, "/").endsWith("/provider/bharatcode/index.js")
+}
+
+function replacePluginSpec(value: unknown, pluginSpec: string) {
+  if (Array.isArray(value)) return [pluginSpec, value[1]]
+  return pluginSpec
+}
+
+function patchPluginList(plugins: unknown[], pluginSpec: string) {
+  let replaced = false
+  const next: unknown[] = []
+  for (const plugin of plugins) {
+    if (!isBharatCodePluginSpec(plugin)) {
+      next.push(plugin)
+      continue
+    }
+    if (replaced) continue
+    next.push(replacePluginSpec(plugin, pluginSpec))
+    replaced = true
+  }
+  if (!replaced) next.push(pluginSpec)
+  return next
+}
+
+function patchJsonConfig(raw: string, pluginSpec: string) {
+  const config = JSON.parse(stripJsonComments(raw || "{}"))
+  const plugins = Array.isArray(config.plugin) ? config.plugin : []
+  config.plugin = patchPluginList(plugins, pluginSpec)
+  if (!config.$schema) config.$schema = "https://opencode.ai/config.json"
+  const content = formatConfig(config)
+  return { changed: content !== raw, content }
+}
+
+function patchJsoncFallback(raw: string, pluginSpec: string) {
+  const encodedPlugin = JSON.stringify(pluginSpec)
   const pluginArray = /("plugin"\s*:\s*\[)([\s\S]*?)(\])/m
   const match = raw.match(pluginArray)
   if (match) {
-    if (/"bharatcode"/.test(match[2])) return { changed: false, content: raw }
+    if (/"bharatcode"/.test(match[2])) {
+      return {
+        changed: true,
+        content: raw.replace(pluginArray, `$1${encodedPlugin}$3`),
+      }
+    }
     const existing = match[2].trim()
     const separator = existing ? ", " : ""
     return {
       changed: true,
-      content: raw.replace(pluginArray, `$1${existing}${separator}"bharatcode"$3`),
+      content: raw.replace(pluginArray, `$1${existing}${separator}${encodedPlugin}$3`),
     }
   }
 
@@ -376,29 +549,35 @@ function patchJsoncFallback(raw: string) {
     const insertAt = objectStart + 1
     return {
       changed: true,
-      content: `${raw.slice(0, insertAt)}\n  "plugin": ["bharatcode"],${raw.slice(insertAt)}`,
+      content: `${raw.slice(0, insertAt)}\n  "plugin": [${encodedPlugin}],${raw.slice(insertAt)}`,
     }
   }
 
-  return { changed: true, content: formatConfig(DEFAULT_CONFIG) }
+  return { changed: true, content: formatConfig(defaultConfig(pluginSpec)) }
 }
 
-export async function ensureBharatCodePlugin({ configPath = opencodeConfigPath() }: { configPath?: string } = {}) {
+export async function ensureBharatCodePlugin({
+  configPath = opencodeConfigPath(),
+  pluginSpec = "bharatcode",
+}: {
+  configPath?: string
+  pluginSpec?: string
+} = {}) {
   await mkdir(dirname(configPath), { recursive: true })
   let raw = ""
   try {
     raw = await readFile(configPath, "utf8")
   } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") throw error
-    await writeFile(configPath, formatConfig(DEFAULT_CONFIG), { mode: 0o600 })
+    await writeFile(configPath, formatConfig(defaultConfig(pluginSpec)), { mode: 0o600 })
     return { changed: true, configPath }
   }
 
   const patch = (() => {
     try {
-      return patchJsonConfig(raw)
+      return patchJsonConfig(raw, pluginSpec)
     } catch {
-      return patchJsoncFallback(raw)
+      return patchJsoncFallback(raw, pluginSpec)
     }
   })()
 
@@ -408,7 +587,13 @@ export async function ensureBharatCodePlugin({ configPath = opencodeConfigPath()
 
 async function hasBharatCodePlugin(path: string) {
   try {
-    return /["']bharatcode["']/.test(await readFile(path, "utf8"))
+    const raw = await readFile(path, "utf8")
+    try {
+      const config = JSON.parse(stripJsonComments(raw || "{}"))
+      return Array.isArray(config.plugin) && config.plugin.some(isBharatCodePluginSpec)
+    } catch {
+      return /["']bharatcode["']|provider[\/\\]bharatcode[\/\\]index\.js/.test(raw)
+    }
   } catch {
     return false
   }

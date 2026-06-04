@@ -36,6 +36,7 @@ export default defineConfig({
     define: {
       "import.meta.env.BHARATCODE_CHANNEL": JSON.stringify(channel),
       "import.meta.env.OPENCODE_CHANNEL": JSON.stringify(channel),
+      "import.meta.env.VITE_OPENCODE_CHANNEL": JSON.stringify(channel),
     },
     build: {
       rollupOptions: {
@@ -82,6 +83,11 @@ export default defineConfig({
   },
   renderer: {
     plugins: [appPlugin, sentry],
+    define: {
+      "import.meta.env.BHARATCODE_CHANNEL": JSON.stringify(channel),
+      "import.meta.env.OPENCODE_CHANNEL": JSON.stringify(channel),
+      "import.meta.env.VITE_OPENCODE_CHANNEL": JSON.stringify(channel),
+    },
     publicDir: "../../../app/public",
     root: "src/renderer",
     build: {

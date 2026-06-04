@@ -12,6 +12,127 @@ type UpdateInfo = { updateAvailable: boolean; version?: string }
 type PlatformName = "web" | "desktop"
 type DesktopOS = "macos" | "windows" | "linux"
 
+export type DictationAudioInput = {
+  buffer: ArrayBuffer
+  mimeType: string
+  filename: string
+}
+
+export type DictationTranscription = {
+  text: string
+  language?: string
+  duration?: number
+}
+
+export type CapabilityTrust = "bundled" | "curated" | "local"
+export type CapabilityStatus =
+  | "available"
+  | "installed"
+  | "enabled"
+  | "needs_setup"
+  | "unhealthy"
+  | "update_available"
+export type CapabilityCategory =
+  | "workflow"
+  | "code-hosting"
+  | "browser"
+  | "design"
+  | "planning"
+  | "monitoring"
+  | "database"
+  | "billing"
+  | "docs"
+export type CapabilityPermission =
+  | "workspace_files"
+  | "local_process"
+  | "browser_automation"
+  | "oauth_account"
+  | "network"
+  | "env_vars"
+  | "background_process"
+  | "billing_data"
+  | "database_data"
+  | "deployment_data"
+  | "monitoring_data"
+
+export type CapabilityMcpConfig =
+  | {
+      type: "remote"
+      url: string
+      enabled?: boolean
+      headers?: Record<string, string>
+      oauth?: false | {
+        clientId?: string
+        clientSecret?: string
+        scope?: string
+        callbackPort?: number
+        redirectUri?: string
+      }
+      timeout?: number
+    }
+  | {
+      type: "local"
+      command: string[]
+      environment?: Record<string, string>
+      enabled?: boolean
+      timeout?: number
+    }
+
+export type CapabilityModule =
+  | { type: "skill"; id: "superpowers"; path: "bundled-superpowers" }
+  | { type: "mcp"; name: string; config: CapabilityMcpConfig }
+  | { type: "connector"; name: string }
+  | { type: "prompt"; name: string }
+  | { type: "surface"; name: string }
+
+export type CapabilityCatalogItem = {
+  id: string
+  name: string
+  description: string
+  publisher: string
+  version: string
+  category: CapabilityCategory
+  trust: CapabilityTrust
+  defaultEnabled?: boolean
+  requiresSetup?: boolean
+  requirements: string[]
+  permissions: CapabilityPermission[]
+  modules: CapabilityModule[]
+}
+
+export type CapabilityInstallRecord = {
+  id: string
+  version: string
+  status: Exclude<CapabilityStatus, "available">
+  enabled: boolean
+  trust: CapabilityTrust
+  installedAt: string
+  updatedAt: string
+  health?: {
+    ok: boolean
+    message?: string
+    checkedAt: string
+  }
+}
+
+export type CapabilityState = {
+  version: 1
+  installed: Record<string, CapabilityInstallRecord>
+}
+
+export type CapabilityRuntimeManifest = {
+  skills: {
+    paths: string[]
+  }
+  mcp: Record<string, CapabilityMcpConfig>
+}
+
+export type CapabilitySnapshot = {
+  catalog: CapabilityCatalogItem[]
+  state: CapabilityState
+  runtime: CapabilityRuntimeManifest
+}
+
 export type FatalRendererErrorLog = {
   error: string
   url: string
@@ -107,6 +228,24 @@ export type Platform = {
 
   /** Read image from clipboard (desktop only) */
   readClipboardImage?(): Promise<File | null>
+
+  /** Transcribe recorded prompt audio (desktop only) */
+  transcribeAudio?(audio: DictationAudioInput): Promise<DictationTranscription>
+
+  /** Read installed and available BharatCode capabilities (desktop only) */
+  getCapabilitySnapshot?(): Promise<CapabilitySnapshot>
+
+  /** Install a curated BharatCode capability (desktop only) */
+  installCapability?(id: string): Promise<CapabilitySnapshot>
+
+  /** Enable or disable an installed BharatCode capability (desktop only) */
+  setCapabilityEnabled?(id: string, enabled: boolean): Promise<CapabilitySnapshot>
+
+  /** Uninstall a curated BharatCode capability (desktop only) */
+  uninstallCapability?(id: string): Promise<CapabilitySnapshot>
+
+  /** Re-apply the BharatCode capability runtime manifest (desktop only) */
+  applyCapabilityRuntime?(): Promise<CapabilitySnapshot>
 
   /** Export collected diagnostic logs (desktop only) */
   exportDebugLogs?(): Promise<string>

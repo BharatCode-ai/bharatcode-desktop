@@ -1,11 +1,11 @@
 # BharatCode Desktop Icons
 
-The icon set uses the BharatCode beta mark: a black `B` with a green terminal chevron and orange block on the beta green
-field.
+The icon set uses the BharatCode refresh-v5 app icon from the website brand pack:
+orange code brackets on the warm light app-icon field.
 
 Use this process when replacing the placeholder set:
 
-- Save source image as `app-icon.png` in `packages/desktop`
+- Save the source image as `app-icon.png` in `packages/desktop`
 - `cd` to `packages/desktop`
 - Run `bun tauri icon -o src-tauri/icons/{environment}`
 - Use [Image2Icon](https://img2icnsapp.com/)'s 'Big Sur Icon' preset to generate an `icon.icns` file and place it in the appropriate icons folder

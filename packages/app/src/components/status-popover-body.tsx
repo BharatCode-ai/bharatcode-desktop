@@ -6,9 +6,10 @@ import { Tabs } from "@opencode-ai/ui/tabs"
 import { useMutation, useQueryClient } from "@tanstack/solid-query"
 import { showToast } from "@opencode-ai/ui/toast"
 import { useNavigate } from "@solidjs/router"
-import { type Accessor, createEffect, createMemo, For, type JSXElement, onCleanup, Show } from "solid-js"
+import { type Accessor, createEffect, createMemo, For, onCleanup, Show } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
 import { ServerHealthIndicator, ServerRow } from "@/components/server/server-row"
+import { useCapabilities } from "@/context/capabilities"
 import { useLanguage } from "@/context/language"
 import { usePlatform } from "@/context/platform"
 import { useSDK } from "@/context/sdk"
@@ -19,18 +20,6 @@ import { useQueryOptions } from "@/context/global-sync"
 import { pathKey } from "@/utils/path-key"
 
 const pollMs = 10_000
-
-const pluginEmptyMessage = (value: string, file: string): JSXElement => {
-  const parts = value.split(file)
-  if (parts.length === 1) return value
-  return (
-    <>
-      {parts[0]}
-      <code class="bg-surface-raised-base px-1.5 py-0.5 rounded-sm text-text-base">{file}</code>
-      {parts.slice(1).join(file)}
-    </>
-  )
-}
 
 const listServersByHealth = (
   list: ServerConnection.Any[],
@@ -173,14 +162,7 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
   const dialog = useDialog()
   const language = useLanguage()
   const navigate = useNavigate()
-
-  const fail = (err: unknown) => {
-    showToast({
-      variant: "error",
-      title: language.t("common.requestFailed"),
-      description: err instanceof Error ? err.message : String(err),
-    })
-  }
+  const capabilities = useCapabilities()
 
   createEffect(() => {
     if (!props.shown()) return
@@ -212,7 +194,20 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
     (sync.data.config.plugin ?? []).map((item) => (typeof item === "string" ? item : item[0])),
   )
   const pluginCount = createMemo(() => plugins().length)
-  const pluginEmpty = createMemo(() => pluginEmptyMessage(language.t("dialog.plugins.empty"), "opencode.json"))
+  const pluginEmpty = createMemo(() => language.t("dialog.plugins.empty"))
+  const installedCapabilities = createMemo(() => Object.values(capabilities.snapshot().state.installed))
+  const enabledCapabilities = createMemo(() => installedCapabilities().filter((item) => item.enabled).length)
+  const setupCapabilities = createMemo(
+    () => installedCapabilities().filter((item) => item.status === "needs_setup" || item.status === "unhealthy").length,
+  )
+
+  const openMarketplace = () => {
+    const run = ++dialogRun
+    void import("./dialog-settings").then((x) => {
+      if (dialogDead || dialogRun !== run) return
+      dialog.show(() => <x.DialogSettings defaultTab="marketplace" />)
+    })
+  }
 
   return (
     <div class="flex items-center gap-1 w-[360px] rounded-xl shadow-[var(--shadow-lg-border-base)]">
@@ -310,7 +305,21 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
 
         <Tabs.Content value="mcp">
           <div class="flex flex-col px-2 pb-2">
-            <div class="flex flex-col p-3 bg-background-base rounded-sm min-h-14">
+            <div class="flex flex-col gap-3 p-3 bg-background-base rounded-sm min-h-14">
+              <div class="flex items-center justify-between gap-3 rounded-md bg-surface-base px-3 py-2">
+                <div class="flex min-w-0 flex-col">
+                  <span class="text-12-medium text-text-base">{language.t("status.popover.capabilities.title")}</span>
+                  <span class="text-11-regular text-text-weak">
+                    {language.t("status.popover.capabilities.summary", {
+                      enabled: enabledCapabilities(),
+                      setup: setupCapabilities(),
+                    })}
+                  </span>
+                </div>
+                <Button variant="secondary" class="h-7 px-2 py-1" onClick={openMarketplace}>
+                  {language.t("status.popover.action.manageMarketplace")}
+                </Button>
+              </div>
               <Show
                 when={mcpNames().length > 0}
                 fallback={

@@ -9,6 +9,8 @@ describe("BharatCode logo components", () => {
     const files = [src("logo.tsx"), src("..", "v2", "components", "wordmark-v2.tsx")].join("\n")
 
     expect(files).toContain("BharatCode")
-    expect(files).toContain("BHARATCODE")
+    expect(files).toContain("#ff6b35")
+    expect(files).not.toContain("logo-mark-b")
+    expect(files).not.toContain("BHARATCODE")
   })
 })

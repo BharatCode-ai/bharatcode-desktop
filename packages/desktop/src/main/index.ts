@@ -4,18 +4,33 @@ import { existsSync, mkdirSync, rmSync } from "node:fs"
 import * as http from "node:http"
 import { createServer } from "node:net"
 import { homedir, tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join, resolve } from "node:path"
 import { getCACertificates, setDefaultCACertificates } from "node:tls"
+import { fileURLToPath } from "node:url"
 import type { Event } from "electron"
 import { app, BrowserWindow, shell } from "electron"
 
 import contextMenu from "electron-context-menu"
 
-import { getBharatCodeAuthState, handleBharatCodeAuthCallback, signInToBharatCode } from "./bharatcode-auth"
+import {
+  ensureBharatCodePlugin,
+  getBharatCodeAuthState,
+  handleBharatCodeAuthCallback,
+  resolveBundledBharatCodePluginPath,
+  signInToBharatCode,
+} from "./bharatcode-auth"
 import { BRANDING, appIdForChannel, productNameForChannel } from "./branding"
+import {
+  ensureCapabilityRuntime,
+  getCapabilitySnapshotFromStore,
+  installStoredCapability,
+  setStoredCapabilityEnabled,
+  uninstallStoredCapability,
+} from "./capabilities"
 import type { InitStep, ServerReadyData, SqliteMigrationProgress, WslConfig } from "../preload/types"
 import { checkAppExists, resolveAppPath, wslPath } from "./apps"
 import { CHANNEL, UPDATER_ENABLED } from "./constants"
+import { transcribeDictationAudio } from "./dictation"
 import { registerIpcHandlers, sendDeepLinks, sendMenuCommand, sendSqliteMigrationProgress } from "./ipc"
 import { exportDebugLogs, initCrashReporter, initLogging, startNetLog, write as writeLog } from "./logging"
 import { parseMarkdown } from "./markdown"
@@ -38,6 +53,7 @@ import {
   setDockIcon,
 } from "./windows"
 import { migrate } from "./migrate"
+import { getStore } from "./store"
 import { checkUpdate, checkForUpdates, installUpdate, setupAutoUpdater } from "./updater"
 import { Deferred, Effect, Fiber } from "effect"
 
@@ -115,6 +131,31 @@ function ensureLoopbackNoProxy() {
 
   upsert("NO_PROXY")
   upsert("no_proxy")
+}
+
+const mainBundleDir = dirname(fileURLToPath(import.meta.url))
+
+function desktopResourcesPath() {
+  if (app.isPackaged) return join(app.getAppPath(), "resources")
+  return resolve(mainBundleDir, "..", "..", "resources")
+}
+
+function desktopBharatCodePluginPath() {
+  return resolveBundledBharatCodePluginPath(desktopResourcesPath())
+}
+
+function syncCapabilityRuntime() {
+  return ensureCapabilityRuntime({
+    getStore,
+    resourcesPath: desktopResourcesPath(),
+  })
+}
+
+function capabilitySnapshot() {
+  return getCapabilitySnapshotFromStore({
+    getStore,
+    resourcesPath: desktopResourcesPath(),
+  })
 }
 
 const main = Effect.gen(function* () {
@@ -267,10 +308,45 @@ const main = Effect.gen(function* () {
     exportDebugLogs: () => exportDebugLogs(),
     recordFatalRendererError: (error) => writeLog("renderer", "fatal renderer error", { ...error }, "error"),
     getBharatCodeAuthState: () => getBharatCodeAuthState(),
-    signInToBharatCode: () => signInToBharatCode({ openExternal: (url) => shell.openExternal(url) }),
+    signInToBharatCode: () =>
+      signInToBharatCode({
+        openExternal: (url) => shell.openExternal(url),
+        pluginSpec: desktopBharatCodePluginPath(),
+      }),
+    transcribeDictation: (audio) => transcribeDictationAudio(audio),
+    getCapabilitySnapshot: () => capabilitySnapshot(),
+    installCapability: async (id) => {
+      installStoredCapability({ getStore, resourcesPath: desktopResourcesPath(), id })
+      return syncCapabilityRuntime()
+    },
+    setCapabilityEnabled: async (id, enabled) => {
+      setStoredCapabilityEnabled({ getStore, resourcesPath: desktopResourcesPath(), id, enabled })
+      return syncCapabilityRuntime()
+    },
+    uninstallCapability: async (id) => {
+      uninstallStoredCapability({ getStore, resourcesPath: desktopResourcesPath(), id })
+      return syncCapabilityRuntime()
+    },
+    applyCapabilityRuntime: () => syncCapabilityRuntime(),
   })
 
   yield* Effect.promise(() => app.whenReady())
+
+  yield* Effect.promise(() => ensureBharatCodePlugin({ pluginSpec: desktopBharatCodePluginPath() })).pipe(
+    Effect.catch((error) =>
+      Effect.sync(() => {
+        logger.warn("failed to configure BharatCode provider plugin", error)
+      }),
+    ),
+  )
+
+  yield* Effect.promise(() => syncCapabilityRuntime()).pipe(
+    Effect.catch((error) =>
+      Effect.sync(() => {
+        logger.warn("failed to sync capability runtime", error)
+      }),
+    ),
+  )
 
   if (!TEST_ONBOARDING) migrate()
   app.setAsDefaultProtocolClient(BRANDING.protocol)

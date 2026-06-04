@@ -1,4 +1,5 @@
 import type { DesktopMenuAction } from "@opencode-ai/app/desktop-menu"
+import type { CapabilitySnapshot } from "../main/capabilities"
 
 export type InitStep = { phase: "server_waiting" } | { phase: "sqlite_waiting" } | { phase: "done" }
 
@@ -33,6 +34,18 @@ export type FatalRendererError = {
   version?: string
   platform: string
   os?: string
+}
+
+export type DictationAudioInput = {
+  buffer: ArrayBuffer
+  mimeType: string
+  filename: string
+}
+
+export type DictationTranscription = {
+  text: string
+  language?: string
+  duration?: number
 }
 
 export type ElectronAPI = {
@@ -101,4 +114,10 @@ export type ElectronAPI = {
   recordFatalRendererError: (error: FatalRendererError) => Promise<void>
   getBharatCodeAuthState: () => Promise<BharatCodeAuthState>
   signInToBharatCode: () => Promise<BharatCodeAuthState>
+  transcribeDictation: (audio: DictationAudioInput) => Promise<DictationTranscription>
+  getCapabilitySnapshot: () => Promise<CapabilitySnapshot>
+  installCapability: (id: string) => Promise<CapabilitySnapshot>
+  setCapabilityEnabled: (id: string, enabled: boolean) => Promise<CapabilitySnapshot>
+  uninstallCapability: (id: string) => Promise<CapabilitySnapshot>
+  applyCapabilityRuntime: () => Promise<CapabilitySnapshot>
 }

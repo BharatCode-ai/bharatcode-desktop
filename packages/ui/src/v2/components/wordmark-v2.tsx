@@ -17,17 +17,24 @@ export function WordmarkV2(props: Pick<ComponentProps<"svg">, "class">) {
     >
       <title>BharatCode</title>
       <g opacity="0.16" filter={`url(#${filter})`} mask={`url(#${mask})`}>
+        <g transform="translate(0 17) scale(.17)">
+          <g fill="none" stroke="#ff6b35" stroke-width="54" stroke-linecap="square" stroke-linejoin="miter">
+            <path d="M194 142 84 256l110 114" />
+            <path d="m318 142 110 114-110 114" />
+          </g>
+          <path fill="#ff6b35" d="m256 221 35 35-35 35-35-35z" />
+        </g>
         <text
-          x="0"
-          y="88"
+          x="112"
+          y="84"
           opacity="0.78"
           fill="currentColor"
           font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
-          font-size="86"
-          font-weight="760"
-          letter-spacing="10"
+          font-size="80"
+          font-weight="700"
+          letter-spacing="0"
         >
-          BHARATCODE
+          BharatCode
         </text>
       </g>
       <defs>
