@@ -7,7 +7,7 @@ describe("BharatCode desktop branding", () => {
     expect(BRANDING.appName).toBe("BharatCode")
     expect(BRANDING.protocol).toBe("bharatcode")
     expect(BRANDING.repo.owner).toBe("BharatCode-ai")
-    expect(BRANDING.repo.name).toBe("opencode")
+    expect(BRANDING.repo.name).toBe("bharatcode-desktop")
   })
 
   test("builds BharatCode app ids and product names by channel", () => {

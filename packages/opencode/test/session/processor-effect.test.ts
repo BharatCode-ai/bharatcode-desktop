@@ -172,9 +172,8 @@ const assistant = Effect.fn("TestSession.assistant")(function* (
 
 const status = SessionStatus.layer.pipe(Layer.provideMerge(Bus.layer))
 const infra = Layer.mergeAll(NodeFileSystem.layer, CrossSpawnSpawner.defaultLayer)
-const deps = Layer.mergeAll(
+const baseDeps = Layer.mergeAll(
   Session.defaultLayer,
-  Snapshot.defaultLayer,
   AgentSvc.defaultLayer,
   Permission.defaultLayer,
   Plugin.defaultLayer,
@@ -185,17 +184,49 @@ const deps = Layer.mergeAll(
   SyncEvent.defaultLayer,
   EventV2Bridge.defaultLayer,
 ).pipe(Layer.provideMerge(infra))
-const env = Layer.mergeAll(
-  TestLLMServer.layer,
-  SessionProcessor.layer.pipe(
-    Layer.provide(summary),
-    Layer.provide(Image.defaultLayer),
-    Layer.provide(RuntimeFlags.layer({ experimentalEventSystem: true })),
-    Layer.provideMerge(deps),
-  ),
-)
+
+function makeEnv(snapshotLayer: Layer.Layer<Snapshot.Service>) {
+  const deps = Layer.mergeAll(baseDeps, snapshotLayer)
+  return Layer.mergeAll(
+    TestLLMServer.layer,
+    SessionProcessor.layer.pipe(
+      Layer.provide(summary),
+      Layer.provide(Image.defaultLayer),
+      Layer.provide(RuntimeFlags.layer({ experimentalEventSystem: true })),
+      Layer.provideMerge(deps),
+    ),
+  )
+}
+
+const env = makeEnv(Snapshot.defaultLayer)
 
 const it = testEffect(env)
+
+const slowSnapshot = {
+  gate: defer<void>(),
+  tracks: 0,
+}
+
+const slowSnapshotLayer = Layer.succeed(
+  Snapshot.Service,
+  Snapshot.Service.of({
+    init: () => Effect.void,
+    cleanup: () => Effect.void,
+    track: () =>
+      Effect.gen(function* () {
+        slowSnapshot.tracks += 1
+        yield* Effect.promise(() => slowSnapshot.gate.promise)
+        return "slow-snapshot"
+      }),
+    patch: () => Effect.succeed({ hash: "slow-snapshot", files: [] }),
+    restore: () => Effect.void,
+    revert: () => Effect.void,
+    diff: () => Effect.succeed(""),
+    diffFull: () => Effect.succeed([]),
+  }),
+)
+
+const itSlowSnapshot = testEffect(makeEnv(slowSnapshotLayer))
 
 const boot = Effect.fn("test.boot")(function* () {
   const processors = yield* SessionProcessor.Service
@@ -250,6 +281,62 @@ it.live("session.processor effect tests capture llm input cleanly", () =>
         expect(value).toBe("continue")
         expect(calls).toBe(1)
         expect(parts.some((part) => part.type === "text" && part.text === "hello")).toBe(true)
+      }),
+    { config: (url) => providerCfg(url) },
+  ),
+)
+
+itSlowSnapshot.live("session.processor streams text before slow snapshot finishes", () =>
+  provideTmpdirServer(
+    ({ dir, llm }) =>
+      Effect.gen(function* () {
+        slowSnapshot.gate = defer<void>()
+        slowSnapshot.tracks = 0
+
+        const { processors, session, provider } = yield* boot()
+        yield* llm.text("hello")
+
+        const chat = yield* session.create({})
+        const parent = yield* user(chat.id, "hi")
+        const msg = yield* assistant(chat.id, parent.id, path.resolve(dir))
+        const mdl = yield* provider.getModel(ref.providerID, ref.modelID)
+        const handle = yield* processors
+          .create({
+            assistantMessage: msg,
+            sessionID: chat.id,
+            model: mdl,
+          })
+          .pipe(Effect.timeout("50 millis"))
+
+        const run = yield* handle
+          .process({
+            user: {
+              id: parent.id,
+              sessionID: chat.id,
+              role: "user",
+              time: parent.time,
+              agent: parent.agent,
+              model: { providerID: ref.providerID, modelID: ref.modelID },
+            } satisfies MessageV2.User,
+            sessionID: chat.id,
+            model: mdl,
+            agent: agent(),
+            system: [],
+            messages: [{ role: "user", content: "hi" }],
+            tools: {},
+          })
+          .pipe(Effect.forkChild)
+
+        const text = yield* waitFor(
+          Effect.sync(() => MessageV2.parts(msg.id).find((part): part is MessageV2.TextPart => part.type === "text")),
+          "timed out waiting for text before snapshot finished",
+        )
+        expect(text.text).toBe("hello")
+        expect(slowSnapshot.tracks).toBe(1)
+
+        slowSnapshot.gate.resolve()
+        const exit = yield* Fiber.await(run).pipe(Effect.timeout("250 millis"))
+        expect(Exit.isSuccess(exit)).toBe(true)
       }),
     { config: (url) => providerCfg(url) },
   ),

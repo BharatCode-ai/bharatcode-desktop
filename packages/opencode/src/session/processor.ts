@@ -1,5 +1,5 @@
 import { Image } from "@/image/image"
-import { Cause, Deferred, Effect, Exit, Layer, Context, Scope, Schema } from "effect"
+import { Cause, Deferred, Effect, Exit, Fiber, Layer, Context, Scope, Schema } from "effect"
 import * as Stream from "effect/Stream"
 import { Agent } from "@/agent/agent"
 import { Bus } from "@/bus"
@@ -76,6 +76,7 @@ interface ProcessorContext extends Input {
   snapshot: string | undefined
   blocked: boolean
   needsCompaction: boolean
+  currentStepStart: MessageV2.StepStartPart | undefined
   currentText: MessageV2.TextPart | undefined
   reasoningMap: Record<string, MessageV2.ReasoningPart>
 }
@@ -103,23 +104,23 @@ export const layer = Layer.effect(
     const flags = yield* RuntimeFlags.Service
 
     const create = Effect.fn("SessionProcessor.create")(function* (input: Input) {
-      // Pre-capture snapshot before the LLM stream starts. The AI SDK
-      // may execute tools internally before emitting start-step events,
-      // so capturing inside the event handler can be too late.
-      const initialSnapshot = yield* snapshot.track()
       const ctx: ProcessorContext = {
         assistantMessage: input.assistantMessage,
         sessionID: input.sessionID,
         model: input.model,
         toolcalls: {},
         shouldBreak: false,
-        snapshot: initialSnapshot,
+        snapshot: undefined,
         blocked: false,
         needsCompaction: false,
+        currentStepStart: undefined,
         currentText: undefined,
         reasoningMap: {},
       }
       let aborted = false
+      let snapshotStarted = false
+      let snapshotSettled = false
+      let snapshotFiber: Fiber.Fiber<string | undefined, never> | undefined
       const slog = log.clone().tag("session.id", input.sessionID).tag("messageID", input.assistantMessage.id)
 
       const parse = (e: unknown) =>
@@ -127,6 +128,48 @@ export const layer = Layer.effect(
           providerID: input.model.providerID,
           aborted,
         })
+
+      const startSnapshot = Effect.fn("SessionProcessor.startSnapshot")(function* () {
+        if (snapshotStarted) return
+        snapshotStarted = true
+        snapshotFiber = yield* snapshot.track().pipe(Effect.forkIn(scope))
+      })
+
+      const ensureSnapshot = Effect.fn("SessionProcessor.ensureSnapshot")(function* () {
+        if (snapshotSettled) return ctx.snapshot
+        if (!snapshotFiber) yield* startSnapshot()
+        const fiber = snapshotFiber
+        if (!fiber) return ctx.snapshot
+        ctx.snapshot = yield* Fiber.join(fiber)
+        snapshotSettled = true
+        return ctx.snapshot
+      })
+
+      const guardToolSnapshots = (streamInput: LLM.StreamInput): LLM.StreamInput => {
+        const entries = Object.entries(streamInput.tools)
+        if (!entries.some(([, tool]) => typeof (tool as { execute?: unknown }).execute === "function"))
+          return streamInput
+
+        return {
+          ...streamInput,
+          tools: Object.fromEntries(
+            entries.map(([name, tool]) => {
+              const execute = (tool as { execute?: (...args: Array<unknown>) => Promise<unknown> | unknown }).execute
+              if (typeof execute !== "function") return [name, tool]
+              return [
+                name,
+                {
+                  ...tool,
+                  execute: async (...args: Array<unknown>) => {
+                    await Effect.runPromise(ensureSnapshot())
+                    return execute(...args)
+                  },
+                },
+              ]
+            }),
+          ),
+        }
+      }
 
       const settleToolCall = Effect.fn("SessionProcessor.settleToolCall")(function* (toolCallID: string) {
         const done = ctx.toolcalls[toolCallID]?.done
@@ -526,7 +569,7 @@ export const layer = Layer.effect(
             throw new Error(value.message)
 
           case "step-start":
-            if (!ctx.snapshot) ctx.snapshot = yield* snapshot.track()
+            yield* startSnapshot()
             if (!ctx.assistantMessage.summary) {
               // TODO(v2): Temporary dual-write while migrating session messages to v2 events.
               if (flags.experimentalEventSystem) {
@@ -543,16 +586,22 @@ export const layer = Layer.effect(
                 })
               }
             }
-            yield* session.updatePart({
+            ctx.currentStepStart = {
               id: PartID.ascending(),
               messageID: ctx.assistantMessage.id,
               sessionID: ctx.sessionID,
               snapshot: ctx.snapshot,
               type: "step-start",
-            })
+            }
+            yield* session.updatePart(ctx.currentStepStart)
             return
 
           case "step-finish": {
+            const initialSnapshot = yield* ensureSnapshot()
+            if (initialSnapshot && ctx.currentStepStart && !ctx.currentStepStart.snapshot) {
+              ctx.currentStepStart.snapshot = initialSnapshot
+              yield* session.updatePart(ctx.currentStepStart)
+            }
             const completedSnapshot = yield* snapshot.track()
             yield* Effect.forEach(Object.keys(ctx.reasoningMap), finishReasoning)
             const usage = Session.getUsage({
@@ -587,8 +636,8 @@ export const layer = Layer.effect(
               cost: usage.cost,
             })
             yield* session.updateMessage(ctx.assistantMessage)
-            if (ctx.snapshot) {
-              const patch = yield* snapshot.patch(ctx.snapshot)
+            if (initialSnapshot) {
+              const patch = yield* snapshot.patch(initialSnapshot)
               if (patch.files.length) {
                 yield* session.updatePart({
                   id: PartID.ascending(),
@@ -600,6 +649,9 @@ export const layer = Layer.effect(
                 })
               }
               ctx.snapshot = undefined
+              snapshotSettled = false
+              snapshotStarted = false
+              snapshotFiber = undefined
             }
             yield* summary
               .summarize({
@@ -689,8 +741,9 @@ export const layer = Layer.effect(
       })
 
       const cleanup = Effect.fn("SessionProcessor.cleanup")(function* () {
-        if (ctx.snapshot) {
-          const patch = yield* snapshot.patch(ctx.snapshot)
+        const initialSnapshot = snapshotStarted ? yield* ensureSnapshot() : ctx.snapshot
+        if (initialSnapshot) {
+          const patch = yield* snapshot.patch(initialSnapshot)
           if (patch.files.length) {
             yield* session.updatePart({
               id: PartID.ascending(),
@@ -702,6 +755,9 @@ export const layer = Layer.effect(
             })
           }
           ctx.snapshot = undefined
+          snapshotSettled = false
+          snapshotStarted = false
+          snapshotFiber = undefined
         }
 
         if (ctx.currentText) {
@@ -787,7 +843,8 @@ export const layer = Layer.effect(
             ctx.currentText = undefined
             ctx.reasoningMap = {}
             yield* status.set(ctx.sessionID, { type: "busy" })
-            const stream = llm.stream(streamInput)
+            yield* startSnapshot()
+            const stream = llm.stream(guardToolSnapshots(streamInput))
 
             yield* stream.pipe(
               Stream.tap((event) => handleEvent(event)),
