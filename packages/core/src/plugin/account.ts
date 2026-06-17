@@ -31,7 +31,12 @@ export const AccountPlugin = PluginV2.define({
               provider.options.aisdk.provider.apiKey = account.credential.key
               Object.assign(provider.options.aisdk.provider, account.credential.metadata ?? {})
             }
-            if (account.credential.type === "oauth") provider.options.aisdk.provider.apiKey = account.credential.access
+            if (
+              account.credential.type === "oauth" &&
+              typeof provider.options.aisdk.provider.fetch !== "function"
+            ) {
+              provider.options.aisdk.provider.apiKey = account.credential.access
+            }
           })
         }
       }),

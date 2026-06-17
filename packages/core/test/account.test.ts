@@ -281,4 +281,76 @@ describe("AccountV2", () => {
       ),
     ),
   )
+
+  it.live("account plugin does not overwrite oauth providers that own token refresh through fetch", () =>
+    Effect.acquireRelease(
+      Effect.promise(() => tmpdir()),
+      (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+    ).pipe(
+      Effect.flatMap((tmp) =>
+        Effect.gen(function* () {
+          const accounts = yield* AccountV2.Service
+          const plugin = yield* PluginV2.Service
+          const provider = ProviderV2.Info.empty(ProviderV2.ID.make("bharatcode"))
+          provider.options.aisdk.provider.apiKey = "bharatcode-desktop-oauth"
+          provider.options.aisdk.provider.fetch = async () => new Response("ok")
+          const records = [
+            {
+              provider,
+              models: new Map<ModelV2.ID, ModelV2.Info>(),
+            },
+          ]
+          const updates: Array<{ id: ProviderV2.ID; enabled: ProviderV2.Info["enabled"]; apiKey?: string }> = []
+          const catalog = Catalog.Service.of({
+            loader: () => Effect.die("unexpected catalog.loader"),
+            provider: {
+              get: () => Effect.die("unexpected provider.get"),
+              all: () => Effect.succeed([]),
+              available: () => Effect.succeed([]),
+            },
+            model: {
+              get: () => Effect.die("unexpected model.get"),
+              all: () => Effect.succeed([]),
+              available: () => Effect.succeed([]),
+              default: () => Effect.succeed(Option.none<ModelV2.Info>()),
+              setDefault: () => Effect.die("unexpected model.setDefault"),
+              small: () => Effect.succeed(Option.none<ModelV2.Info>()),
+            },
+          })
+
+          const eventSvc = yield* EventV2.Service
+          yield* plugin.add({
+            ...AccountPlugin,
+            effect: AccountPlugin.effect.pipe(
+              Effect.provideService(AccountV2.Service, accounts),
+              Effect.provideService(Catalog.Service, catalog),
+              Effect.provideService(EventV2.Service, eventSvc),
+              Effect.provideService(PluginV2.Service, plugin),
+            ),
+          })
+          yield* Effect.yieldNow
+
+          const account = yield* accounts.create({
+            serviceID: AccountV2.ServiceID.make("bharatcode"),
+            credential: new AccountV2.OAuthCredential({
+              type: "oauth",
+              access: "stale-account-access-token",
+              refresh: "account-refresh-token",
+              expires: 1,
+            }),
+          })
+          expect(account).toBeDefined()
+
+          yield* plugin.trigger("catalog.transform", context(records, updates), {})
+
+          expect(records[0].provider.enabled).toEqual({
+            via: "account",
+            service: AccountV2.ServiceID.make("bharatcode"),
+          })
+          expect(records[0].provider.options.aisdk.provider.apiKey).toBe("bharatcode-desktop-oauth")
+          expect(records[0].provider.options.aisdk.provider.fetch).toBe(provider.options.aisdk.provider.fetch)
+        }).pipe(Effect.provide(testLayer(tmp.path))),
+      ),
+    ),
+  )
 })
