@@ -46,7 +46,7 @@ permissions:
 jobs:
   package-windows:
     name: Package and publish unsigned Windows app
-    runs-on: windows-latest
+    runs-on: windows-2022
     env:
       BHARATCODE_ALLOW_UNSIGNED_WINDOWS: "1"
       CSC_IDENTITY_AUTO_DISCOVERY: "false"
