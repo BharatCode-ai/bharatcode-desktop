@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, rmSync } from "node:fs"
 import * as http from "node:http"
 import { createServer } from "node:net"
 import { homedir, tmpdir } from "node:os"
-import { dirname, join, resolve } from "node:path"
+import { dirname, join } from "node:path"
 import { getCACertificates, setDefaultCACertificates } from "node:tls"
 import { fileURLToPath } from "node:url"
 import type { Event } from "electron"
@@ -17,6 +17,7 @@ import {
   getBharatCodeAuthState,
   handleBharatCodeAuthCallback,
   resolveBundledBharatCodePluginPath,
+  resolveDesktopResourcesPath,
   signInToBharatCode,
 } from "./bharatcode-auth"
 import { BRANDING, appIdForChannel, productNameForChannel } from "./branding"
@@ -136,8 +137,11 @@ function ensureLoopbackNoProxy() {
 const mainBundleDir = dirname(fileURLToPath(import.meta.url))
 
 function desktopResourcesPath() {
-  if (app.isPackaged) return join(app.getAppPath(), "resources")
-  return resolve(mainBundleDir, "..", "..", "resources")
+  return resolveDesktopResourcesPath({
+    packaged: app.isPackaged,
+    processResourcesPath: process.resourcesPath,
+    mainBundleDir,
+  })
 }
 
 function desktopBharatCodePluginPath() {

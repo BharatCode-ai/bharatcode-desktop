@@ -2,7 +2,7 @@ import { createHash, randomBytes } from "node:crypto"
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises"
 import { createServer, type Server } from "node:http"
 import { homedir } from "node:os"
-import { dirname, join } from "node:path"
+import { dirname, join, resolve } from "node:path"
 
 export const BHARATCODE_OAUTH = {
   issuer: "https://evgvlcaxfpwupaiwzqqm.supabase.co/auth/v1",
@@ -108,6 +108,19 @@ export function opencodeConfigPath(home = process.env.BHARATCODE_HOME || homedir
 
 export function resolveBundledBharatCodePluginPath(resourcesPath: string) {
   return join(resourcesPath, "provider", "bharatcode", "index.js")
+}
+
+export function resolveDesktopResourcesPath({
+  packaged,
+  processResourcesPath,
+  mainBundleDir,
+}: {
+  packaged: boolean
+  processResourcesPath: string
+  mainBundleDir: string
+}) {
+  if (packaged) return processResourcesPath
+  return resolve(mainBundleDir, "..", "..", "resources")
 }
 
 export function base64Url(input: Buffer | Uint8Array | string) {

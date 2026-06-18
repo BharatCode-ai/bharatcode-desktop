@@ -10,6 +10,8 @@ import {
   handleBharatCodeAuthCallback,
   ensureBharatCodePlugin,
   isBharatCodeAuthCallback,
+  resolveBundledBharatCodePluginPath,
+  resolveDesktopResourcesPath,
   signInToBharatCode,
 } from "./bharatcode-auth"
 
@@ -253,6 +255,32 @@ describe("BharatCode desktop auth contract", () => {
     } finally {
       await rm(home, { recursive: true, force: true })
     }
+  })
+
+  test("resolves packaged desktop resources outside app.asar for the OpenCode sidecar", () => {
+    const packagedResources = "/opt/BharatCode/resources"
+    const appAsarMainBundle = "/opt/BharatCode/resources/app.asar/out/main"
+
+    const resourcesPath = resolveDesktopResourcesPath({
+      packaged: true,
+      processResourcesPath: packagedResources,
+      mainBundleDir: appAsarMainBundle,
+    })
+
+    expect(resourcesPath).toBe(packagedResources)
+    expect(resourcesPath).not.toContain("app.asar")
+    expect(resolveBundledBharatCodePluginPath(resourcesPath)).toBe(
+      join(packagedResources, "provider", "bharatcode", "index.js"),
+    )
+  })
+
+  test("packages managed provider resources as real files outside app.asar", async () => {
+    const builderConfig = await readFile(join(import.meta.dir, "..", "..", "electron-builder.config.ts"), "utf8")
+
+    expect(builderConfig).toContain('from: "resources/provider"')
+    expect(builderConfig).toContain('to: "provider"')
+    expect(builderConfig).toContain('from: "resources/capabilities"')
+    expect(builderConfig).toContain('to: "capabilities"')
   })
 
   test("the bundled provider retries a 401 with a refreshed bearer token", async () => {
