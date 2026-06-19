@@ -2,15 +2,15 @@
 
 BharatCode Desktop is the native desktop app for BharatCode's OAuth-based coding experience. It bundles the OpenCode runtime with BharatCode sign-in, provider configuration, and the BharatCode model endpoint.
 
-The current public beta path is:
+Desktop first-run opens BharatCode OAuth, then reuses the shared BharatCode credential and config locations used by the CLI. No user-facing provider API key is required for normal beta use.
+
+CLI commands are optional bootstrap and troubleshooting tools:
 
 ```bash
 npm install -g bharatcode@latest
 bharatcode auth login
 bharatcode opencode configure
 ```
-
-Desktop first-run shows **Sign in to BharatCode** and uses the same CLI-backed OAuth flow. No user-facing provider API key is required for normal beta use.
 
 ## What Is In This Repo
 
@@ -22,6 +22,13 @@ This public scope is Desktop-focused:
 - `packages/core`, `packages/sdk`, `packages/plugin`, `packages/ui`, `packages/llm`, `packages/http-recorder`, `packages/script`: runtime and build dependencies needed by Desktop.
 - `packages/desktop/resources/provider/bharatcode`: Bundled BharatCode provider with OAuth refresh behavior.
 - `packages/desktop/resources/capabilities`: Bundled capability catalog and skills shipped with Desktop.
+
+Retained support areas:
+
+- `packages/effect-drizzle-sqlite`: retained upstream SQLite adapter package and spec coverage.
+- `packages/identity`: BharatCode/OpenCode identity marks used by Desktop packaging and public assets.
+- `specs`: upstream technical specifications retained for runtime/protocol provenance.
+- `nix`: optional reproducible-build packaging support retained for contributors who use Nix.
 
 This repo is not the public infrastructure repo for BharatCode. It should not contain production secrets, private deployment runbooks, or internal support records.
 

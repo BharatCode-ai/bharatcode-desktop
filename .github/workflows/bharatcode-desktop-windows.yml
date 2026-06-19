@@ -14,7 +14,6 @@ on:
         options:
           - beta
           - prod
-          - dev
       tag:
         description: GitHub Release tag to create/update. Defaults to desktop-<channel>-<date>-<run>.
         required: false
@@ -76,6 +75,11 @@ jobs:
 
           if ([string]::IsNullOrWhiteSpace($name)) {
             $name = "BharatCode Desktop $tag"
+          }
+
+          $publishRequested = $eventName -eq "release" -or "${{ inputs.publish_release }}" -eq "true"
+          if ($channel -eq "dev" -and $publishRequested) {
+            throw "DEV builds are local-only and must not publish release assets."
           }
 
           "BHARATCODE_CHANNEL=$channel" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
