@@ -1,47 +1,29 @@
 # Security
 
-## IMPORTANT
-
-We do not accept AI generated security reports. We receive a large number of
-these and we absolutely do not have the resources to review them all. If you
-submit one that will be an automatic ban from the project.
-
 ## Threat Model
 
-### Overview
+BharatCode Desktop is a local AI coding app. It can read files, run local commands, and connect to external services that the user enables. The permission system is intended to keep users aware of actions the app is taking; it is not a security sandbox.
 
-OpenCode is an AI-powered coding assistant that runs locally on your machine. It provides an agent system with access to powerful tools including shell execution, file operations, and web access.
+If you need strict isolation, run BharatCode Desktop inside a VM, container, or dedicated user account.
 
-### No Sandbox
+## External Services
 
-OpenCode does **not** sandbox the agent. The permission system exists as a UX feature to help users stay aware of what actions the agent is taking - it prompts for confirmation before executing commands, writing files, etc. However, it is not designed to provide security isolation.
+BharatCode Desktop uses BharatCode OAuth for sign-in and model access. Optional bundled capabilities may connect to external services only when configured or enabled by the user. Examples include GitHub, Playwright, Figma, Linear, Sentry, Supabase, Stripe, and Cloudflare Docs.
 
-If you need true isolation, run OpenCode inside a Docker container or VM.
+Do not share OAuth tokens, API keys, credential files, private prompts, private repository links, phone numbers, raw emails, or unredacted debug archives in public issues.
 
-### Server Mode
+## Out Of Scope
 
-Server mode is opt-in only. When enabled, set `OPENCODE_SERVER_PASSWORD` to require HTTP Basic Auth. Without this, the server runs unauthenticated (with a warning). It is the end user's responsibility to secure the server - any functionality it provides is not a vulnerability.
+| Category | Rationale |
+| --- | --- |
+| User-approved command execution | Desktop is a coding assistant and local command execution is expected behavior. |
+| Sandbox escapes | The permission system is not a sandbox. |
+| User-configured external services | Data handling for user-enabled external services is governed by those services and the user's configuration. |
+| Malicious local config files | Users control their own local configuration and project files. |
+| Reports generated without human verification | Automated reports without a reproducible impact path are not actionable. |
 
-### Out of Scope
+## Reporting Security Issues
 
-| Category                        | Rationale                                                               |
-| ------------------------------- | ----------------------------------------------------------------------- |
-| **Server access when opted-in** | If you enable server mode, API access is expected behavior              |
-| **Sandbox escapes**             | The permission system is not a sandbox (see above)                      |
-| **LLM provider data handling**  | Data sent to your configured LLM provider is governed by their policies |
-| **MCP server behavior**         | External MCP servers you configure are outside our trust boundary       |
-| **Malicious config files**      | Users control their own config; modifying it is not an attack vector    |
+Please use GitHub Security Advisories for this repository when available. If advisories are not available to you, open a minimal public issue that says you have a security report and wait for a maintainer to provide a private channel.
 
----
-
-# Reporting Security Issues
-
-We appreciate your efforts to responsibly disclose your findings, and will make every effort to acknowledge your contributions.
-
-To report a security issue, please use the GitHub Security Advisory ["Report a Vulnerability"](https://github.com/anomalyco/opencode/security/advisories/new) tab.
-
-The team will send a response indicating the next steps in handling your report. After the initial reply to your report, the security team will keep you informed of the progress towards a fix and full announcement, and may ask for additional information or guidance.
-
-## Escalation
-
-If you do not receive an acknowledgement of your report within 6 business days, you may send an email to security@anoma.ly
+Do not include exploit details, secrets, private logs, tokens, credential files, or personally identifiable information in a public issue.

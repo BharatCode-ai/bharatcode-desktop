@@ -6,6 +6,7 @@ import { promisify } from "node:util"
 import type { Configuration } from "electron-builder"
 import {
   BRANDING,
+  type Channel,
   appIdForChannel,
   normalizeChannel,
   packageNameForChannel,
@@ -30,6 +31,10 @@ async function signWindows(configuration: { path: string }) {
 const channel = (() => {
   return normalizeChannel(process.env.BHARATCODE_CHANNEL || process.env.OPENCODE_CHANNEL)
 })()
+
+function updateChannelForChannel(channel: Channel) {
+  return channel === "beta" ? "beta" : "latest"
+}
 
 const getBase = (): Configuration => ({
   artifactName: "bharatcode-desktop-${os}-${arch}.${ext}",
@@ -112,7 +117,12 @@ function getConfig() {
         appId: appIdForChannel(channel),
         productName: productNameForChannel(channel),
         protocols: { name: productNameForChannel(channel), schemes: [BRANDING.protocol] },
-        publish: { provider: "github", owner: BRANDING.repo.owner, repo: BRANDING.repo.name, channel: "latest" },
+        publish: {
+          provider: "github",
+          owner: BRANDING.repo.owner,
+          repo: BRANDING.repo.name,
+          channel: updateChannelForChannel(channel),
+        },
         rpm: { packageName: packageNameForChannel(channel) },
       }
     }
@@ -122,7 +132,12 @@ function getConfig() {
         appId: appIdForChannel(channel),
         productName: productNameForChannel(channel),
         protocols: { name: productNameForChannel(channel), schemes: [BRANDING.protocol] },
-        publish: { provider: "github", owner: BRANDING.repo.owner, repo: BRANDING.repo.name, channel: "latest" },
+        publish: {
+          provider: "github",
+          owner: BRANDING.repo.owner,
+          repo: BRANDING.repo.name,
+          channel: updateChannelForChannel(channel),
+        },
         rpm: { packageName: packageNameForChannel(channel) },
       }
     }

@@ -7,8 +7,8 @@ const cache = new Map<string, Store>()
 
 // We cannot instantiate the electron-store at module load time because
 // module import hoisting causes this to run before app.setPath("userData", ...)
-// in index.ts has executed, which would result in files being written to the default directory
-// (e.g. bad: %APPDATA%\@opencode-ai\desktop\opencode.settings vs good: %APPDATA%\ai.opencode.desktop.dev\opencode.settings).
+// in index.ts has executed, which would result in files being written to Electron's
+// default app-data directory instead of the channel-specific BharatCode directory.
 export function getStore(name = SETTINGS_STORE) {
   const cached = cache.get(name)
   if (cached) return cached

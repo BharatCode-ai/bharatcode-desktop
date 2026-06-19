@@ -1,5 +1,5 @@
 blank_issues_enabled: false
 contact_links:
-  - name: 💬 Discord Community
-    url: https://discord.gg/opencode
-    about: For quick questions or real-time discussion. Note that issues are searchable and help others with the same question.
+  - name: BharatCode support
+    url: https://bharatcode.ai
+    about: For account or production access issues, use the BharatCode support path. Do not share secrets in public issues.

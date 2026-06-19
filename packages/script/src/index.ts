@@ -49,11 +49,19 @@ const VERSION = await (async () => {
 
 const bot = ["actions-user", "opencode", "opencode-agent[bot]"]
 const teamPath = path.resolve(import.meta.dir, "../../../.github/TEAM_MEMBERS")
+async function readTeamMembers(filePath: string) {
+  try {
+    return await Bun.file(filePath)
+      .text()
+      .then((x) => x.split(/\r?\n/).map((x) => x.trim()))
+      .then((x) => x.filter((x) => x && !x.startsWith("#")))
+  } catch (error) {
+    if ((error as { code?: string }).code === "ENOENT") return []
+    throw error
+  }
+}
 const team = [
-  ...(await Bun.file(teamPath)
-    .text()
-    .then((x) => x.split(/\r?\n/).map((x) => x.trim()))
-    .then((x) => x.filter((x) => x && !x.startsWith("#")))),
+  ...(await readTeamMembers(teamPath)),
   ...bot,
 ]
 
