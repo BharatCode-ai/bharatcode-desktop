@@ -1,10 +1,16 @@
 name: Question
-description: Ask a question
+description: Ask a BharatCode Desktop question
+title: "[question]: "
 body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not paste OAuth tokens, API keys, credential files, private prompts, private repository links, phone numbers, raw emails, or unredacted debug archives.
+
   - type: textarea
     id: question
     attributes:
       label: Question
-      description: What's your question?
+      description: What would you like to know?
     validations:
       required: true

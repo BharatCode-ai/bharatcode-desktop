@@ -1,8 +1,10 @@
-# BharatCode OpenCode Fork
+# BharatCode Desktop
 
-This public fork builds the BharatCode Desktop app and BharatCode VS Code extension path from OpenCode.
+BharatCode Desktop is the native desktop app for BharatCode's OAuth-based coding experience. It bundles the OpenCode runtime with BharatCode sign-in, provider configuration, and the BharatCode model endpoint.
 
-The beta user path is OAuth-first:
+Desktop first-run opens BharatCode OAuth, then reuses the shared BharatCode credential and config locations used by the CLI. No user-facing provider API key is required for normal beta use.
+
+CLI commands are optional bootstrap and troubleshooting tools:
 
 ```bash
 npm install -g bharatcode@latest
@@ -10,85 +12,101 @@ bharatcode auth login
 bharatcode opencode configure
 ```
 
-No user-facing provider API key is required. Model traffic goes through:
+## What Is In This Repo
 
-```text
-https://bharatcode.ai/api/model/v1
-```
+This public scope is Desktop-focused:
 
-## Shared OAuth Backend
+- `packages/desktop`: Electron shell, auth handoff, updater, and packaging.
+- `packages/app`: Shared app UI used by Desktop.
+- `packages/opencode`: Bundled OpenCode runtime.
+- `packages/core`, `packages/sdk`, `packages/plugin`, `packages/ui`, `packages/llm`, `packages/http-recorder`, `packages/script`: runtime and build dependencies needed by Desktop.
+- `packages/desktop/resources/provider/bharatcode`: Bundled BharatCode provider with OAuth refresh behavior.
+- `packages/desktop/resources/capabilities`: Bundled capability catalog and skills shipped with Desktop.
 
-- Supabase issuer: `https://evgvlcaxfpwupaiwzqqm.supabase.co/auth/v1`
-- Native client ID: `4cad332a-232f-4ef2-9363-12fea4420635`
-- Desktop deep link: `bharatcode://auth/callback`
-- CLI loopback callback: `http://127.0.0.1:27182/callback`
-- VS Code callback reserved for future direct callback flow: `vscode://bharatcode.bharatcode/auth/callback`
+Retained support areas:
 
-The current MVP delegates token storage and OpenCode config generation to the BharatCode CLI so Desktop and VS Code share the same auth implementation.
+- `packages/effect-drizzle-sqlite`: retained upstream SQLite adapter package and spec coverage.
+- `packages/identity`: BharatCode/OpenCode identity marks used by Desktop packaging and public assets.
+- `specs`: upstream technical specifications retained for runtime/protocol provenance.
+- `nix`: optional reproducible-build packaging support retained for contributors who use Nix.
 
-## Desktop Development
+This repo is not the public infrastructure repo for BharatCode. It should not contain production secrets, private deployment runbooks, or internal support records.
+
+## Development
+
+Requirements:
+
+- Bun 1.3+
+- Node.js 20+ for tooling that shells out to Node
+
+Install dependencies:
 
 ```bash
 bun install
+```
+
+Run Desktop in development:
+
+```bash
 bun --cwd packages/desktop dev
 ```
 
-Desktop first-run shows **Sign in to BharatCode**. The button runs:
+Run the shared app UI:
 
 ```bash
-bharatcode auth login
-bharatcode opencode configure
+bun --cwd packages/app dev
 ```
 
-After successful sign-in, Desktop relaunches so the local sidecar picks up the generated BharatCode OpenCode config.
+## Local Checks
 
-## VS Code Development
-
-```bash
-cd sdks/vscode
-bun install
-code .
-```
-
-Press `F5` in VS Code. The extension contributes:
-
-- `BharatCode: Sign in to BharatCode`
-- `BharatCode: Open BharatCode`
-- `BharatCode: Open BharatCode in new tab`
-- `BharatCode: Add Filepath to BharatCode Terminal`
-
-The default terminal command is:
-
-```bash
-bharatcode --port <port>
-```
-
-## Local Smoke Checks
+Focused Desktop checks:
 
 ```bash
 cd packages/desktop
 bun test src/main/branding.test.ts src/main/bharatcode-auth.test.ts
-
-cd ../../sdks/vscode
-bun test src/bharatcode.test.ts
+bun typecheck
 ```
 
-Some broader app tests require the full monorepo Bun install.
+Package Desktop locally:
 
-## Release Plan
+```bash
+bun --cwd packages/desktop build
+bun --cwd packages/desktop package:win
+```
 
-1. Confirm the BharatCode CLI auth bug-fix release is published and `bharatcode auth login` succeeds on macOS, Windows, and Linux.
-2. Generate final BharatCode icon assets for Desktop and VS Code, replacing the current placeholder icon set.
-3. Build signed Desktop installers from CI for macOS, Windows, and Linux using GitHub releases in `BharatCode-ai/bharatcode-desktop`.
-4. Package the VS Code extension as `bharatcode.bharatcode` and test with `vsce package` locally.
-5. Publish private/internal artifacts first. Do not publish public installers or marketplace extensions without an explicit release approval.
+Some broader runtime checks require a full Bun install from the repo root.
 
-## Remaining Blockers
+## Beta Releases
 
-- Desktop and VS Code depend on the public beta CLI command `bharatcode auth login`. If that command regresses, these surfaces should keep showing the documented auth error instead of adding a separate token store.
-- Final signed installer release needs BharatCode production signing credentials and final artwork.
-- Direct VS Code URI callback and Desktop `bharatcode://auth/callback` token exchange are reserved for a later deeper integration. The current MVP uses the CLI loopback callback.
+The current public beta release channel builds unsigned Windows installers through GitHub Actions. Public release notes and website download copy should describe those artifacts as beta/unsigned until signing and multi-platform release gates are explicitly approved.
+
+Current channel policy:
+
+- `beta`: public beta artifacts and beta update metadata.
+- `prod`: future stable artifacts and production update metadata.
+- `dev`: local development only; updater disabled.
+
+Do not publish public installers, update metadata, or marketplace artifacts without explicit release approval.
+
+## Support And Issue Safety
+
+When opening an issue, include:
+
+- BharatCode Desktop version and channel.
+- Operating system.
+- Install source.
+- Visible error text.
+- Approximate timestamp.
+- Redacted logs or screenshots.
+
+Do not paste OAuth tokens, API keys, credential files, private prompts, private repository links, phone numbers, raw emails, or unredacted debug archives.
+
+## Bundled Capabilities
+
+Desktop includes an optional capability catalog. Some entries require user setup and may send requests to external services when enabled by the user, including GitHub, Playwright, Figma, Linear, Sentry, Supabase, Stripe, and Cloudflare Docs.
+
+The bundled Superpowers skills are attributed to Obra. Keep their license and attribution notes with any redistributed capability files.
 
 ## Attribution
 
-BharatCode Desktop and the BharatCode VS Code extension are based on OpenCode and retain the upstream MIT license.
+BharatCode Desktop is based on OpenCode and retains the upstream MIT license.

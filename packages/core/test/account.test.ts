@@ -291,9 +291,10 @@ describe("AccountV2", () => {
         Effect.gen(function* () {
           const accounts = yield* AccountV2.Service
           const plugin = yield* PluginV2.Service
-          const provider = ProviderV2.Info.empty(ProviderV2.ID.make("bharatcode"))
-          provider.options.aisdk.provider.apiKey = "bharatcode-desktop-oauth"
-          provider.options.aisdk.provider.fetch = async () => new Response("ok")
+          const provider = produce(ProviderV2.Info.empty(ProviderV2.ID.make("bharatcode")), (draft) => {
+            draft.options.aisdk.provider.apiKey = "bharatcode-desktop-oauth"
+            draft.options.aisdk.provider.fetch = async () => new Response("ok")
+          })
           const records = [
             {
               provider,

@@ -1,28 +1,66 @@
 name: Bug report
-description: Report an issue that should be fixed
+description: Report a BharatCode Desktop issue
+title: "[bug]: "
 body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not paste OAuth tokens, API keys, credential files, private prompts, private repository links, phone numbers, raw emails, or unredacted debug archives.
+
   - type: textarea
     id: description
     attributes:
-      label: Description
-      description: Describe the bug you encountered
-      placeholder: What happened?
+      label: What happened?
+      description: Describe the user-visible issue.
+      placeholder: BharatCode Desktop showed...
     validations:
       required: true
 
   - type: input
-    id: plugins
+    id: desktop-version
     attributes:
-      label: Plugins
-      description: What plugins are you using?
+      label: BharatCode Desktop version
+      placeholder: e.g. 1.15.13
     validations:
       required: false
 
   - type: input
-    id: opencode-version
+    id: channel
     attributes:
-      label: OpenCode version
-      description: What version of OpenCode are you using?
+      label: Channel
+      placeholder: beta, prod, or dev
+    validations:
+      required: false
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: e.g. Windows 11, macOS 15, Ubuntu 24.04
+    validations:
+      required: false
+
+  - type: input
+    id: install-source
+    attributes:
+      label: Install source
+      placeholder: e.g. website download, GitHub release, local build
+    validations:
+      required: false
+
+  - type: input
+    id: visible-error
+    attributes:
+      label: Visible error
+      placeholder: Paste only the visible error text, with secrets removed
+    validations:
+      required: false
+
+  - type: input
+    id: approximate-time
+    attributes:
+      label: Approximate timestamp
+      placeholder: e.g. 2026-06-20 10:15 IST
     validations:
       required: false
 
@@ -30,7 +68,6 @@ body:
     id: reproduce
     attributes:
       label: Steps to reproduce
-      description: How can we reproduce this issue?
       placeholder: |
         1.
         2.
@@ -39,28 +76,9 @@ body:
       required: false
 
   - type: textarea
-    id: screenshot-or-link
+    id: redacted-evidence
     attributes:
-      label: Screenshot and/or share link
-      description: Run `/share` to get a share link, or attach a screenshot
-      placeholder: Paste link or drag and drop screenshot here
-    validations:
-      required: false
-
-  - type: input
-    id: os
-    attributes:
-      label: Operating System
-      description: what OS are you using?
-      placeholder: e.g., macOS 26.0.1, Ubuntu 22.04, Windows 11
-    validations:
-      required: false
-
-  - type: input
-    id: terminal
-    attributes:
-      label: Terminal
-      description: what terminal are you using?
-      placeholder: e.g., iTerm2, Ghostty, Alacritty, Windows Terminal
+      label: Redacted logs or screenshots
+      description: Attach screenshots or short log excerpts only after removing private data.
     validations:
       required: false

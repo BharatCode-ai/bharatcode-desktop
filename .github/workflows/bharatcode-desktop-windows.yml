@@ -14,7 +14,6 @@ on:
         options:
           - beta
           - prod
-          - dev
       tag:
         description: GitHub Release tag to create/update. Defaults to desktop-<channel>-<date>-<run>.
         required: false
@@ -78,6 +77,11 @@ jobs:
             $name = "BharatCode Desktop $tag"
           }
 
+          $publishRequested = $eventName -eq "release" -or "${{ inputs.publish_release }}" -eq "true"
+          if ($channel -eq "dev" -and $publishRequested) {
+            throw "DEV builds are local-only and must not publish release assets."
+          }
+
           "BHARATCODE_CHANNEL=$channel" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "OPENCODE_CHANNEL=$channel" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "VITE_OPENCODE_CHANNEL=$channel" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
@@ -115,7 +119,7 @@ jobs:
         shell: pwsh
         run: |
           Get-ChildItem packages/desktop/dist -File |
-            Where-Object { $_.Name -like "*.exe" -or $_.Name -like "*.blockmap" -or $_.Name -eq "latest.yml" } |
+            Where-Object { $_.Name -like "*.exe" -or $_.Name -like "*.blockmap" -or $_.Name -like "*.yml" } |
             ForEach-Object {
               if ($_.Extension -eq ".exe") {
                 $hash = Get-FileHash $_.FullName -Algorithm SHA256
@@ -133,7 +137,7 @@ jobs:
           path: |
             packages/desktop/dist/*.exe
             packages/desktop/dist/*.blockmap
-            packages/desktop/dist/latest.yml
+            packages/desktop/dist/*.yml
 
       - name: Create GitHub Release for workflow dispatch
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_release }}
@@ -161,7 +165,7 @@ jobs:
         shell: pwsh
         run: |
           $files = Get-ChildItem packages/desktop/dist -File |
-            Where-Object { $_.Name -like "*.exe" -or $_.Name -like "*.blockmap" -or $_.Name -eq "latest.yml" }
+            Where-Object { $_.Name -like "*.exe" -or $_.Name -like "*.blockmap" -or $_.Name -like "*.yml" }
           if (-not $files) {
             throw "No Windows release files found in packages/desktop/dist"
           }
