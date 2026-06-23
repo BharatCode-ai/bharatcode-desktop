@@ -283,6 +283,15 @@ describe("BharatCode desktop auth contract", () => {
     expect(builderConfig).toContain('to: "capabilities"')
   })
 
+  test("allows unsigned macOS beta packaging without Apple credentials", async () => {
+    const builderConfig = await readFile(join(import.meta.dir, "..", "..", "electron-builder.config.ts"), "utf8")
+
+    expect(builderConfig).toContain("BHARATCODE_ALLOW_UNSIGNED_MAC")
+    expect(builderConfig).toContain("identity: allowUnsignedMac ? null : undefined")
+    expect(builderConfig).toContain("notarize: !allowUnsignedMac")
+    expect(builderConfig).toContain("sign: !allowUnsignedMac")
+  })
+
   test("the bundled provider retries a 401 with a refreshed bearer token", async () => {
     const home = await mkdtemp(join(tmpdir(), "bharatcode-desktop-provider-"))
     const credentialsPath = join(home, ".bharatcode", "credentials.json")
