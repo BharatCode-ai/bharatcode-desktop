@@ -36,6 +36,8 @@ function updateChannelForChannel(channel: Channel) {
   return channel === "beta" ? "beta" : "latest"
 }
 
+const allowUnsignedMac = process.env.BHARATCODE_ALLOW_UNSIGNED_MAC === "1"
+
 const getBase = (): Configuration => ({
   artifactName: "bharatcode-desktop-${os}-${arch}.${ext}",
   directories: {
@@ -63,15 +65,16 @@ const getBase = (): Configuration => ({
   mac: {
     category: "public.app-category.developer-tools",
     icon: `resources/icons/icon.icns`,
-    hardenedRuntime: true,
+    hardenedRuntime: !allowUnsignedMac,
     gatekeeperAssess: false,
     entitlements: "resources/entitlements.plist",
     entitlementsInherit: "resources/entitlements.plist",
-    notarize: true,
+    identity: allowUnsignedMac ? null : undefined,
+    notarize: !allowUnsignedMac,
     target: ["dmg", "zip"],
   },
   dmg: {
-    sign: true,
+    sign: !allowUnsignedMac,
   },
   protocols: {
     name: BRANDING.appName,
