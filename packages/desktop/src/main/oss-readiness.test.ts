@@ -25,7 +25,22 @@ describe("Desktop OSS readiness", () => {
 
     expect(codeowners).toContain("BharatCode Desktop repository ownership")
     expect(workflowReadme).toContain("BharatCode Desktop repository")
+    expect(workflowReadme).toContain("bharatcode-desktop-linux.yml")
     expect(`${codeowners}\n${workflowReadme}`).not.toContain("private fork")
+  })
+
+  test("has a public Linux release workflow for AppImage and Debian packages", async () => {
+    const workflow = await readRepoFile(".github/workflows/bharatcode-desktop-linux.yml")
+
+    const dispatchOptions = workflow.match(/workflow_dispatch:[\s\S]*?tag:/)?.[0] ?? ""
+    expect(dispatchOptions).toContain("- beta")
+    expect(dispatchOptions).toContain("- prod")
+    expect(dispatchOptions).not.toContain("- dev")
+    expect(workflow).toContain("Refusing to publish dev-channel Linux artifacts.")
+    expect(workflow).toContain("electron-builder --linux AppImage deb")
+    expect(workflow).toContain("packages/desktop/dist/*.AppImage")
+    expect(workflow).toContain("packages/desktop/dist/*.deb")
+    expect(workflow).toContain("Upload Linux packages to GitHub Release")
   })
 
   test("makes Desktop first-run primary and classifies retained support areas", async () => {
