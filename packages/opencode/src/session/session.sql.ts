@@ -12,6 +12,16 @@ import { Timestamps } from "../storage/schema.sql"
 type PartData = Omit<MessageV2.Part, "id" | "sessionID" | "messageID">
 type InfoData<T extends MessageV2.Info = MessageV2.Info> = T extends unknown ? Omit<T, "id" | "sessionID"> : never
 type SessionMessageData = Omit<(typeof SessionMessage.Message)["Encoded"], "type" | "id">
+type SessionGoalData = {
+  text: string
+  status: "active" | "paused" | "completed" | "blocked"
+  created: number
+  updated: number
+  accumulated: number
+  activeSince?: number
+  completed?: number
+  report?: string
+}
 
 export const SessionTable = sqliteTable(
   "session",
@@ -41,6 +51,7 @@ export const SessionTable = sqliteTable(
     tokens_cache_write: integer().notNull().default(0),
     revert: text({ mode: "json" }).$type<{ messageID: MessageID; partID?: PartID; snapshot?: string; diff?: string }>(),
     permission: text({ mode: "json" }).$type<Permission.Ruleset>(),
+    goal: text({ mode: "json" }).$type<SessionGoalData>(),
     agent: text(),
     model: text({ mode: "json" }).$type<{
       id: string

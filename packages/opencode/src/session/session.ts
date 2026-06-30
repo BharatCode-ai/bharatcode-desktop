@@ -102,6 +102,7 @@ export function fromRow(row: SessionRow): Info {
     share,
     revert,
     permission: row.permission ? [...row.permission] : undefined,
+    goal: row.goal ?? undefined,
     time: {
       created: row.time_created,
       updated: row.time_updated,
@@ -137,6 +138,7 @@ export function toRow(info: Info) {
     tokens_cache_write: (info.tokens ?? EmptyTokens).cache.write,
     revert: info.revert ?? null,
     permission: info.permission,
+    goal: info.goal ?? null,
     time_created: info.time.created,
     time_updated: info.time.updated,
     time_compacting: info.time.compacting,
@@ -192,6 +194,23 @@ const Time = Schema.Struct({
   archived: optionalOmitUndefined(ArchivedTimestamp),
 })
 
+export const GoalStatus = Schema.Literals(["active", "paused", "completed", "blocked"]).annotate({
+  identifier: "SessionGoalStatus",
+})
+export type GoalStatus = Schema.Schema.Type<typeof GoalStatus>
+
+export const Goal = Schema.Struct({
+  text: Schema.String,
+  status: GoalStatus,
+  created: NonNegativeInt,
+  updated: NonNegativeInt,
+  accumulated: NonNegativeInt,
+  activeSince: optionalOmitUndefined(NonNegativeInt),
+  completed: optionalOmitUndefined(NonNegativeInt),
+  report: optionalOmitUndefined(Schema.String),
+}).annotate({ identifier: "SessionGoal" })
+export type Goal = Types.DeepMutable<Schema.Schema.Type<typeof Goal>>
+
 const Revert = Schema.Struct({
   messageID: MessageID,
   partID: optionalOmitUndefined(PartID),
@@ -224,6 +243,7 @@ export const Info = Schema.Struct({
   time: Time,
   permission: optionalOmitUndefined(Permission.Ruleset),
   revert: optionalOmitUndefined(Revert),
+  goal: optionalOmitUndefined(Goal),
 }).annotate({ identifier: "Session" })
 export type Info = Types.DeepMutable<Schema.Schema.Type<typeof Info>>
 
@@ -323,6 +343,7 @@ const UpdatedInfo = Schema.Struct({
   time: Schema.optional(UpdatedTime),
   permission: Schema.optional(Schema.NullOr(Permission.Ruleset)),
   revert: Schema.optional(Schema.NullOr(Revert)),
+  goal: Schema.optional(Schema.NullOr(Goal)),
 })
 
 const UpdatedEventSchema = Schema.Struct({
@@ -464,6 +485,7 @@ export interface Interface {
   readonly setTitle: (input: { sessionID: SessionID; title: string }) => Effect.Effect<void>
   readonly setArchived: (input: { sessionID: SessionID; time?: number }) => Effect.Effect<void>
   readonly setPermission: (input: { sessionID: SessionID; permission: Permission.Ruleset }) => Effect.Effect<void>
+  readonly setGoal: (input: { sessionID: SessionID; goal: Info["goal"] | null }) => Effect.Effect<void>
   readonly setRevert: (input: {
     sessionID: SessionID
     revert: Info["revert"]
@@ -739,6 +761,13 @@ export const layer: Layer.Layer<
       yield* patch(input.sessionID, { permission: [...input.permission], time: { updated: Date.now() } })
     })
 
+    const setGoal = Effect.fn("Session.setGoal")(function* (input: {
+      sessionID: SessionID
+      goal: Info["goal"] | null
+    }) {
+      yield* patch(input.sessionID, { goal: input.goal ?? null, time: { updated: Date.now() } })
+    })
+
     const setRevert = Effect.fn("Session.setRevert")(function* (input: {
       sessionID: SessionID
       revert: Info["revert"]
@@ -845,6 +874,7 @@ export const layer: Layer.Layer<
       setTitle,
       setArchived,
       setPermission,
+      setGoal,
       setRevert,
       clearRevert,
       setSummary,

@@ -60,6 +60,7 @@ import { SessionTable } from "./session.sql"
 import { referencePromptMetadata, referenceTextPart } from "./prompt/reference"
 import { SessionReminders } from "./reminders"
 import { SessionTools } from "./tools"
+import { GoalAssessment } from "./goal-assessment"
 import { LLMEvent } from "@opencode-ai/llm"
 
 // @ts-ignore
@@ -1207,6 +1208,48 @@ export const layer = Layer.effect(
       return { info, parts }
     }, Effect.scoped)
 
+    const goalAssessmentMessage = (goal: Session.Goal) =>
+      [
+        "<goal-mode>",
+        "The active session goal is still open:",
+        goal.text,
+        "",
+        "The assistant just stopped with a normal response while Goal Mode is active.",
+        "Assess the current state against the goal and choose exactly one path:",
+        "1. Continue working: do the next useful action now.",
+        "2. Goal complete: call the mcp_goal_complete tool with a concise completion report after validating the goal.",
+        "3. Blocked: call the mcp_goal_blocker tool with the blocker, what was tried, and the smallest user input needed.",
+        "Do not end with plain text while this goal remains active.",
+        "</goal-mode>",
+      ].join("\n")
+
+    const createGoalAssessmentMessage = Effect.fn("SessionPrompt.createGoalAssessmentMessage")(function* (input: {
+      sessionID: SessionID
+      goal: Session.Goal
+      lastUser: MessageV2.User
+    }) {
+      return yield* createUserMessage({
+        sessionID: input.sessionID,
+        agent: input.lastUser.agent,
+        model: {
+          providerID: input.lastUser.model.providerID,
+          modelID: input.lastUser.model.modelID,
+        },
+        variant: input.lastUser.model.variant,
+        tools: input.lastUser.tools,
+        system: input.lastUser.system,
+        noReply: true,
+        parts: [
+          {
+            type: "text",
+            text: goalAssessmentMessage(input.goal),
+            synthetic: true,
+            metadata: { kind: "goal-assessment" },
+          },
+        ],
+      })
+    }, Effect.scoped)
+
     const prompt: (input: PromptInput) => Effect.Effect<MessageV2.WithParts, Image.Error> = Effect.fn(
       "SessionPrompt.prompt",
     )(function* (input: PromptInput) {
@@ -1242,12 +1285,12 @@ export const layer = Layer.effect(
         const slog = elog.with({ sessionID })
         let structured: unknown
         let step = 0
-        const session = yield* sessions.get(sessionID).pipe(Effect.orDie)
 
         while (true) {
           yield* status.set(sessionID, { type: "busy" })
           yield* slog.info("loop", { step })
 
+          const session = yield* sessions.get(sessionID).pipe(Effect.orDie)
           let msgs = yield* MessageV2.filterCompactedEffect(sessionID)
 
           const { user: lastUser, assistant: lastAssistant, finished: lastFinished, tasks } = MessageV2.latest(msgs)
@@ -1264,12 +1307,25 @@ export const layer = Layer.effect(
           const hasToolCalls =
             lastAssistantMsg?.parts.some((part) => part.type === "tool" && !part.metadata?.providerExecuted) ?? false
 
-          if (
-            lastAssistant?.finish &&
+          const lastAssistantFinishedNormally =
+            !!lastAssistant?.finish &&
             !["tool-calls"].includes(lastAssistant.finish) &&
             !hasToolCalls &&
             lastUser.id < lastAssistant.id
-          ) {
+
+          if (lastAssistantFinishedNormally) {
+            if (
+              session.goal &&
+              GoalAssessment.shouldRequest({
+                goalStatus: session.goal.status,
+                lastAssistantFinishedNormally,
+                hasToolCalls,
+              })
+            ) {
+              yield* createGoalAssessmentMessage({ sessionID, goal: session.goal, lastUser }).pipe(Effect.orDie)
+              yield* slog.info("goal mode assessment requested")
+              continue
+            }
             yield* slog.info("exiting loop")
             break
           }

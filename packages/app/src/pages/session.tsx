@@ -43,7 +43,7 @@ import { useSettings } from "@/context/settings"
 import { useSync } from "@/context/sync"
 import { useTerminal } from "@/context/terminal"
 import { type FollowupDraft, sendFollowupDraft } from "@/components/prompt-input/submit"
-import { createSessionComposerState, SessionComposerRegion } from "@/pages/session/composer"
+import { createSessionComposerState, SessionComposerRegion, type SessionGoalUpdate } from "@/pages/session/composer"
 import {
   createOpenReviewFile,
   createSessionTabs,
@@ -1352,6 +1352,17 @@ export default function Page() {
       return out
     })
 
+  const updateGoal = async (goal: SessionGoalUpdate) => {
+    const sessionID = params.id
+    if (!sessionID) return
+    await sdk.client.session
+      .update({ sessionID, goal })
+      .then((result) => {
+        if (result.data) merge(result.data)
+      })
+      .catch(fail)
+  }
+
   const roll = (sessionID: string, next: NonNullable<ReturnType<typeof info>>["revert"]) =>
     sync.set("session", (list) => {
       const idx = list.findIndex((item) => item.id === sessionID)
@@ -1698,6 +1709,14 @@ export default function Page() {
               restoring: restoring(),
               disabled: reverting(),
               onRestore: restore,
+            }
+          : undefined
+      }
+      goal={
+        params.id && !isChildSession()
+          ? {
+              value: info()?.goal,
+              onUpdate: updateGoal,
             }
           : undefined
       }

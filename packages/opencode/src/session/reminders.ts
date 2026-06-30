@@ -22,6 +22,29 @@ export const apply = Effect.fn("SessionReminders.apply")(function* (input: {
   const userMessage = input.messages.findLast((msg) => msg.info.role === "user")
   if (!userMessage) return input.messages
 
+  const goal = input.session.goal
+  if (goal?.status === "active") {
+    userMessage.parts.push({
+      id: PartID.ascending(),
+      messageID: userMessage.info.id,
+      sessionID: userMessage.info.sessionID,
+      type: "text",
+      text: [
+        "<goal-mode>",
+        "The active session goal is:",
+        goal.text,
+        "",
+        "Keep working toward this goal until it is complete or blocked.",
+        "When complete, call mcp_goal_complete with a concise completion report.",
+        "When blocked, call mcp_goal_blocker with the blocker, what was tried, and the smallest useful user input needed.",
+        "Do not end with plain text while this goal remains active.",
+        "</goal-mode>",
+      ].join("\n"),
+      synthetic: true,
+      metadata: { kind: "goal-reminder" },
+    })
+  }
+
   if (!flags.experimentalPlanMode) {
     if (input.agent.name === "plan") {
       userMessage.parts.push({

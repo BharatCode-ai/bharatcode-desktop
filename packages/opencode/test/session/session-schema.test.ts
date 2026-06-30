@@ -25,13 +25,14 @@ const info = {
   },
   permission: undefined,
   revert: undefined,
+  goal: undefined,
 } satisfies Session.Info
 
 describe("Session schema", () => {
   test("encodes undefined optional session fields as omitted keys", () => {
     const encoded = Schema.encodeUnknownSync(Session.Info)(info) as Record<string, unknown>
 
-    for (const key of ["workspaceID", "parentID", "summary", "share", "permission", "revert"]) {
+    for (const key of ["workspaceID", "parentID", "summary", "share", "permission", "revert", "goal"]) {
       expect(Object.hasOwn(encoded, key)).toBe(false)
     }
     expect(Object.hasOwn(encoded.time as Record<string, unknown>, "compacting")).toBe(false)
@@ -74,5 +75,26 @@ describe("Session schema", () => {
     for (const key of ["partID", "snapshot", "diff"]) {
       expect(Object.hasOwn(encoded.revert as Record<string, unknown>, key)).toBe(false)
     }
+  })
+
+  test("encodes and decodes goal state", () => {
+    const session = {
+      ...info,
+      goal: {
+        text: "Ship Goal Mode with tests",
+        status: "active",
+        created: 1,
+        updated: 2,
+        accumulated: 0,
+        activeSince: 2,
+      },
+    } satisfies Session.Info
+
+    const encoded = Schema.encodeUnknownSync(Session.Info)(session) as Record<string, unknown>
+    expect(encoded.goal).toEqual(session.goal)
+
+    const decoded = Schema.decodeUnknownSync(Session.Info)(encoded)
+    expect(decoded.goal?.status).toBe("active")
+    expect(decoded.goal?.text).toBe("Ship Goal Mode with tests")
   })
 })

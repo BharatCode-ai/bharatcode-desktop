@@ -121,6 +121,17 @@ describe("tool.registry", () => {
     }),
   )
 
+  it.instance("includes built-in goal mode tools", () =>
+    Effect.gen(function* () {
+      const registry = yield* ToolRegistry.Service
+      const ids = yield* registry.ids()
+
+      expect(ids).toContain("mcp_goal_set")
+      expect(ids).toContain("mcp_goal_complete")
+      expect(ids).toContain("mcp_goal_blocker")
+    }),
+  )
+
   scout.instance("shows repo research tools when experimental scout is enabled", () =>
     Effect.gen(function* () {
       const registry = yield* ToolRegistry.Service
