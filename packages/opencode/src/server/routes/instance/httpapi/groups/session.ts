@@ -43,9 +43,29 @@ export const MessagesQuery = Schema.Struct({
   before: Schema.optional(Schema.String),
 })
 export const StatusMap = Schema.Record(Schema.String, SessionStatus.Info)
+const GoalSetPayload = Schema.Struct({
+  action: Schema.Literal("set"),
+  text: Schema.String,
+})
+const GoalPausePayload = Schema.Struct({
+  action: Schema.Literal("pause"),
+})
+const GoalResumePayload = Schema.Struct({
+  action: Schema.Literal("resume"),
+})
+const GoalClearPayload = Schema.Struct({
+  action: Schema.Literal("clear"),
+})
+export const GoalUpdatePayload = Schema.Union([
+  GoalSetPayload,
+  GoalPausePayload,
+  GoalResumePayload,
+  GoalClearPayload,
+]).annotate({ identifier: "SessionGoalUpdate" })
 export const UpdatePayload = Schema.Struct({
   title: Schema.optional(Schema.String),
   permission: Schema.optional(Permission.Ruleset),
+  goal: Schema.optional(GoalUpdatePayload),
   time: Schema.optional(
     Schema.Struct({
       archived: Schema.optional(Session.ArchivedTimestamp),

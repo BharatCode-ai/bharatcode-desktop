@@ -1,4 +1,5 @@
 import { PlanExitTool } from "./plan"
+import { GoalBlockerTool, GoalCompleteTool, GoalSetTool } from "./goal"
 import { Session } from "@/session/session"
 import { QuestionTool } from "./question"
 import { ShellTool } from "./shell"
@@ -118,6 +119,9 @@ export const layer: Layer.Layer<
     const flags = yield* RuntimeFlags.Service
 
     const invalid = yield* InvalidTool
+    const goalSet = yield* GoalSetTool
+    const goalComplete = yield* GoalCompleteTool
+    const goalBlocker = yield* GoalBlockerTool
     const task = yield* TaskTool
     const taskStatus = yield* TaskStatusTool
     const read = yield* ReadTool
@@ -228,6 +232,9 @@ export const layer: Layer.Layer<
 
         const tool = yield* Effect.all({
           invalid: Tool.init(invalid),
+          goal_set: Tool.init(goalSet),
+          goal_complete: Tool.init(goalComplete),
+          goal_blocker: Tool.init(goalBlocker),
           shell: Tool.init(shell),
           read: Tool.init(read),
           glob: Tool.init(globtool),
@@ -252,6 +259,9 @@ export const layer: Layer.Layer<
           custom,
           builtin: [
             tool.invalid,
+            tool.goal_set,
+            tool.goal_complete,
+            tool.goal_blocker,
             ...(questionEnabled ? [tool.question] : []),
             tool.shell,
             tool.read,

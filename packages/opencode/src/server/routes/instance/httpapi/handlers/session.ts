@@ -5,6 +5,7 @@ import { Permission } from "@/permission"
 import { PermissionID } from "@/permission/schema"
 import { SessionShare } from "@/share/session"
 import { Session } from "@/session/session"
+import { GoalState } from "@/session/goal-state"
 import { SessionCompaction } from "@/session/compaction"
 import { MessageV2 } from "@/session/message-v2"
 import { SessionPrompt } from "@/session/prompt"
@@ -190,6 +191,22 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
           sessionID: ctx.params.sessionID,
           permission: Permission.merge(current.permission ?? [], ctx.payload.permission),
         })
+      }
+      if (ctx.payload.goal !== undefined) {
+        const at = Date.now()
+        const currentGoal = current.goal
+        const next =
+          ctx.payload.goal.action === "set"
+            ? GoalState.set(currentGoal, { text: ctx.payload.goal.text }, at)
+            : ctx.payload.goal.action === "pause" && currentGoal
+              ? GoalState.pause(currentGoal, at)
+              : ctx.payload.goal.action === "resume" && currentGoal
+                ? GoalState.resume(currentGoal, at)
+                : ctx.payload.goal.action === "clear"
+                  ? null
+                  : undefined
+
+        if (next !== undefined) yield* session.setGoal({ sessionID: ctx.params.sessionID, goal: next })
       }
       if (ctx.payload.time?.archived !== undefined) {
         yield* session.setArchived({ sessionID: ctx.params.sessionID, time: ctx.payload.time.archived })

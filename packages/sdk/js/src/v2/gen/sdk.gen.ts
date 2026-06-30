@@ -176,6 +176,7 @@ import type {
   SessionForkResponses,
   SessionGetErrors,
   SessionGetResponses,
+  SessionGoalUpdate,
   SessionInitErrors,
   SessionInitResponses,
   SessionListErrors,
@@ -3236,6 +3237,7 @@ export class Session2 extends HeyApiClient {
       workspace?: string
       title?: string
       permission?: PermissionRuleset
+      goal?: SessionGoalUpdate
       time?: {
         archived?: number
       }
@@ -3252,6 +3254,7 @@ export class Session2 extends HeyApiClient {
             { in: "query", key: "workspace" },
             { in: "body", key: "title" },
             { in: "body", key: "permission" },
+            { in: "body", key: "goal" },
             { in: "body", key: "time" },
           ],
         },

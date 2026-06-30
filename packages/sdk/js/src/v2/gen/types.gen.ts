@@ -744,6 +744,19 @@ export type PermissionRule = {
 
 export type PermissionRuleset = Array<PermissionRule>
 
+export type SessionGoalStatus = "active" | "paused" | "completed" | "blocked"
+
+export type SessionGoal = {
+  text: string
+  status: SessionGoalStatus
+  created: number
+  updated: number
+  accumulated: number
+  activeSince?: number
+  completed?: number
+  report?: string
+}
+
 export type Session = {
   id: string
   slug: string
@@ -792,6 +805,7 @@ export type Session = {
     snapshot?: string
     diff?: string
   }
+  goal?: SessionGoal
 }
 
 export type Prompt = {
@@ -1522,6 +1536,7 @@ export type GlobalSession = {
     snapshot?: string
     diff?: string
   }
+  goal?: SessionGoal
   project: ProjectSummary | null
 }
 
@@ -1789,6 +1804,21 @@ export type NotFoundError = {
     message: string
   }
 }
+
+export type SessionGoalUpdate =
+  | {
+      action: "set"
+      text: string
+    }
+  | {
+      action: "pause"
+    }
+  | {
+      action: "resume"
+    }
+  | {
+      action: "clear"
+    }
 
 export type TextPartInput = {
   id?: string
@@ -2085,6 +2115,7 @@ export type SyncEventSessionUpdated = {
         snapshot?: string
         diff?: string
       } | null
+      goal?: SessionGoal | null
     }
   }
 }
@@ -6194,6 +6225,7 @@ export type SessionUpdateData = {
   body?: {
     title?: string
     permission?: PermissionRuleset
+    goal?: SessionGoalUpdate
     time?: {
       archived?: number
     }

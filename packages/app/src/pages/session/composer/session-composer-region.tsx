@@ -14,6 +14,7 @@ import { SessionQuestionDock } from "@/pages/session/composer/session-question-d
 import { SessionFollowupDock } from "@/pages/session/composer/session-followup-dock"
 import { SessionRevertDock } from "@/pages/session/composer/session-revert-dock"
 import type { SessionComposerState } from "@/pages/session/composer/session-composer-state"
+import { SessionGoalRibbon, type SessionGoal, type SessionGoalUpdate } from "@/pages/session/composer/session-goal-ribbon"
 import { SessionTodoDock } from "@/pages/session/composer/session-todo-dock"
 import type { FollowupDraft } from "@/components/prompt-input/submit"
 import { createResizeObserver } from "@solid-primitives/resize-observer"
@@ -45,6 +46,11 @@ export function SessionComposerRegion(props: {
     restoring?: string
     disabled?: boolean
     onRestore: (id: string) => void
+  }
+  goal?: {
+    value?: SessionGoal
+    disabled?: boolean
+    onUpdate: (goal: SessionGoalUpdate) => void | Promise<void>
   }
   setPromptDockRef: (el: HTMLDivElement) => void
 }) {
@@ -249,6 +255,9 @@ export function SessionComposerRegion(props: {
                 "margin-top": `${-lift()}px`,
               }}
             >
+              <Show when={props.goal} keyed>
+                {(goal) => <SessionGoalRibbon goal={goal.value} disabled={goal.disabled} onUpdate={goal.onUpdate} />}
+              </Show>
               <Show when={props.followup?.items.length}>
                 <SessionFollowupDock
                   items={props.followup!.items}
