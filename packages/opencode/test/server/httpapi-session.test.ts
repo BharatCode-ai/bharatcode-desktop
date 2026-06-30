@@ -16,6 +16,7 @@ import { Server } from "../../src/server/server"
 import * as HttpSessionError from "../../src/server/routes/instance/httpapi/handlers/session-errors"
 import { SessionPaths } from "../../src/server/routes/instance/httpapi/groups/session"
 import { Session } from "@/session/session"
+import { GoalState } from "@/session/goal-state"
 import { MessageID, PartID, SessionID, type SessionID as SessionIDType } from "../../src/session/schema"
 import { MessageV2 } from "../../src/session/message-v2"
 import { Database } from "@/storage/db"
@@ -615,6 +616,34 @@ describe("session HttpApi", () => {
             headers,
           }),
         ).toBe(true)
+      }),
+    { git: true, config: { formatter: false, lsp: false, share: "disabled" } },
+  )
+
+  it.instance(
+    "resuming a paused goal with no user messages creates a synthetic goal turn",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
+        const created = yield* createSession({ title: "goal resume" })
+        const active = GoalState.set(undefined, { text: "Finish the release checklist" }, 100)
+        yield* Session.use.setGoal({ sessionID: created.id, goal: GoalState.pause(active, 150) })
+
+        const updated = yield* requestJson<Session.Info>(pathFor(SessionPaths.update, { sessionID: created.id }), {
+          method: "PATCH",
+          headers,
+          body: JSON.stringify({ goal: { action: "resume" } }),
+        })
+        const messages = yield* Session.use.messages({ sessionID: created.id })
+        const user = messages.find((message) => message.info.role === "user")
+        const text = user?.parts.find(
+          (part): part is MessageV2.TextPart => part.type === "text" && part.metadata?.kind === "goal-resume",
+        )
+
+        expect(updated.goal?.status).toBe("active")
+        expect(text?.synthetic).toBe(true)
+        expect(text?.text).toContain("Finish the release checklist")
       }),
     { git: true, config: { formatter: false, lsp: false, share: "disabled" } },
   )

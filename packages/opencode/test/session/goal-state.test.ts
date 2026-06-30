@@ -13,6 +13,52 @@ test("set creates an active bounded goal with server timestamps", () => {
   })
 })
 
+test("set preserves elapsed time when editing an active or paused goal", () => {
+  const active = GoalState.set(undefined, { text: "Build release checklist" }, 100)
+  const editedActive = GoalState.set(active, { text: "Ship release checklist" }, 160)
+  expect(editedActive.created).toBe(100)
+  expect(editedActive.accumulated).toBe(60)
+  expect(editedActive.activeSince).toBe(160)
+
+  const paused = GoalState.pause(editedActive, 190)
+  const editedPaused = GoalState.set(paused, { text: "Ship release checklist with docs" }, 250)
+  expect(editedPaused.created).toBe(100)
+  expect(editedPaused.accumulated).toBe(90)
+  expect(editedPaused.activeSince).toBe(250)
+})
+
+test("set starts a fresh timer after terminal goals", () => {
+  const active = GoalState.set(undefined, { text: "First goal" }, 100)
+  const completed = GoalState.complete(active, { report: "Done." }, 200)
+  const next = GoalState.set(completed, { text: "Second goal" }, 300)
+  expect(next.created).toBe(300)
+  expect(next.accumulated).toBe(0)
+  expect(next.activeSince).toBe(300)
+})
+
+test("update only wakes the loop when a set or paused resume creates active work", () => {
+  const active = GoalState.set(undefined, { text: "Build release checklist" }, 100)
+  const paused = GoalState.pause(active, 160)
+  const completed = GoalState.complete(active, { report: "Done." }, 180)
+
+  expect(GoalState.update(undefined, { action: "pause" }, 200)).toEqual({ goal: undefined, shouldRun: false })
+  expect(GoalState.update(active, { action: "pause" }, 200).shouldRun).toBe(false)
+  expect(GoalState.update(active, { action: "resume" }, 200)).toEqual({ goal: undefined, shouldRun: false })
+  expect(GoalState.update(paused, { action: "resume" }, 200).shouldRun).toBe(true)
+  expect(GoalState.update(completed, { action: "resume" }, 200)).toEqual({ goal: undefined, shouldRun: false })
+  expect(GoalState.update(completed, { action: "set", text: "New goal" }, 200)).toEqual({
+    goal: {
+      text: "New goal",
+      status: "active",
+      created: 200,
+      updated: 200,
+      accumulated: 0,
+      activeSince: 200,
+    },
+    shouldRun: true,
+  })
+})
+
 test("pause accounts active elapsed time once", () => {
   const active = GoalState.set(undefined, { text: "Build release checklist" }, 100)
   const paused = GoalState.pause(active, 160)

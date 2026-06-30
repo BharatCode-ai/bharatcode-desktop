@@ -7,6 +7,7 @@ import { Effect, Layer, Context, Schema } from "effect"
 import { Config } from "@/config/config"
 import { MCP } from "../mcp"
 import { Skill } from "../skill"
+import PROMPT_GOAL from "./template/goal.txt"
 import PROMPT_INITIALIZE from "./template/initialize.txt"
 import PROMPT_REVIEW from "./template/review.txt"
 
@@ -51,6 +52,7 @@ export function hints(template: string) {
 }
 
 export const Default = {
+  GOAL: "goal",
   INIT: "init",
   REVIEW: "review",
 } as const
@@ -82,6 +84,15 @@ export const layer = Layer.effect(
           return PROMPT_INITIALIZE.replace("${path}", ctx.worktree)
         },
         hints: hints(PROMPT_INITIALIZE),
+      }
+      commands[Default.GOAL] = {
+        name: Default.GOAL,
+        description: "set a durable Goal Mode objective",
+        source: "command",
+        get template() {
+          return PROMPT_GOAL
+        },
+        hints: hints(PROMPT_GOAL),
       }
       commands[Default.REVIEW] = {
         name: Default.REVIEW,
