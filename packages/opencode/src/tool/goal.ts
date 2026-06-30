@@ -1,6 +1,7 @@
 import { Effect, Schema } from "effect"
 import { GoalState } from "@/session/goal-state"
 import { Session } from "@/session/session"
+import { PartID } from "@/session/schema"
 import * as Tool from "./tool"
 
 const EMPTY_TOKENS = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } } satisfies NonNullable<
@@ -42,6 +43,25 @@ function inactiveResult() {
     output: "No active Goal Mode objective was found for this session.",
     metadata: { status: "inactive", goal: "" } satisfies GoalMetadata,
   }
+}
+
+function publishFinalText(
+  sessions: Session.Interface,
+  ctx: Tool.Context<GoalMetadata>,
+  output: string,
+  kind: "goal-complete" | "goal-blocked",
+) {
+  return sessions
+    .updatePart({
+      id: PartID.ascending(),
+      sessionID: ctx.sessionID,
+      messageID: ctx.messageID,
+      type: "text",
+      text: output,
+      synthetic: true,
+      metadata: { kind },
+    })
+    .pipe(Effect.catchCause(() => Effect.void))
 }
 
 export const GoalSetTool = Tool.define<typeof GoalSetParameters, GoalMetadata, Session.Service>(
@@ -90,14 +110,16 @@ export const GoalCompleteTool = Tool.define<typeof GoalCompleteParameters, GoalM
         Effect.gen(function* () {
           const at = Date.now()
           const session = yield* sessions.get(ctx.sessionID).pipe(Effect.catchCause(() => Effect.succeed(undefined)))
-          if (!session?.goal) return inactiveResult()
+          if (!GoalState.isActive(session?.goal)) return inactiveResult()
 
           const goal = GoalState.complete(session.goal, { report: params.report }, at)
           yield* sessions.setGoal({ sessionID: ctx.sessionID, goal })
           const metrics = GoalState.formatMetrics(goal, session.tokens ?? EMPTY_TOKENS)
+          const output = `Goal Mode marked complete.\n\n${goal.report}\n\n${metrics}`
+          yield* publishFinalText(sessions, ctx, output, "goal-complete")
           return {
             title: "Goal complete",
-            output: `Goal Mode marked complete.\n\n${goal.report}\n\n${metrics}`,
+            output,
             metadata: { status: "completed", goal: goal.text, elapsed: goal.accumulated } satisfies GoalMetadata,
           }
         }),
@@ -121,14 +143,16 @@ export const GoalBlockerTool = Tool.define<typeof GoalBlockerParameters, GoalMet
         Effect.gen(function* () {
           const at = Date.now()
           const session = yield* sessions.get(ctx.sessionID).pipe(Effect.catchCause(() => Effect.succeed(undefined)))
-          if (!session?.goal) return inactiveResult()
+          if (!GoalState.isActive(session?.goal)) return inactiveResult()
 
           const goal = GoalState.block(session.goal, params, at)
           yield* sessions.setGoal({ sessionID: ctx.sessionID, goal })
           const metrics = GoalState.formatMetrics(goal, session.tokens ?? EMPTY_TOKENS)
+          const output = `Goal Mode marked blocked.\n\n${goal.report}\n\n${metrics}`
+          yield* publishFinalText(sessions, ctx, output, "goal-blocked")
           return {
             title: "Goal blocked",
-            output: `Goal Mode marked blocked.\n\n${goal.report}\n\n${metrics}`,
+            output,
             metadata: { status: "blocked", goal: goal.text, elapsed: goal.accumulated } satisfies GoalMetadata,
           }
         }),

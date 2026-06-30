@@ -61,6 +61,7 @@ import { referencePromptMetadata, referenceTextPart } from "./prompt/reference"
 import { SessionReminders } from "./reminders"
 import { SessionTools } from "./tools"
 import { GoalAssessment } from "./goal-assessment"
+import { GoalState } from "./goal-state"
 import { LLMEvent } from "@opencode-ai/llm"
 
 // @ts-ignore
@@ -1493,6 +1494,16 @@ export const layer = Layer.effect(
               model,
               toolChoice: format.type === "json_schema" ? "required" : undefined,
             })
+
+            const afterTools = yield* sessions.get(sessionID).pipe(Effect.catchCause(() => Effect.succeed(undefined)))
+            if (GoalState.isTerminal(afterTools?.goal)) {
+              if (!handle.message.error && (!handle.message.finish || handle.message.finish === "tool-calls")) {
+                handle.message.finish = "stop"
+                handle.message.time.completed = handle.message.time.completed ?? Date.now()
+                yield* sessions.updateMessage(handle.message)
+              }
+              return "break" as const
+            }
 
             if (structured !== undefined) {
               handle.message.structured = structured

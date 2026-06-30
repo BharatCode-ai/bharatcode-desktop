@@ -33,6 +33,12 @@ export function createGoalToggleCommand(goal: SessionGoal | undefined): SessionG
   return undefined
 }
 
+export function goalToggleLabel(goal: SessionGoal | undefined) {
+  if (goal?.status === "active") return "Pause"
+  if (goal?.status === "paused") return "Resume"
+  return undefined
+}
+
 export function createGoalClearCommand(): SessionGoalUpdate {
   return { action: "clear" }
 }
@@ -49,6 +55,7 @@ export function SessionGoalRibbon(props: {
 
   const active = createMemo(() => props.goal?.status === "active")
   const visible = createMemo(() => !!props.goal || editing())
+  const toggleLabel = createMemo(() => goalToggleLabel(props.goal))
   const status = createMemo(() => {
     const goal = props.goal
     if (!goal) return "Ready"
@@ -123,9 +130,13 @@ export function SessionGoalRibbon(props: {
               <Button size="small" variant="ghost" disabled={props.disabled} onClick={() => setEditing(true)}>
                 Edit
               </Button>
-              <Button size="small" variant="secondary" disabled={props.disabled} onClick={toggle}>
-                {props.goal?.status === "active" ? "Pause" : "Resume"}
-              </Button>
+              <Show when={toggleLabel()} keyed>
+                {(label) => (
+                  <Button size="small" variant="secondary" disabled={props.disabled} onClick={toggle}>
+                    {label}
+                  </Button>
+                )}
+              </Show>
               <IconButton
                 icon="trash"
                 size="normal"

@@ -194,19 +194,17 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       }
       if (ctx.payload.goal !== undefined) {
         const at = Date.now()
-        const currentGoal = current.goal
-        const next =
-          ctx.payload.goal.action === "set"
-            ? GoalState.set(currentGoal, { text: ctx.payload.goal.text }, at)
-            : ctx.payload.goal.action === "pause" && currentGoal
-              ? GoalState.pause(currentGoal, at)
-              : ctx.payload.goal.action === "resume" && currentGoal
-                ? GoalState.resume(currentGoal, at)
-                : ctx.payload.goal.action === "clear"
-                  ? null
-                  : undefined
+        const next = GoalState.update(current.goal, ctx.payload.goal, at)
 
-        if (next !== undefined) yield* session.setGoal({ sessionID: ctx.params.sessionID, goal: next })
+        if (next.goal !== undefined) {
+          yield* session.setGoal({ sessionID: ctx.params.sessionID, goal: next.goal })
+          const hasUserMessage = yield* session
+            .findMessage(ctx.params.sessionID, (message) => message.info.role === "user")
+            .pipe(Effect.map(Option.isSome), Effect.catchCause(() => Effect.succeed(false)))
+          if (next.shouldRun && hasUserMessage) {
+            yield* promptSvc.loop({ sessionID: ctx.params.sessionID }).pipe(Effect.ignore, Effect.forkIn(scope))
+          }
+        }
       }
       if (ctx.payload.time?.archived !== undefined) {
         yield* session.setArchived({ sessionID: ctx.params.sessionID, time: ctx.payload.time.archived })

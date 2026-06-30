@@ -4,6 +4,7 @@ import {
   createGoalClearCommand,
   createGoalSetCommand,
   createGoalToggleCommand,
+  goalToggleLabel,
   formatGoalElapsed,
   goalElapsed,
 } from "./session-goal-ribbon"
@@ -29,6 +30,10 @@ describe("SessionGoalRibbon helpers", () => {
     expect(createGoalToggleCommand(goal("paused"))).toEqual({ action: "resume" })
     expect(createGoalToggleCommand(goal("completed"))).toBeUndefined()
     expect(createGoalToggleCommand(undefined)).toBeUndefined()
+    expect(goalToggleLabel(goal("active"))).toBe("Pause")
+    expect(goalToggleLabel(goal("paused"))).toBe("Resume")
+    expect(goalToggleLabel(goal("completed"))).toBeUndefined()
+    expect(goalToggleLabel(goal("blocked"))).toBeUndefined()
   })
 
   test("formats elapsed active goal time", () => {

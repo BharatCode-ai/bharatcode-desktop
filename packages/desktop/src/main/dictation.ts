@@ -14,10 +14,17 @@ function transcriptionEndpoint() {
 
 async function responseMessage(response: Response) {
   const body = await response.text().catch(() => "")
-  if (!body) return `BharatCode dictation failed (${response.status})`
+  const fallback = `BharatCode dictation failed (${response.status})`
+  if (response.status === 401 || response.status === 403) {
+    return "BharatCode dictation is not authorized. Sign in to BharatCode again and retry dictation."
+  }
+  if (response.status >= 500) {
+    return `BharatCode dictation service is unavailable right now (${response.status}). Try again in a few minutes.`
+  }
+  if (!body) return fallback
   try {
     const json = JSON.parse(body)
-    return json.error?.message || json.error || json.detail || body
+    return json.error?.message || json.error || json.detail || fallback
   } catch {
     return body
   }

@@ -40,9 +40,26 @@ export namespace GoalState {
   export type SetInput = { text: string }
   export type CompleteInput = { report: string }
   export type BlockInput = { blocker: string; attempted?: string }
+  export type UpdateInput =
+    | { action: "set"; text: string }
+    | { action: "pause" }
+    | { action: "resume" }
+    | { action: "clear" }
+
+  export function isActive(goal: Goal | null | undefined): goal is Goal & { status: "active" } {
+    return goal?.status === "active"
+  }
+
+  export function isPaused(goal: Goal | null | undefined): goal is Goal & { status: "paused" } {
+    return goal?.status === "paused"
+  }
+
+  export function isTerminal(goal: Goal | null | undefined): goal is Goal & { status: "completed" | "blocked" } {
+    return goal?.status === "completed" || goal?.status === "blocked"
+  }
 
   export function set(current: Goal | undefined, input: SetInput, at: number): Goal {
-    const previous = current ? account(current, at) : undefined
+    const previous = current && !isTerminal(current) ? account(current, at) : undefined
     return {
       text: bounded(input.text, "Continue working toward the user's stated objective.", MAX_GOAL_TEXT),
       status: "active",
@@ -102,6 +119,19 @@ export namespace GoalState {
       activeSince: undefined,
       report: bounded(report, "Goal blocked.", MAX_REPORT_TEXT),
     }
+  }
+
+  export function update(current: Goal | undefined, input: UpdateInput, at: number) {
+    if (input.action === "set") return { goal: set(current, { text: input.text }, at), shouldRun: true }
+    if (input.action === "pause") {
+      if (!isActive(current)) return { goal: undefined, shouldRun: false }
+      return { goal: pause(current, at), shouldRun: false }
+    }
+    if (input.action === "resume") {
+      if (!isPaused(current)) return { goal: undefined, shouldRun: false }
+      return { goal: resume(current, at), shouldRun: true }
+    }
+    return { goal: null, shouldRun: false }
   }
 
   export function elapsed(goal: Goal, at = Date.now()) {
