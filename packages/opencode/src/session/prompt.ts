@@ -86,6 +86,7 @@ const elog = EffectLogger.create({ service: "session.prompt" })
 export interface Interface {
   readonly cancel: (sessionID: SessionID) => Effect.Effect<void>
   readonly prompt: (input: PromptInput) => Effect.Effect<MessageV2.WithParts, Image.Error>
+  readonly ensureGoalRunMessage: (input: GoalRunInput) => Effect.Effect<MessageV2.WithParts | undefined, Image.Error>
   readonly loop: (input: LoopInput) => Effect.Effect<MessageV2.WithParts>
   readonly shell: (input: ShellInput) => Effect.Effect<MessageV2.WithParts, Session.BusyError>
   readonly command: (input: CommandInput) => Effect.Effect<MessageV2.WithParts, Image.Error>
@@ -1251,6 +1252,43 @@ export const layer = Layer.effect(
       })
     }, Effect.scoped)
 
+    const goalRunMessage = (goal: Session.Goal) =>
+      [
+        "<goal-mode>",
+        "Goal Mode was started or resumed without a new user message.",
+        "The active session goal is:",
+        goal.text,
+        "",
+        "Begin or continue working toward this goal now.",
+        "When complete, call mcp_goal_complete with a concise completion report.",
+        "When blocked, call mcp_goal_blocker with the blocker, what was tried, and the smallest useful user input needed.",
+        "Do not end with plain text while this goal remains active.",
+        "</goal-mode>",
+      ].join("\n")
+
+    const ensureGoalRunMessage: (input: GoalRunInput) => Effect.Effect<
+      MessageV2.WithParts | undefined,
+      Image.Error
+    > = Effect.fn("SessionPrompt.ensureGoalRunMessage")(function* (input: GoalRunInput) {
+      const hasUserMessage = yield* sessions
+        .findMessage(input.sessionID, (message) => message.info.role === "user")
+        .pipe(Effect.map(Option.isSome), Effect.catchCause(() => Effect.succeed(false)))
+      if (hasUserMessage) return undefined
+
+      return yield* createUserMessage({
+        sessionID: input.sessionID,
+        noReply: true,
+        parts: [
+          {
+            type: "text",
+            text: goalRunMessage(input.goal),
+            synthetic: true,
+            metadata: { kind: "goal-resume" },
+          },
+        ],
+      })
+    }, Effect.scoped)
+
     const prompt: (input: PromptInput) => Effect.Effect<MessageV2.WithParts, Image.Error> = Effect.fn(
       "SessionPrompt.prompt",
     )(function* (input: PromptInput) {
@@ -1681,6 +1719,7 @@ export const layer = Layer.effect(
     return Service.of({
       cancel,
       prompt,
+      ensureGoalRunMessage,
       loop,
       shell,
       command,
@@ -1752,6 +1791,11 @@ export const PromptInput = Schema.Struct({
   ),
 })
 export type PromptInput = Schema.Schema.Type<typeof PromptInput>
+
+export type GoalRunInput = {
+  sessionID: SessionID
+  goal: Session.Goal
+}
 
 export class LoopInput extends Schema.Class<LoopInput>("SessionPrompt.LoopInput")({
   sessionID: SessionID,

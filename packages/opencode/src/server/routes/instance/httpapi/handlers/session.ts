@@ -16,7 +16,7 @@ import { SessionSummary } from "@/session/summary"
 import { Todo } from "@/session/todo"
 import { MessageID, PartID, SessionID } from "@/session/schema"
 import { NamedError } from "@opencode-ai/core/util/error"
-import { Cause, Effect, Option, Schema, Scope } from "effect"
+import { Cause, Effect, Exit, Option, Schema, Scope } from "effect"
 import * as Stream from "effect/Stream"
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import { HttpApiBuilder, HttpApiError, HttpApiSchema } from "effect/unstable/httpapi"
@@ -198,11 +198,13 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
 
         if (next.goal !== undefined) {
           yield* session.setGoal({ sessionID: ctx.params.sessionID, goal: next.goal })
-          const hasUserMessage = yield* session
-            .findMessage(ctx.params.sessionID, (message) => message.info.role === "user")
-            .pipe(Effect.map(Option.isSome), Effect.catchCause(() => Effect.succeed(false)))
-          if (next.shouldRun && hasUserMessage) {
-            yield* promptSvc.loop({ sessionID: ctx.params.sessionID }).pipe(Effect.ignore, Effect.forkIn(scope))
+          if (next.shouldRun && next.goal) {
+            const prepared = yield* promptSvc
+              .ensureGoalRunMessage({ sessionID: ctx.params.sessionID, goal: next.goal })
+              .pipe(Effect.exit)
+            if (Exit.isSuccess(prepared)) {
+              yield* promptSvc.loop({ sessionID: ctx.params.sessionID }).pipe(Effect.ignore, Effect.forkIn(scope))
+            }
           }
         }
       }
