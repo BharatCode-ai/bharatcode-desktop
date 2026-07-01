@@ -1,6 +1,13 @@
 import { describe, expect, test } from "bun:test"
 
-import { audioExtensionForMimeType, dictationInsertionText, preferredDictationMimeType } from "./dictation"
+import {
+  audioExtensionForMimeType,
+  dictationInsertionText,
+  dictationShortcutLabel,
+  dictationStatusLabel,
+  isDictationCancelShortcut,
+  preferredDictationMimeType,
+} from "./dictation"
 
 describe("prompt dictation helpers", () => {
   test("chooses the first MediaRecorder mime type supported by the browser", () => {
@@ -32,5 +39,23 @@ describe("prompt dictation helpers", () => {
         textAfterCursor: "",
       }),
     ).toBe("the flaky tests.")
+  })
+
+  test("formats dictation keyboard shortcut labels per platform", () => {
+    expect(dictationShortcutLabel("MacIntel")).toBe("Cmd+Shift+M")
+    expect(dictationShortcutLabel("Win32")).toBe("Ctrl+Shift+M")
+    expect(dictationShortcutLabel("Linux x86_64")).toBe("Ctrl+Shift+M")
+  })
+
+  test("detects Escape as the dictation cancel shortcut", () => {
+    expect(isDictationCancelShortcut({ key: "Escape" })).toBe(true)
+    expect(isDictationCancelShortcut({ key: "Esc" })).toBe(true)
+    expect(isDictationCancelShortcut({ key: "Enter" })).toBe(false)
+  })
+
+  test("labels active dictation states for the recording indicator", () => {
+    expect(dictationStatusLabel("recording")).toBe("Recording...")
+    expect(dictationStatusLabel("transcribing")).toBe("Transcribing...")
+    expect(dictationStatusLabel("idle")).toBe("")
   })
 })

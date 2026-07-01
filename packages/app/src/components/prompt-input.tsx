@@ -70,7 +70,14 @@ import { useQueryOptions } from "@/context/global-sync"
 import { pathKey } from "@/utils/path-key"
 import { getFilename } from "@opencode-ai/core/util/path"
 import { showToast } from "@opencode-ai/ui/toast"
-import { dictationFilename, dictationInsertionText, preferredDictationMimeType } from "./prompt-input/dictation"
+import {
+  dictationFilename,
+  dictationInsertionText,
+  dictationShortcutLabel,
+  dictationStatusLabel,
+  isDictationCancelShortcut,
+  preferredDictationMimeType,
+} from "./prompt-input/dictation"
 
 interface PromptInputProps {
   class?: string
@@ -477,6 +484,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
 
   const shellModeKey = "mod+shift+x"
   const normalModeKey = "mod+shift+e"
+  const dictationKey = "mod+shift+m"
 
   command.register("prompt-input", () => [
     {
@@ -502,6 +510,14 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
       keybind: normalModeKey,
       disabled: store.mode === "normal",
       onSelect: () => setMode("normal"),
+    },
+    {
+      id: "prompt.dictate",
+      title: language.t("command.prompt.dictate"),
+      category: language.t("settings.shortcuts.group.prompt"),
+      keybind: dictationKey,
+      disabled: !dictationAvailable() || dictationState() === "transcribing",
+      onSelect: () => toggleDictation(),
     },
   ])
 
@@ -1078,6 +1094,12 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     dictationRecorder.stop()
   }
 
+  const cancelDictation = () => {
+    if (!dictationRecorder || dictationRecorder.state === "inactive") return
+    dictationCancelled = true
+    dictationRecorder.stop()
+  }
+
   const startDictation = async () => {
     if (!dictationAvailable() || dictationState() !== "idle") return
 
@@ -1303,7 +1325,14 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
       }
     }
 
-    if (event.key === "Escape") {
+    if (isDictationCancelShortcut(event)) {
+      if (dictationState() === "recording") {
+        cancelDictation()
+        event.preventDefault()
+        event.stopPropagation()
+        return
+      }
+
       if (store.popover) {
         closePopover()
         event.preventDefault()
@@ -1524,10 +1553,29 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
   )
 
   const dictationTooltip = () => {
-    if (dictationState() === "recording") return "Stop dictation"
+    const keybind = command.keybind("prompt.dictate") || dictationShortcutLabel()
+    if (dictationState() === "recording") return `Stop dictation (${keybind})`
     if (dictationState() === "transcribing") return "Transcribing dictation..."
-    return "Dictate"
+    return `Dictate (${keybind})`
   }
+
+  const dictationIndicator = () => (
+    <Show when={dictationState() !== "idle"}>
+      <div
+        data-component="prompt-dictation-indicator"
+        role="status"
+        aria-live="polite"
+        class="mx-2 mb-1 flex w-fit items-center gap-2 rounded-full border border-border-subtle px-2.5 py-1 text-12-medium text-text-base"
+      >
+        <span
+          aria-hidden="true"
+          class="size-2 rounded-full bg-icon-critical-base"
+          classList={{ "animate-pulse": dictationState() === "recording" }}
+        />
+        <span>{dictationStatusLabel(dictationState())}</span>
+      </div>
+    </Show>
+  )
 
   const dictationButton = (size: "small" | "normal") => (
     <Show when={dictationAvailable()}>
@@ -1621,6 +1669,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
               onRemove={removeAttachment}
               removeLabel={language.t("prompt.attachment.remove")}
             />
+            {dictationIndicator()}
             <div
               class="relative min-h-[52px]"
               onMouseDown={(e) => {
@@ -1777,6 +1826,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
               onRemove={removeAttachment}
               removeLabel={language.t("prompt.attachment.remove")}
             />
+            {dictationIndicator()}
             <div
               class="relative"
               onMouseDown={(e) => {

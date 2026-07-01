@@ -34,3 +34,17 @@ export function dictationInsertionText({
 
   return `${prefix}${text}${suffix}`
 }
+
+export function dictationShortcutLabel(platform = typeof navigator === "object" ? navigator.platform : "") {
+  return /(Mac|iPod|iPhone|iPad)/.test(platform) ? "Cmd+Shift+M" : "Ctrl+Shift+M"
+}
+
+export function isDictationCancelShortcut(event: Pick<KeyboardEvent, "key">) {
+  return event.key === "Escape" || event.key === "Esc"
+}
+
+export function dictationStatusLabel(state: "idle" | "recording" | "transcribing") {
+  if (state === "recording") return "Recording..."
+  if (state === "transcribing") return "Transcribing..."
+  return ""
+}
