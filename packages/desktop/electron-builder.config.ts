@@ -63,6 +63,20 @@ async function runMacTool(command: string, args: string[], options?: { cwd?: str
   return { stdout, stderr, output: `${stdout}${stderr}` }
 }
 
+export function isTransientNotaryStatusError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error)
+  return [
+    "NSURLErrorDomain Code=-1009",
+    "The Internet connection appears to be offline",
+    "No network route",
+    "ECONNRESET",
+    "ETIMEDOUT",
+    "ENOTFOUND",
+    "network connection was lost",
+    "timed out",
+  ].some((pattern) => message.toLowerCase().includes(pattern.toLowerCase()))
+}
+
 function notaryAuthArgs() {
   return [
     "--key",
@@ -122,14 +136,16 @@ async function notarizeMac(context: MacAfterSignContext) {
     if (!submission.id) throw new Error(`Apple notarization did not return a submission id: ${submitResult.output}`)
 
     while (Date.now() - started < timeoutMs) {
-      const infoResult = await runMacTool("xcrun", [
-        "notarytool",
-        "info",
-        submission.id,
-        ...authArgs,
-        "--output-format",
-        "json",
-      ])
+      const infoResult = await runMacTool(
+        "xcrun",
+        ["notarytool", "info", submission.id, ...authArgs, "--output-format", "json"],
+      ).catch(async (error) => {
+        if (!isTransientNotaryStatusError(error)) throw error
+        console.warn(`Apple notarization ${submission.id}: transient status check failed; retrying until timeout`)
+        await new Promise((resolve) => setTimeout(resolve, 30_000))
+        return undefined
+      })
+      if (!infoResult) continue
       const info = JSON.parse((infoResult.stdout || infoResult.output).trim()) as { status?: string }
       console.log(`Apple notarization ${submission.id}: ${info.status ?? "unknown"}`)
 

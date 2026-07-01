@@ -16,6 +16,7 @@ import type { SessionID } from "./schema"
 import { SessionRetry } from "./retry"
 import { SessionStatus } from "./status"
 import { SessionSummary } from "./summary"
+import { ToolLoopGuard } from "./tool-loop-guard"
 import type { Provider } from "@/provider/provider"
 import { Question } from "@/question"
 import { errorMessage } from "@/util/error"
@@ -47,6 +48,13 @@ export interface Handle {
       metadata: Record<string, any>
       output: string
       attachments?: MessageV2.FilePart[]
+    },
+  ) => Effect.Effect<void>
+  readonly blockToolCall: (
+    toolCallID: string,
+    input: {
+      error: string
+      metadata: Record<string, unknown>
     },
   ) => Effect.Effect<void>
   readonly process: (streamInput: LLM.StreamInput) => Effect.Effect<Result>
@@ -237,20 +245,49 @@ export const layer = Layer.effect(
       const failToolCall = Effect.fn("SessionProcessor.failToolCall")(function* (toolCallID: string, error: unknown) {
         const match = yield* readToolCall(toolCallID)
         if (!match || match.part.state.status !== "running") return false
+        const loopGuardMetadata =
+          error instanceof ToolLoopGuard.RepeatedToolCallError ? ToolLoopGuard.metadata(error.failure) : undefined
         yield* session.updatePart({
           ...match.part,
           state: {
             status: "error",
             input: match.part.state.input,
             error: errorMessage(error),
+            ...(loopGuardMetadata ? { metadata: loopGuardMetadata } : {}),
             time: { start: match.part.state.time.start, end: Date.now() },
           },
         })
         if (error instanceof Permission.RejectedError || error instanceof Question.RejectedError) {
           ctx.blocked = ctx.shouldBreak
         }
+        if (error instanceof ToolLoopGuard.RepeatedToolCallError) {
+          ctx.blocked = true
+        }
         yield* settleToolCall(toolCallID)
         return true
+      })
+
+      const blockToolCall = Effect.fn("SessionProcessor.blockToolCall")(function* (
+        toolCallID: string,
+        input: {
+          error: string
+          metadata: Record<string, unknown>
+        },
+      ) {
+        const match = yield* readToolCall(toolCallID)
+        if (!match || match.part.state.status !== "running") return
+        yield* session.updatePart({
+          ...match.part,
+          state: {
+            status: "error",
+            input: match.part.state.input,
+            error: input.error,
+            metadata: input.metadata,
+            time: { start: match.part.state.time.start, end: Date.now() },
+          },
+        })
+        ctx.blocked = true
+        yield* settleToolCall(toolCallID)
       })
 
       const finishReasoning = Effect.fn("SessionProcessor.finishReasoning")(function* (reasoningID: string) {
@@ -466,6 +503,7 @@ export const layer = Layer.effect(
 
             const parts = MessageV2.parts(ctx.assistantMessage.id)
             const recentParts = parts.slice(-DOOM_LOOP_THRESHOLD)
+            const inputFingerprint = ToolLoopGuard.inputFingerprint(input)
 
             if (
               recentParts.length !== DOOM_LOOP_THRESHOLD ||
@@ -474,7 +512,7 @@ export const layer = Layer.effect(
                   part.type === "tool" &&
                   part.tool === value.name &&
                   part.state.status !== "pending" &&
-                  JSON.stringify(part.state.input) === JSON.stringify(input),
+                  ToolLoopGuard.inputFingerprint(part.state.input) === inputFingerprint,
               )
             ) {
               return
@@ -485,7 +523,7 @@ export const layer = Layer.effect(
               permission: "doom_loop",
               patterns: [value.name],
               sessionID: ctx.assistantMessage.sessionID,
-              metadata: { tool: value.name, input },
+              metadata: { tool: value.name, inputFingerprint },
               always: [value.name],
               ruleset: agent.permission,
             })
@@ -911,6 +949,7 @@ export const layer = Layer.effect(
         },
         updateToolCall,
         completeToolCall,
+        blockToolCall,
         process,
       } satisfies Handle
     })

@@ -16,6 +16,7 @@ import { MessageV2 } from "./message-v2"
 import * as Session from "./session"
 import { SessionProcessor } from "./processor"
 import { PartID } from "./schema"
+import { ToolLoopGuard } from "./tool-loop-guard"
 import * as Log from "@opencode-ai/core/util/log"
 import { EffectBridge } from "@/effect/bridge"
 
@@ -25,7 +26,7 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
   agent: Agent.Info
   model: Provider.Model
   session: Session.Info
-  processor: Pick<SessionProcessor.Handle, "message" | "updateToolCall" | "completeToolCall">
+  processor: Pick<SessionProcessor.Handle, "message" | "updateToolCall" | "completeToolCall" | "blockToolCall">
   bypassAgentCheck: boolean
   messages: MessageV2.WithParts[]
   promptOps: TaskPromptOps
@@ -72,6 +73,24 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
         .pipe(Effect.orDie),
   })
 
+  const guardToolCall = Effect.fn("SessionTools.guardToolCall")(function* (
+    name: string,
+    args: Record<string, unknown>,
+    callID: string,
+  ) {
+    const failure = ToolLoopGuard.repeatedFailure({
+      messages: input.messages,
+      tool: name,
+      input: args,
+    })
+    if (!failure) return
+    yield* input.processor.blockToolCall(callID, {
+      error: ToolLoopGuard.message(failure),
+      metadata: ToolLoopGuard.metadata(failure),
+    })
+    return yield* Effect.fail(new ToolLoopGuard.RepeatedToolCallError(failure))
+  })
+
   for (const item of yield* registry.tools({
     modelID: ModelID.make(input.model.api.id),
     providerID: input.model.providerID,
@@ -84,7 +103,8 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
       execute(args, options) {
         return run.promise(
           Effect.gen(function* () {
-            const ctx = context(args, options)
+            const ctx = context(toolInput(args), options)
+            yield* guardToolCall(item.id, toolInput(args), options.toolCallId)
             yield* plugin.trigger(
               "tool.execute.before",
               { tool: item.id, sessionID: ctx.sessionID, callID: ctx.callID },
@@ -125,7 +145,8 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
     item.execute = (args, opts) =>
       run.promise(
         Effect.gen(function* () {
-          const ctx = context(args, opts)
+          const ctx = context(toolInput(args), opts)
+          yield* guardToolCall(key, toolInput(args), opts.toolCallId)
           yield* plugin.trigger(
             "tool.execute.before",
             { tool: key, sessionID: ctx.sessionID, callID: opts.toolCallId },
@@ -204,5 +225,10 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
 
   return tools
 })
+
+function toolInput(input: unknown): Record<string, unknown> {
+  if (typeof input === "object" && input !== null && !Array.isArray(input)) return input as Record<string, unknown>
+  return { value: input }
+}
 
 export * as SessionTools from "./tools"

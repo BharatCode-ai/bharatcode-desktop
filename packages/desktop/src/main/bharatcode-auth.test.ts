@@ -287,8 +287,9 @@ describe("BharatCode desktop auth contract", () => {
     const builderConfig = await readFile(join(import.meta.dir, "..", "..", "electron-builder.config.ts"), "utf8")
 
     expect(builderConfig).toContain("BHARATCODE_ALLOW_UNSIGNED_MAC")
+    expect(builderConfig).toContain('afterSign: process.platform === "darwin" && !allowUnsignedMac ? notarizeMac : undefined')
     expect(builderConfig).toContain("identity: allowUnsignedMac ? null : undefined")
-    expect(builderConfig).toContain("notarize: !allowUnsignedMac")
+    expect(builderConfig).toContain("notarize: false")
     expect(builderConfig).toContain("sign: !allowUnsignedMac")
   })
 
