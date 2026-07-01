@@ -292,6 +292,27 @@ describe("BharatCode desktop auth contract", () => {
     expect(builderConfig).toContain("sign: !allowUnsignedMac")
   })
 
+  test("macOS release workflow signs and notarizes by default", async () => {
+    const workflow = await readFile(
+      join(import.meta.dir, "..", "..", "..", "..", ".github", "workflows", "bharatcode-desktop-macos.yml"),
+      "utf8",
+    )
+
+    expect(workflow).toContain("allow_unsigned")
+    expect(workflow).toContain("Validate macOS signing credentials")
+    expect(workflow).toContain('CSC_LINK: ${{ secrets.CSC_LINK }}')
+    expect(workflow).toContain('CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}')
+    expect(workflow).toContain('APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}')
+    expect(workflow).toContain('APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}')
+    expect(workflow).toContain('APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}')
+    expect(workflow).toContain('APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}')
+    expect(workflow).toContain("Package signed/notarized macOS zip")
+    expect(workflow).toContain("codesign --verify --deep --strict --verbose=2")
+    expect(workflow).toContain("xcrun stapler validate")
+    expect(workflow).not.toContain('BHARATCODE_ALLOW_UNSIGNED_MAC: "1"')
+    expect(workflow).not.toContain('CSC_IDENTITY_AUTO_DISCOVERY: "false"')
+  })
+
   test("the bundled provider retries a 401 with a refreshed bearer token", async () => {
     const home = await mkdtemp(join(tmpdir(), "bharatcode-desktop-provider-"))
     const credentialsPath = join(home, ".bharatcode", "credentials.json")
