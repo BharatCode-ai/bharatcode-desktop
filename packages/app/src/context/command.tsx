@@ -13,7 +13,7 @@ const IS_MAC = typeof navigator === "object" && /(Mac|iPod|iPhone|iPad)/.test(na
 const PALETTE_ID = "command.palette"
 const DEFAULT_PALETTE_KEYBIND = "mod+shift+p"
 const SUGGESTED_PREFIX = "suggested."
-const EDITABLE_KEYBIND_IDS = new Set(["terminal.toggle", "terminal.new", "file.attach"])
+const EDITABLE_KEYBIND_IDS = new Set(["terminal.toggle", "terminal.new", "file.attach", "prompt.dictate"])
 
 type KeyLabel =
   | "common.key.ctrl"
@@ -57,7 +57,7 @@ function signatureFromEvent(event: KeyboardEvent) {
   return signature(normalizeKey(event.key), event.ctrlKey, event.metaKey, event.shiftKey, event.altKey)
 }
 
-function isAllowedEditableKeybind(id: string | undefined) {
+export function isEditableKeybindAllowed(id: string | undefined) {
   if (!id) return false
   return EDITABLE_KEYBIND_IDS.has(actionId(id))
 }
@@ -367,7 +367,7 @@ export const { use: useCommand, provider: CommandProvider } = createSimpleContex
       const modified = event.ctrlKey || event.metaKey || event.altKey
       const isTab = event.key === "Tab"
 
-      if (isEditableTarget(event.target) && !isPalette && !isAllowedEditableKeybind(option?.id) && !modified && !isTab)
+      if (isEditableTarget(event.target) && !isPalette && !isEditableKeybindAllowed(option?.id) && !modified && !isTab)
         return
 
       if (isPalette) {

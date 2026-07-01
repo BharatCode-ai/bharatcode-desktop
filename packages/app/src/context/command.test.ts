@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { upsertCommandRegistration } from "./command"
+import { isEditableKeybindAllowed, upsertCommandRegistration } from "./command"
 
 describe("upsertCommandRegistration", () => {
   test("replaces keyed registrations", () => {
@@ -21,5 +21,11 @@ describe("upsertCommandRegistration", () => {
     expect(next).toHaveLength(2)
     expect(next[0]?.options).toBe(two)
     expect(next[1]?.options).toBe(one)
+  })
+})
+
+describe("editable keybind allowlist", () => {
+  test("allows prompt dictation while typing in the composer", () => {
+    expect(isEditableKeybindAllowed("prompt.dictate")).toBe(true)
   })
 })
