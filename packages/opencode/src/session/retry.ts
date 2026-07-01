@@ -31,6 +31,12 @@ function cap(ms: number) {
   return Math.min(ms, RETRY_MAX_DELAY)
 }
 
+function isDnsLookupFailure(error: MessageV2.APIError) {
+  const code = error.data.metadata?.code?.toUpperCase()
+  const message = error.data.message.toUpperCase()
+  return code === "ENOTFOUND" || message.includes("GETADDRINFO ENOTFOUND")
+}
+
 export function delay(attempt: number, error?: MessageV2.APIError) {
   if (error) {
     const headers = error.data.responseHeaders
@@ -69,6 +75,7 @@ export function retryable(error: Err, provider: string) {
   if (MessageV2.ContextOverflowError.isInstance(error)) return undefined
   if (MessageV2.APIError.isInstance(error)) {
     const status = error.data.statusCode
+    if (isDnsLookupFailure(error)) return undefined
     // 5xx errors are transient server failures and should always be retried,
     // even when the provider SDK doesn't explicitly mark them as retryable.
     if (!error.data.isRetryable && !(status !== undefined && status >= 500)) return undefined
