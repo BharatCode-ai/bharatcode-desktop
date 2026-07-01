@@ -221,6 +221,25 @@ describe("session.retry.retryable", () => {
     expect(SessionRetry.retryable(error, retryProvider)).toBeUndefined()
   })
 
+  test("does not retry DNS lookup failures", () => {
+    const visibleError = Schema.decodeUnknownSync(MessageV2.APIError.Schema)(
+      new MessageV2.APIError({
+        message: "Cannot connect to API: getaddrinfo ENOTFOUND bharatcode.ai",
+        isRetryable: true,
+      }).toObject(),
+    )
+    const codedError = Schema.decodeUnknownSync(MessageV2.APIError.Schema)(
+      new MessageV2.APIError({
+        message: "Cannot connect to API",
+        isRetryable: true,
+        metadata: { code: "ENOTFOUND" },
+      }).toObject(),
+    )
+
+    expect(SessionRetry.retryable(visibleError, retryProvider)).toBeUndefined()
+    expect(SessionRetry.retryable(codedError, retryProvider)).toBeUndefined()
+  })
+
   test("retries ZlibError decompression failures", () => {
     const error = Schema.decodeUnknownSync(MessageV2.APIError.Schema)(
       new MessageV2.APIError({
