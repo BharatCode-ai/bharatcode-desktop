@@ -414,6 +414,46 @@ const seed = Effect.fn("test.seed")(function* (sessionID: SessionID, opts?: { fi
   return { user: msg, assistant }
 })
 
+const seedFailedTool = Effect.fn("test.seedFailedTool")(function* (
+  sessionID: SessionID,
+  index: number,
+  tool: string,
+  input: Record<string, unknown>,
+) {
+  const session = yield* Session.Service
+  const msg = yield* user(sessionID, `failed tool ${index}`)
+  const assistant: MessageV2.Assistant = {
+    id: MessageID.ascending(),
+    role: "assistant",
+    parentID: msg.id,
+    sessionID,
+    mode: "build",
+    agent: "build",
+    cost: 0,
+    path: { cwd: "/tmp", root: "/tmp" },
+    tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+    modelID: ref.modelID,
+    providerID: ref.providerID,
+    time: { created: Date.now(), completed: Date.now() },
+    finish: "tool-calls",
+  }
+  yield* session.updateMessage(assistant)
+  yield* session.updatePart({
+    id: PartID.ascending(),
+    messageID: assistant.id,
+    sessionID,
+    type: "tool",
+    callID: `failed_call_${index}`,
+    tool,
+    state: {
+      status: "error",
+      input,
+      error: "exit status 1",
+      time: { start: Date.now(), end: Date.now() },
+    },
+  })
+})
+
 const addSubtask = (sessionID: SessionID, messageID: MessageID, model = ref) =>
   Effect.gen(function* () {
     const session = yield* Session.Service
@@ -616,6 +656,47 @@ it.instance("loop continues when finish is tool-calls", () =>
       expect(result.parts.some((part) => part.type === "text" && part.text === "second")).toBe(true)
       expect(result.info.finish).toBe("stop")
     }
+  }),
+)
+
+it.instance("loop stops repeated failed tool calls before executing them again", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig(providerCfg)
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const session = yield* sessions.create({
+      title: "Loop guard",
+      permission: [{ permission: "*", pattern: "*", action: "allow" }],
+    })
+    const repeated = { command: "echo should-not-run" }
+
+    yield* seedFailedTool(session.id, 1, "bash", repeated)
+    yield* seedFailedTool(session.id, 2, "bash", repeated)
+    yield* seedFailedTool(session.id, 3, "bash", repeated)
+    yield* prompt.prompt({
+      sessionID: session.id,
+      agent: "build",
+      noReply: true,
+      parts: [{ type: "text", text: "try again" }],
+    })
+    yield* llm.tool("bash", repeated)
+
+    const result = yield* prompt.loop({ sessionID: session.id })
+    const messages = yield* sessions.messages({ sessionID: session.id })
+    const guarded = messages
+      .flatMap((message) => message.parts)
+      .findLast((part): part is ErrorToolPart => part.type === "tool" && part.tool === "bash" && part.state.status === "error")
+
+    expect(yield* llm.calls).toBe(1)
+    expect(result.info.role).toBe("assistant")
+    expect(guarded?.state.error).toContain("Stopped automatic tool execution")
+    expect(guarded?.state.error).not.toContain("should-not-run")
+    expect(guarded?.state.metadata?.toolLoopGuard).toMatchObject({
+      type: "repeated_failed_tool_call",
+      tool: "bash",
+      repeatCount: 3,
+      threshold: 3,
+    })
   }),
 )
 
