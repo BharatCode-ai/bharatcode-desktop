@@ -56,14 +56,29 @@ function requiredEnv(name: string) {
   return value
 }
 
-async function runMacTool(command: string, args: string[], options?: { cwd?: string }) {
-  const result = await execFileAsync(command, args, { ...options, maxBuffer: execBuffer })
+async function runMacTool(command: string, args: string[], options?: { cwd?: string; timeoutMs?: number }) {
+  const result = await execFileAsync(command, args, {
+    cwd: options?.cwd,
+    maxBuffer: execBuffer,
+    timeout: options?.timeoutMs,
+  })
   const stdout = result.stdout.toString()
   const stderr = result.stderr.toString()
   return { stdout, stderr, output: `${stdout}${stderr}` }
 }
 
 export function isTransientNotaryStatusError(error: unknown) {
+  if (
+    error &&
+    typeof error === "object" &&
+    "killed" in error &&
+    "signal" in error &&
+    (error as { killed?: unknown }).killed === true &&
+    (error as { signal?: unknown }).signal === "SIGTERM"
+  ) {
+    return true
+  }
+
   const message = error instanceof Error ? error.message : String(error)
   return [
     "NSURLErrorDomain Code=-1009",
@@ -111,6 +126,10 @@ async function notarizeMac(context: MacAfterSignContext) {
   const zipPath = path.join(tempDir, `${path.basename(appPath, ".app")}.zip`)
   const timeoutMinutes = Number.parseInt(process.env.BHARATCODE_NOTARY_TIMEOUT_MINUTES || "45", 10)
   const timeoutMs = Math.max(Number.isFinite(timeoutMinutes) ? timeoutMinutes : 45, 5) * 60 * 1000
+  const submitTimeoutMinutes = Number.parseInt(process.env.BHARATCODE_NOTARY_SUBMIT_TIMEOUT_MINUTES || "10", 10)
+  const submitTimeoutMs = Math.max(Number.isFinite(submitTimeoutMinutes) ? submitTimeoutMinutes : 10, 1) * 60 * 1000
+  const statusTimeoutSeconds = Number.parseInt(process.env.BHARATCODE_NOTARY_STATUS_TIMEOUT_SECONDS || "90", 10)
+  const statusTimeoutMs = Math.max(Number.isFinite(statusTimeoutSeconds) ? statusTimeoutSeconds : 90, 15) * 1000
   const started = Date.now()
   const authArgs = notaryAuthArgs()
 
@@ -123,15 +142,11 @@ async function notarizeMac(context: MacAfterSignContext) {
     )
 
     console.log("Submitting BharatCode macOS app to Apple notarization service")
-    const submitResult = await runMacTool("xcrun", [
-      "notarytool",
-      "submit",
-      zipPath,
-      ...authArgs,
-      "--no-wait",
-      "--output-format",
-      "json",
-    ])
+    const submitResult = await runMacTool(
+      "xcrun",
+      ["notarytool", "submit", zipPath, ...authArgs, "--no-wait", "--output-format", "json"],
+      { timeoutMs: submitTimeoutMs },
+    )
     const submission = JSON.parse((submitResult.stdout || submitResult.output).trim()) as { id?: string; status?: string }
     if (!submission.id) throw new Error(`Apple notarization did not return a submission id: ${submitResult.output}`)
 
@@ -139,6 +154,7 @@ async function notarizeMac(context: MacAfterSignContext) {
       const infoResult = await runMacTool(
         "xcrun",
         ["notarytool", "info", submission.id, ...authArgs, "--output-format", "json"],
+        { timeoutMs: statusTimeoutMs },
       ).catch(async (error) => {
         if (!isTransientNotaryStatusError(error)) throw error
         console.warn(`Apple notarization ${submission.id}: transient status check failed; retrying until timeout`)

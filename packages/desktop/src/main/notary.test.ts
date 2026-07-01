@@ -16,4 +16,13 @@ describe("macOS notarization", () => {
     expect(isTransientNotaryStatusError(new Error("Authentication failed. Invalid issuer id."))).toBe(false)
     expect(isTransientNotaryStatusError(new Error("Apple notarization rejected submission submission-id"))).toBe(false)
   })
+
+  test("classifies killed status polling commands as transient", () => {
+    const error = Object.assign(new Error("Command failed: xcrun notarytool info submission-id"), {
+      killed: true,
+      signal: "SIGTERM",
+    })
+
+    expect(isTransientNotaryStatusError(error)).toBe(true)
+  })
 })
