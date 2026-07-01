@@ -137,7 +137,17 @@ jobs:
           )
           if [[ "${{ inputs.draft }}" == "true" ]]; then args+=(--draft); fi
           if [[ "${{ inputs.prerelease }}" == "true" ]]; then args+=(--prerelease); fi
+          set +e
           gh "${args[@]}"
+          create_status=$?
+          set -e
+          if (( create_status != 0 )); then
+            if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+              echo "Release $RELEASE_TAG was created concurrently; assets will be updated."
+              exit 0
+            fi
+            exit "$create_status"
+          fi
 
   package-macos:
     name: Package signed/notarized macOS app (${{ matrix.arch }})
@@ -202,6 +212,35 @@ jobs:
             printf 'Missing macOS signing/notarization secrets: %s\n' "${missing[*]}" >&2
             exit 1
           fi
+
+          key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
+          python3 - "$key_path" <<'PY'
+          import base64
+          import binascii
+          import os
+          import pathlib
+          import sys
+
+          value = os.environ["APPLE_API_KEY"].strip()
+          path = pathlib.Path(sys.argv[1])
+          payload = None
+          try:
+              decoded = base64.b64decode(value, validate=True)
+              if b"BEGIN PRIVATE KEY" in decoded:
+                  payload = decoded
+          except binascii.Error:
+              pass
+
+          if payload is None:
+              payload = value.encode("utf-8")
+
+          if not payload.endswith(b"\n"):
+              payload += b"\n"
+
+          path.write_bytes(payload)
+          PY
+          chmod 600 "$key_path"
+          echo "APPLE_API_KEY=$key_path" >> "$GITHUB_ENV"
 
       - name: Typecheck desktop
         working-directory: packages/desktop
