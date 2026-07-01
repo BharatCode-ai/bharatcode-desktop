@@ -167,7 +167,7 @@ jobs:
       APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
       BHARATCODE_ALLOW_UNSIGNED_MAC: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.allow_unsigned == 'true' && '1' || '0' }}
-      BHARATCODE_NOTARY_TIMEOUT_MINUTES: "45"
+      BHARATCODE_NOTARY_TIMEOUT_MINUTES: "180"
       BHARATCODE_CHANNEL: ${{ needs.resolve-release.outputs.channel }}
       CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
       CSC_LINK: ${{ secrets.CSC_LINK }}
@@ -253,7 +253,7 @@ jobs:
 
       - name: Package signed/notarized macOS zip
         working-directory: packages/desktop
-        timeout-minutes: 75
+        timeout-minutes: 210
         run: bunx electron-builder --mac zip --${{ matrix.arch }} --config electron-builder.config.ts --publish never
 
       - name: Verify macOS signature and notarization
