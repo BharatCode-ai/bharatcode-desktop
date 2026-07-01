@@ -127,7 +127,17 @@ jobs:
           )
           if [[ "${{ inputs.draft }}" == "true" ]]; then args+=(--draft); fi
           if [[ "${{ inputs.prerelease }}" == "true" ]]; then args+=(--prerelease); fi
+          set +e
           gh "${args[@]}"
+          create_status=$?
+          set -e
+          if (( create_status != 0 )); then
+            if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+              echo "Release $RELEASE_TAG was created concurrently; assets will be updated."
+              exit 0
+            fi
+            exit "$create_status"
+          fi
 
   package-linux:
     name: Package Linux app

@@ -159,6 +159,16 @@ jobs:
           if ("${{ inputs.draft }}" -eq "true") { $args += "--draft" }
           if ("${{ inputs.prerelease }}" -eq "true") { $args += "--prerelease" }
           & gh @args
+          $createExitCode = $LASTEXITCODE
+          if ($createExitCode -ne 0) {
+            gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY *> $null
+            if ($LASTEXITCODE -eq 0) {
+              Write-Host "Release $env:RELEASE_TAG was created concurrently; assets will be updated."
+              exit 0
+            }
+
+            exit $createExitCode
+          }
 
       - name: Upload Windows installer to GitHub Release
         if: ${{ github.event_name == 'release' || inputs.publish_release }}
