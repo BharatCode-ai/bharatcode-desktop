@@ -675,6 +675,13 @@ it.instance("completed goal transcript can be followed by a normal prompt", () =
     const followUp = yield* prompt.loop({ sessionID: session.id })
     expect(followUp.info.role).toBe("assistant")
     expect(followUp.parts.some((part) => part.type === "text" && part.text.includes("track a goal"))).toBe(true)
+    const inputs = yield* llm.inputs
+    expect(inputs).toHaveLength(2)
+    const followUpContext = JSON.stringify(inputs.at(-1)?.messages)
+    expect(followUpContext).toContain("Hi! How can I help you today?")
+    expect(followUpContext).not.toContain("mcp_goal_")
+    expect(followUpContext).not.toContain("<goal-mode>")
+    expect(followUpContext).not.toContain("Goal Mode marked complete.")
     expect(yield* llm.pending).toBe(0)
   }),
 )

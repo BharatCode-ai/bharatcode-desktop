@@ -809,7 +809,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
       for (const part of msg.parts) {
         if (part.type === "text") {
           if (isGoalTerminalTextPart(part)) continue
-          if (hasGoalControlTool) continue
+          if (hasGoalControlTool && part.text.trim() === "") continue
           const text = part.text === "" && hasSignedReasoning ? " " : part.text
           assistantMessage.parts.push({
             type: "text",
