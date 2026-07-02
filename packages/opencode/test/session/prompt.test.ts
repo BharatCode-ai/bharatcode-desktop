@@ -732,6 +732,39 @@ it.instance("goal mode continuations do not expose goal set again until a new us
   }),
 )
 
+it.instance("completed goal from a previous turn does not stop normal tool continuation", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig(providerCfg)
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const session = yield* sessions.create({
+      title: "Post-goal tool",
+      permission: [{ permission: "*", pattern: "*", action: "allow" }],
+    })
+    const active = GoalState.set(undefined, { text: "Already completed goal" }, Date.now() - 10_000)
+    yield* sessions.setGoal({
+      sessionID: session.id,
+      goal: GoalState.complete(active, { report: "Completed before this user message." }, Date.now() - 5_000),
+    })
+
+    yield* prompt.prompt({
+      sessionID: session.id,
+      agent: "build",
+      noReply: true,
+      parts: [{ type: "text", text: "Run a command and summarize the result." }],
+    })
+    yield* llm.push(
+      reply().tool("bash", { command: "printf task-result" }).stop(),
+      reply().text("The command returned task-result."),
+    )
+
+    const result = yield* prompt.loop({ sessionID: session.id })
+    expect(yield* llm.calls).toBe(2)
+    expect(result.info.role).toBe("assistant")
+    expect(result.parts.some((part) => part.type === "text" && part.text.includes("task-result"))).toBe(true)
+  }),
+)
+
 it.instance("loop continues when finish is tool-calls", () =>
   Effect.gen(function* () {
     const { llm } = yield* useServerConfig(providerCfg)

@@ -1536,7 +1536,10 @@ export const layer = Layer.effect(
             })
 
             const afterTools = yield* sessions.get(sessionID).pipe(Effect.catchCause(() => Effect.succeed(undefined)))
-            if (GoalState.isTerminal(afterTools?.goal)) {
+            const goalBecameTerminal =
+              GoalState.isTerminal(afterTools?.goal) &&
+              (session.goal?.status !== afterTools.goal.status || session.goal?.updated !== afterTools.goal.updated)
+            if (goalBecameTerminal) {
               if (!handle.message.error && (!handle.message.finish || handle.message.finish === "tool-calls")) {
                 handle.message.finish = "stop"
                 handle.message.time.completed = handle.message.time.completed ?? Date.now()
