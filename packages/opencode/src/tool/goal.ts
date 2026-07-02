@@ -45,6 +45,21 @@ function inactiveResult() {
   }
 }
 
+function alreadyActiveResult(goal: Session.Goal) {
+  return {
+    title: "Goal already active",
+    output: [
+      "Goal Mode already has an active objective.",
+      "",
+      `Current goal:\n${goal.text}`,
+      "",
+      "Continue working toward the current goal, call mcp_goal_complete when it is done, or call mcp_goal_blocker if it is blocked.",
+      "Only call mcp_goal_set again after the user explicitly asks to change the objective.",
+    ].join("\n"),
+    metadata: { status: "active", goal: goal.text, elapsed: goal.accumulated } satisfies GoalMetadata,
+  }
+}
+
 function publishFinalText(
   sessions: Session.Interface,
   ctx: Tool.Context<GoalMetadata>,
@@ -78,6 +93,7 @@ export const GoalSetTool = Tool.define<typeof GoalSetParameters, GoalMetadata, S
         "Set or replace the current Goal Mode objective for this session.",
         "Use this built-in MCP goal tool when the user gives durable instructions that should keep the agent working beyond a single response.",
         "Write the goal as a clear objective with completion criteria, constraints, and any validation the user requested.",
+        "Do not call this tool again while a goal is active unless a newer user message explicitly asks to change the objective.",
       ].join("\n"),
       parameters: GoalSetParameters,
       execute: (params: Schema.Schema.Type<typeof GoalSetParameters>, ctx: Tool.Context<GoalMetadata>) =>
@@ -85,6 +101,15 @@ export const GoalSetTool = Tool.define<typeof GoalSetParameters, GoalMetadata, S
           const at = Date.now()
           const session = yield* sessions.get(ctx.sessionID).pipe(Effect.catchCause(() => Effect.succeed(undefined)))
           if (!session) return inactiveResult()
+          if (GoalState.isActive(session.goal)) {
+            const msgs = yield* sessions
+              .messages({ sessionID: ctx.sessionID })
+              .pipe(Effect.catchCause(() => Effect.succeed([])))
+            const hasNewerUserMessage = msgs.some(
+              (message) => message.info.role === "user" && message.info.time.created > session.goal!.updated,
+            )
+            if (!hasNewerUserMessage) return alreadyActiveResult(session.goal)
+          }
 
           const goal = GoalState.set(session.goal, { text: params.goal }, at)
           yield* sessions.setGoal({ sessionID: ctx.sessionID, goal })

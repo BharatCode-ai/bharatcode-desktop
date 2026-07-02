@@ -319,6 +319,18 @@ const useServerConfig = Effect.fn("test.useServerConfig")(function* (config: (ur
   return { dir, llm }
 })
 
+function requestToolNames(input: Record<string, unknown>) {
+  const tools = input.tools
+  if (!Array.isArray(tools)) return []
+  return tools.flatMap((item) => {
+    if (!item || typeof item !== "object") return []
+    const fn = (item as { function?: unknown }).function
+    if (!fn || typeof fn !== "object") return []
+    const name = (fn as { name?: unknown }).name
+    return typeof name === "string" ? [name] : []
+  })
+}
+
 // Wait for a session's runner to enter a busy state. SessionStatus is flipped to
 // "busy" inside Runner.startShell's modifyEffect at the same moment the runner
 // is registered, so this is a deterministic readiness signal — cancel can't
@@ -682,6 +694,40 @@ it.instance("completed goal transcript can be followed by a normal prompt", () =
     expect(followUpContext).not.toContain("mcp_goal_")
     expect(followUpContext).not.toContain("<goal-mode>")
     expect(followUpContext).not.toContain("Goal Mode marked complete.")
+    expect(yield* llm.pending).toBe(0)
+  }),
+)
+
+it.instance("goal mode continuations do not expose goal set again until a new user message", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig(providerCfg)
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const session = yield* sessions.create({
+      title: "Goal set once",
+      permission: [{ permission: "*", pattern: "*", action: "allow" }],
+    })
+    yield* prompt.prompt({
+      sessionID: session.id,
+      agent: "build",
+      noReply: true,
+      parts: [{ type: "text", text: "Set a goal, then complete it." }],
+    })
+    yield* llm.push(
+      reply().text("Setting the goal.").tool("mcp_goal_set", { goal: "Set then complete the test goal." }),
+      reply().text("Completing the goal.").tool("mcp_goal_complete", { report: "Validated the test goal." }),
+    )
+
+    const completed = yield* prompt.loop({ sessionID: session.id })
+    expect(completed.info.role).toBe("assistant")
+    const updated = yield* sessions.get(session.id)
+    expect(updated.goal?.status).toBe("completed")
+
+    const inputs = yield* llm.inputs
+    expect(inputs).toHaveLength(2)
+    expect(requestToolNames(inputs[0] ?? {})).toContain("mcp_goal_set")
+    expect(requestToolNames(inputs[1] ?? {})).not.toContain("mcp_goal_set")
+    expect(requestToolNames(inputs[1] ?? {})).toContain("mcp_goal_complete")
     expect(yield* llm.pending).toBe(0)
   }),
 )
