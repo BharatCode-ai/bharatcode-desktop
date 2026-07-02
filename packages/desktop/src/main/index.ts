@@ -171,6 +171,7 @@ const main = Effect.gen(function* () {
   } catch {}
 
   process.env.OPENCODE_DISABLE_EMBEDDED_WEB_UI = "true"
+  process.env.OPENCODE_DISABLE_SHARE = "1"
 
   const appId = app.isPackaged ? appIdForChannel(CHANNEL) : appIdForChannel("dev")
   const onboardingTestRoot = ((): string | undefined => {

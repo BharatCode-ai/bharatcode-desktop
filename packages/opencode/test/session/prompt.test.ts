@@ -20,6 +20,7 @@ import { Git } from "../../src/git"
 import { Image } from "../../src/image/image"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 import { Question } from "../../src/question"
+import { GoalState } from "../../src/session/goal-state"
 import { Todo } from "../../src/session/todo"
 import { Session } from "@/session/session"
 import { SessionMessageTable } from "../../src/session/session.sql"
@@ -627,6 +628,53 @@ it.instance("static loop consumes queued replies across turns", () =>
     expect(second.parts.some((part) => part.type === "text" && part.text === "world two")).toBe(true)
 
     expect(yield* llm.hits).toHaveLength(2)
+    expect(yield* llm.pending).toBe(0)
+  }),
+)
+
+it.instance("completed goal transcript can be followed by a normal prompt", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig(providerCfg)
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const session = yield* sessions.create({
+      title: "Goal follow-up",
+      permission: [{ permission: "*", pattern: "*", action: "allow" }],
+    })
+    yield* sessions.setGoal({
+      sessionID: session.id,
+      goal: GoalState.set(undefined, { text: "Greet the user" }, Date.now()),
+    })
+
+    yield* prompt.prompt({
+      sessionID: session.id,
+      agent: "build",
+      noReply: true,
+      parts: [{ type: "text", text: "hi" }],
+    })
+    yield* llm.push(
+      reply().text("Hi! How can I help you today?").tool("mcp_goal_complete", {
+        report: 'Greeted the user with a friendly "Hi! How can I help you today?"',
+      }),
+    )
+
+    const completed = yield* prompt.loop({ sessionID: session.id })
+    expect(completed.info.role).toBe("assistant")
+    if (completed.info.role === "assistant") expect(completed.info.finish).toBe("stop")
+    const afterComplete = yield* sessions.get(session.id)
+    expect(afterComplete.goal?.status).toBe("completed")
+
+    yield* prompt.prompt({
+      sessionID: session.id,
+      agent: "build",
+      noReply: true,
+      parts: [{ type: "text", text: "can you set goals for yourself?" }],
+    })
+    yield* llm.text("Yes, I can track a goal when you ask me to.")
+
+    const followUp = yield* prompt.loop({ sessionID: session.id })
+    expect(followUp.info.role).toBe("assistant")
+    expect(followUp.parts.some((part) => part.type === "text" && part.text.includes("track a goal"))).toBe(true)
     expect(yield* llm.pending).toBe(0)
   }),
 )

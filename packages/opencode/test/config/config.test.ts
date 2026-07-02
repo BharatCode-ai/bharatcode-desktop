@@ -1310,6 +1310,22 @@ it.instance(
   { config: { model: "user/model", share: "auto", username: "testuser" } },
 )
 
+it.instance("OPENCODE_DISABLE_SHARE forces sharing disabled", () =>
+  withProcessEnv(
+    "OPENCODE_DISABLE_SHARE",
+    "1",
+    Effect.gen(function* () {
+      const test = yield* TestInstance
+      yield* writeConfigEffect(test.directory, {
+        $schema: "https://opencode.ai/config.json",
+        share: "auto",
+      })
+
+      const config = yield* Config.use.get()
+      expect(config.share).toBe("disabled")
+    }),
+  ))
+
 it.instance(
   "managed settings override project settings",
   Effect.gen(function* () {

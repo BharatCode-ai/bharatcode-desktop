@@ -262,6 +262,12 @@ describe("session.message-v2.toModelMessage", () => {
         info: assistantInfo(assistantID, userID),
         parts: [
           {
+            ...basePart(assistantID, "r1"),
+            type: "reasoning",
+            text: "The goal is complete, so I should call mcp_goal_complete.",
+            time: { start: 0 },
+          },
+          {
             ...basePart(assistantID, "a1"),
             type: "text",
             text: "Hi! How can I help you today?",
@@ -285,6 +291,139 @@ describe("session.message-v2.toModelMessage", () => {
       {
         role: "assistant",
         content: [{ type: "text", text: "Hi! How can I help you today?" }],
+      },
+    ])
+  })
+
+  test("omits legacy untagged goal terminal transcript text from model replay", async () => {
+    const userID = "m-user"
+    const assistantID = "m-assistant"
+
+    const input: MessageV2.WithParts[] = [
+      {
+        info: userInfo(userID),
+        parts: [
+          {
+            ...basePart(userID, "p1"),
+            type: "text",
+            text: "hi",
+          },
+        ] as MessageV2.Part[],
+      },
+      {
+        info: assistantInfo(assistantID, userID),
+        parts: [
+          {
+            ...basePart(assistantID, "a1"),
+            type: "text",
+            text: "\n\nGoal Mode marked complete.\n\nGreeted the user.\n\nGoal Mode metrics:",
+          },
+        ] as MessageV2.Part[],
+      },
+    ]
+
+    expect(await MessageV2.toModelMessages(input, model)).toStrictEqual([
+      {
+        role: "user",
+        content: [{ type: "text", text: "hi" }],
+      },
+    ])
+  })
+
+  test("omits goal mode control messages from model replay", async () => {
+    const userID = "m-user"
+    const assistantID = "m-assistant"
+    const assessmentID = "m-goal-assessment"
+    const goalToolID = "m-goal-tool"
+    const followupID = "m-followup"
+
+    const input: MessageV2.WithParts[] = [
+      {
+        info: userInfo(userID),
+        parts: [
+          {
+            ...basePart(userID, "p1"),
+            type: "text",
+            text: "hi",
+          },
+        ] as MessageV2.Part[],
+      },
+      {
+        info: assistantInfo(assistantID, userID),
+        parts: [
+          {
+            ...basePart(assistantID, "a1"),
+            type: "text",
+            text: "Hi! How can I help you today?",
+          },
+        ] as MessageV2.Part[],
+      },
+      {
+        info: userInfo(assessmentID),
+        parts: [
+          {
+            ...basePart(assessmentID, "p2"),
+            type: "text",
+            text: "<goal-mode>The active session goal is still open.</goal-mode>",
+            synthetic: true,
+            metadata: { kind: "goal-assessment" },
+          },
+        ] as MessageV2.Part[],
+      },
+      {
+        info: assistantInfo(goalToolID, assessmentID),
+        parts: [
+          {
+            ...basePart(goalToolID, "a2"),
+            type: "reasoning",
+            text: "The goal is complete, so I should call mcp_goal_complete.",
+            time: { start: 0 },
+          },
+          {
+            ...basePart(goalToolID, "a3"),
+            type: "text",
+            text: "\n\n",
+          },
+          {
+            ...basePart(goalToolID, "t2"),
+            type: "tool",
+            tool: "mcp_goal_complete",
+            callID: "goal-complete-1",
+            state: {
+              status: "completed",
+              input: { report: "Done." },
+              output: "Goal Mode marked complete.",
+              title: "Goal complete",
+              metadata: {},
+              time: { start: 0, end: 1 },
+            },
+          },
+        ] as MessageV2.Part[],
+      },
+      {
+        info: userInfo(followupID),
+        parts: [
+          {
+            ...basePart(followupID, "p3"),
+            type: "text",
+            text: "can you set goals for yourself?",
+          },
+        ] as MessageV2.Part[],
+      },
+    ]
+
+    expect(await MessageV2.toModelMessages(input, model)).toStrictEqual([
+      {
+        role: "user",
+        content: [{ type: "text", text: "hi" }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "Hi! How can I help you today?" }],
+      },
+      {
+        role: "user",
+        content: [{ type: "text", text: "can you set goals for yourself?" }],
       },
     ])
   })

@@ -53,4 +53,12 @@ describe("Desktop OSS readiness", () => {
       expect(readme).toContain(retainedArea)
     }
   })
+
+  test("disables public web sharing in both Desktop server startup paths", async () => {
+    const server = await readRepoFile("packages/desktop/src/main/server.ts")
+    const sidecar = await readRepoFile("packages/desktop/src/main/sidecar.ts")
+
+    expect(server).toContain('OPENCODE_DISABLE_SHARE: "1"')
+    expect(sidecar).toContain('OPENCODE_DISABLE_SHARE: "1"')
+  })
 })

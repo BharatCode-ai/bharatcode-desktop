@@ -768,6 +768,10 @@ export const layer = Layer.effect(
           result.share = "auto"
         }
 
+        if (process.env.OPENCODE_DISABLE_SHARE === "true" || process.env.OPENCODE_DISABLE_SHARE === "1") {
+          result.share = "disabled"
+        }
+
         if (Flag.OPENCODE_DISABLE_AUTOCOMPACT) {
           result.compaction = { ...result.compaction, auto: false }
         }
