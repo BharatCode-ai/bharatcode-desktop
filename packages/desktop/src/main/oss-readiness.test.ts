@@ -54,11 +54,18 @@ describe("Desktop OSS readiness", () => {
     }
   })
 
-  test("disables public web sharing in both Desktop server startup paths", async () => {
+  test("enables public web sharing only through BharatCode in Desktop startup paths", async () => {
+    const main = await readRepoFile("packages/desktop/src/main/index.ts")
     const server = await readRepoFile("packages/desktop/src/main/server.ts")
     const sidecar = await readRepoFile("packages/desktop/src/main/sidecar.ts")
 
-    expect(server).toContain('OPENCODE_DISABLE_SHARE: "1"')
-    expect(sidecar).toContain('OPENCODE_DISABLE_SHARE: "1"')
+    expect(main).not.toContain("OPENCODE_DISABLE_SHARE")
+
+    for (const source of [server, sidecar]) {
+      expect(source).toContain("BHARATCODE_SHARE_BASE_URL")
+      expect(source).toContain("https://bharatcode.ai")
+      expect(source).not.toContain("OPENCODE_DISABLE_SHARE")
+    }
+    expect(server).toContain("shellEnv?.BHARATCODE_SHARE_BASE_URL")
   })
 })

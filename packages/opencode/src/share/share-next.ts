@@ -1,6 +1,6 @@
 import type * as SDK from "@opencode-ai/sdk/v2"
 import { serviceUse } from "@/effect/service-use"
-import { Effect, Exit, Layer, Option, Schema, Scope, Context, Stream } from "effect"
+import { Effect, Exit, Layer, Schema, Scope, Context, Stream } from "effect"
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
 import { Account } from "@/account/account"
 import { Bus } from "@/bus"
@@ -15,9 +15,16 @@ import { eq } from "drizzle-orm"
 import { Config } from "@/config/config"
 import * as Log from "@opencode-ai/core/util/log"
 import { SessionShareTable } from "./share.sql"
+import { getBharatCodeShareBaseUrl, validateBharatCodeShareUrl } from "./url"
+import { homedir } from "node:os"
+import { dirname, join } from "node:path"
+import { mkdir, readFile, writeFile } from "node:fs/promises"
 
 const log = Log.create({ service: "share-next" })
 const disabled = process.env["OPENCODE_DISABLE_SHARE"] === "true" || process.env["OPENCODE_DISABLE_SHARE"] === "1"
+const BHARATCODE_SUPABASE_URL = "https://evgvlcaxfpwupaiwzqqm.supabase.co"
+const BHARATCODE_NATIVE_CLIENT_ID = "4cad332a-232f-4ef2-9363-12fea4420635"
+const TOKEN_REFRESH_SKEW_SECONDS = 300
 
 export type Api = {
   create: string
@@ -38,6 +45,15 @@ const ShareSchema = Schema.Struct({
   secret: Schema.String,
 })
 export type Share = typeof ShareSchema.Type
+
+type BharatCodeCredentials = {
+  access_token?: string
+  refresh_token?: string
+  token_type?: string
+  expires_at?: number
+  id_token?: string
+  user?: unknown
+}
 
 type State = {
   queue: Map<SessionID, Map<string, Data>>
@@ -91,8 +107,79 @@ function api(resource: string): Api {
   }
 }
 
-const legacyApi = api("share")
-const consoleApi = api("shares")
+const bharatCodeShareApi = api("share")
+
+function credentialsPath() {
+  if (process.env.BHARATCODE_CREDENTIALS_PATH) return process.env.BHARATCODE_CREDENTIALS_PATH
+  return join(process.env.BHARATCODE_HOME || homedir(), ".bharatcode", "credentials.json")
+}
+
+async function readCredentials(): Promise<BharatCodeCredentials | null> {
+  try {
+    return JSON.parse(await readFile(credentialsPath(), "utf8"))
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return null
+    throw error
+  }
+}
+
+async function saveCredentials(credentials: BharatCodeCredentials) {
+  const file = credentialsPath()
+  await mkdir(dirname(file), { recursive: true, mode: 0o700 })
+  await writeFile(file, `${JSON.stringify(credentials, null, 2)}\n`, { mode: 0o600 })
+}
+
+function shouldRefreshToken(credentials: BharatCodeCredentials) {
+  if (!credentials.access_token || !credentials.expires_at) return true
+  return credentials.expires_at - Math.floor(Date.now() / 1000) <= TOKEN_REFRESH_SKEW_SECONDS
+}
+
+function normalizeTokenResponse(tokenResponse: Record<string, unknown>, previous: BharatCodeCredentials) {
+  const now = Math.floor(Date.now() / 1000)
+  return {
+    access_token: typeof tokenResponse.access_token === "string" ? tokenResponse.access_token : previous.access_token,
+    refresh_token:
+      typeof tokenResponse.refresh_token === "string" ? tokenResponse.refresh_token : previous.refresh_token,
+    token_type:
+      typeof tokenResponse.token_type === "string" ? tokenResponse.token_type : previous.token_type || "bearer",
+    expires_at: now + Number(tokenResponse.expires_in || 3600),
+    id_token: typeof tokenResponse.id_token === "string" ? tokenResponse.id_token : previous.id_token,
+    user: tokenResponse.user || previous.user,
+  } satisfies BharatCodeCredentials
+}
+
+async function refreshCredentials(credentials: BharatCodeCredentials) {
+  if (!credentials.refresh_token) throw new Error("No BharatCode refresh token found. Sign in to BharatCode again.")
+  const response = await fetch(
+    new URL("/auth/v1/oauth/token", process.env.BHARATCODE_SUPABASE_URL || BHARATCODE_SUPABASE_URL),
+    {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: credentials.refresh_token,
+        client_id: process.env.BHARATCODE_NATIVE_CLIENT_ID || BHARATCODE_NATIVE_CLIENT_ID,
+      }),
+    },
+  )
+  const body = (await response.json().catch(() => ({}))) as Record<string, unknown>
+  if (!response.ok) throw new Error("BharatCode OAuth refresh failed. Sign in to BharatCode again.")
+  return normalizeTokenResponse(body, credentials)
+}
+
+async function bharatCodeShareAccessToken() {
+  const explicit = process.env.BHARATCODE_SHARE_ACCESS_TOKEN || process.env.BHARATCODE_ACCESS_TOKEN
+  if (explicit) return explicit
+
+  let credentials = await readCredentials()
+  if (!credentials) throw new Error("No BharatCode credentials found. Sign in to BharatCode first.")
+  if (shouldRefreshToken(credentials)) {
+    credentials = await refreshCredentials(credentials)
+    await saveCredentials(credentials)
+  }
+  if (!credentials.access_token) throw new Error("No BharatCode access token found. Sign in to BharatCode again.")
+  return credentials.access_token
+}
 
 function key(item: Data) {
   switch (item.type) {
@@ -112,9 +199,7 @@ function key(item: Data) {
 export const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
-    const account = yield* Account.Service
     const bus = yield* Bus.Service
-    const cfg = yield* Config.Service
     const http = yield* HttpClient.HttpClient
     const httpOk = HttpClient.filterStatusOk(http)
     const provider = yield* Provider.Service
@@ -139,9 +224,9 @@ export const layer = Layer.effect(
         s.queue.set(sessionID, next)
         yield* flush(sessionID).pipe(
           Effect.delay(1000),
-          Effect.catchCause((cause) =>
+          Effect.catchCause((_cause) =>
             Effect.sync(() => {
-              log.error("share flush failed", { sessionID, cause })
+              log.error("BharatCode share flush failed", { sessionID })
             }),
           ),
           Effect.forkIn(s.scope),
@@ -216,20 +301,16 @@ export const layer = Layer.effect(
 
     const request = Effect.fn("ShareNext.request")(function* () {
       const headers: Record<string, string> = {}
-      const active = yield* account.active()
-      if (Option.isNone(active) || !active.value.active_org_id) {
-        const baseUrl = (yield* cfg.get()).enterprise?.url ?? "https://opncd.ai"
-        return { headers, api: legacyApi, baseUrl } satisfies Req
-      }
-
-      const token = yield* account.token(active.value.id)
-      if (Option.isNone(token)) {
-        throw new Error("No active account token available for sharing")
-      }
-
-      headers.authorization = `Bearer ${token.value}`
-      headers["x-org-id"] = active.value.active_org_id
-      return { headers, api: consoleApi, baseUrl: active.value.url } satisfies Req
+      const baseUrl = yield* Effect.try({
+        try: getBharatCodeShareBaseUrl,
+        catch: (cause) => new Error(cause instanceof Error ? cause.message : "BharatCode share base URL is invalid."),
+      })
+      const token = yield* Effect.tryPromise({
+        try: () => bharatCodeShareAccessToken(),
+        catch: (cause) => new Error(cause instanceof Error ? cause.message : "BharatCode share authentication failed."),
+      })
+      headers.authorization = `Bearer ${token}`
+      return { headers, api: bharatCodeShareApi, baseUrl } satisfies Req
     })
 
     const get = Effect.fnUntraced(function* (sessionID: SessionID) {
@@ -320,6 +401,12 @@ export const layer = Layer.effect(
         HttpClientRequest.bodyJson({ sessionID }),
         Effect.flatMap((r) => httpOk.execute(r)),
         Effect.flatMap(HttpClientResponse.schemaBodyJson(ShareSchema)),
+        Effect.flatMap((share) =>
+          Effect.try({
+            try: () => ({ ...share, url: validateBharatCodeShareUrl(share.url, req.baseUrl) }),
+            catch: (cause) => new Error(cause instanceof Error ? cause.message : "BharatCode share URL is invalid."),
+          }),
+        ),
       )
       yield* db((db) =>
         db
@@ -334,9 +421,9 @@ export const layer = Layer.effect(
       const s = yield* InstanceState.get(state)
       s.shared.set(sessionID, result)
       yield* full(sessionID).pipe(
-        Effect.catchCause((cause) =>
+        Effect.catchCause((_cause) =>
           Effect.sync(() => {
-            log.error("share full sync failed", { sessionID, cause })
+            log.error("BharatCode share full sync failed", { sessionID })
           }),
         ),
         Effect.forkIn(s.scope),

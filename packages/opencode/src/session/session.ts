@@ -40,6 +40,7 @@ import { Global } from "@opencode-ai/core/global"
 import { Effect, Layer, Option, Context, Schema, Types } from "effect"
 import { NonNegativeInt, optionalOmitUndefined } from "@opencode-ai/core/schema"
 import { RuntimeFlags } from "@/effect/runtime-flags"
+import { safeBharatCodeShareUrl } from "@/share/url"
 
 const log = Log.create({ service: "session" })
 
@@ -68,7 +69,8 @@ export function fromRow(row: SessionRow): Info {
           diffs: row.summary_diffs ?? undefined,
         }
       : undefined
-  const share = row.share_url ? { url: row.share_url } : undefined
+  const safeShareUrl = safeBharatCodeShareUrl(row.share_url)
+  const share = safeShareUrl ? { url: safeShareUrl } : undefined
   const revert = row.revert ?? undefined
   return {
     id: row.id,

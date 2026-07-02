@@ -455,13 +455,13 @@ export const dict = {
   "toast.session.share.copyFailed.title": "Failed to copy URL to clipboard",
   "toast.session.share.success.title": "Session shared",
   "toast.session.share.success.description": "Share URL copied to clipboard!",
-  "toast.session.share.failed.title": "Failed to share session",
-  "toast.session.share.failed.description": "An error occurred while sharing the session",
+  "toast.session.share.failed.title": "BharatCode could not share this session",
+  "toast.session.share.failed.description": "Check your sign-in and connection, then try again.",
 
   "toast.session.unshare.success.title": "Session unshared",
   "toast.session.unshare.success.description": "Session unshared successfully!",
-  "toast.session.unshare.failed.title": "Failed to unshare session",
-  "toast.session.unshare.failed.description": "An error occurred while unsharing the session",
+  "toast.session.unshare.failed.title": "BharatCode could not unshare this session",
+  "toast.session.unshare.failed.description": "Check your sign-in and connection, then try again.",
 
   "toast.session.listFailed.title": "Failed to load sessions for {{project}}",
   "toast.project.reloadFailed.title": "Failed to reload {{project}}",
