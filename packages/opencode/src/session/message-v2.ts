@@ -38,6 +38,14 @@ interface FetchDecompressionError extends Error {
 export const SYNTHETIC_ATTACHMENT_PROMPT = "Attached media from tool result:"
 export { isMedia }
 
+const GOAL_TERMINAL_TEXT_KINDS = new Set(["goal-complete", "goal-blocked"])
+
+function isGoalTerminalTextPart(part: Part) {
+  if (part.type !== "text") return false
+  if (!part.synthetic) return false
+  return GOAL_TERMINAL_TEXT_KINDS.has(String(part.metadata?.kind ?? ""))
+}
+
 export const AbortedError = NamedError.create("MessageAbortedError", { message: Schema.String })
 export const StructuredOutputError = NamedError.create("StructuredOutputError", {
   message: Schema.String,
@@ -774,6 +782,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
       })
       for (const part of msg.parts) {
         if (part.type === "text") {
+          if (isGoalTerminalTextPart(part)) continue
           const text = part.text === "" && hasSignedReasoning ? " " : part.text
           assistantMessage.parts.push({
             type: "text",
