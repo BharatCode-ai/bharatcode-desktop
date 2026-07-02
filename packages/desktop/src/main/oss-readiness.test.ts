@@ -40,6 +40,9 @@ describe("Desktop OSS readiness", () => {
     expect(workflow).toContain("electron-builder --linux AppImage deb")
     expect(workflow).toContain("packages/desktop/dist/*.AppImage")
     expect(workflow).toContain("packages/desktop/dist/*.deb")
+    expect(workflow).toContain("packages/desktop/dist/*-linux.yml")
+    expect(workflow).toContain("packages/desktop/dist/latest-linux.yml")
+    expect(workflow).toContain("cp packages/desktop/dist/beta-linux.yml packages/desktop/dist/latest-linux.yml")
     expect(workflow).toContain("Upload Linux packages to GitHub Release")
   })
 
