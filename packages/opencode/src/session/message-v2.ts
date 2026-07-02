@@ -39,11 +39,34 @@ export const SYNTHETIC_ATTACHMENT_PROMPT = "Attached media from tool result:"
 export { isMedia }
 
 const GOAL_TERMINAL_TEXT_KINDS = new Set(["goal-complete", "goal-blocked"])
+const GOAL_CONTROL_TEXT_KINDS = new Set(["goal-assessment", "goal-resume"])
+const GOAL_CONTROL_TOOLS = new Set(["mcp_goal_set", "mcp_goal_complete", "mcp_goal_blocker"])
+const GOAL_TERMINAL_TEXT_PREFIXES = ["Goal Mode marked complete.", "Goal Mode blocked."]
 
-function isGoalTerminalTextPart(part: Part) {
+function isGoalSyntheticTextPart(part: Part, kinds: Set<string>) {
   if (part.type !== "text") return false
   if (!part.synthetic) return false
-  return GOAL_TERMINAL_TEXT_KINDS.has(String(part.metadata?.kind ?? ""))
+  return kinds.has(String(part.metadata?.kind ?? ""))
+}
+
+function isGoalTerminalTextPart(part: Part) {
+  if (isGoalSyntheticTextPart(part, GOAL_TERMINAL_TEXT_KINDS)) return true
+  if (part.type !== "text") return false
+  const text = part.text.trimStart()
+  return GOAL_TERMINAL_TEXT_PREFIXES.some((prefix) => text.startsWith(prefix))
+}
+
+function isGoalControlTextPart(part: Part) {
+  return isGoalSyntheticTextPart(part, GOAL_CONTROL_TEXT_KINDS)
+}
+
+function isGoalControlToolPart(part: Part) {
+  return part.type === "tool" && GOAL_CONTROL_TOOLS.has(part.tool)
+}
+
+function isGoalControlReasoningPart(part: Part) {
+  if (part.type !== "reasoning") return false
+  return part.text.includes("mcp_goal_") || part.text.includes("<goal-mode>") || /Goal Mode (marked complete|blocked)/.test(part.text)
 }
 
 export const AbortedError = NamedError.create("MessageAbortedError", { message: Schema.String })
@@ -708,6 +731,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
         parts: [],
       }
       for (const part of msg.parts) {
+        if (isGoalControlTextPart(part)) continue
         // User message parts should never be empty
         if (part.type === "text" && !part.ignored && part.text !== "")
           userMessage.parts.push({
@@ -780,9 +804,12 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
         if (part.type !== "reasoning") return false
         return part.metadata?.anthropic?.signature != null
       })
+      const hasGoalControlTool = msg.parts.some(isGoalControlToolPart)
+      const hasGoalTerminalText = msg.parts.some(isGoalTerminalTextPart)
       for (const part of msg.parts) {
         if (part.type === "text") {
           if (isGoalTerminalTextPart(part)) continue
+          if (hasGoalControlTool) continue
           const text = part.text === "" && hasSignedReasoning ? " " : part.text
           assistantMessage.parts.push({
             type: "text",
@@ -795,6 +822,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
             type: "step-start",
           })
         if (part.type === "tool") {
+          if (isGoalControlToolPart(part)) continue
           toolNames.add(part.tool)
           if (part.state.status === "completed") {
             const outputText = part.state.time.compacted
@@ -867,6 +895,9 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
             })
         }
         if (part.type === "reasoning") {
+          if (isGoalControlReasoningPart(part)) continue
+          if (hasGoalTerminalText) continue
+          if (hasGoalControlTool) continue
           if (differentModel) {
             if (part.text.trim().length > 0)
               assistantMessage.parts.push({
