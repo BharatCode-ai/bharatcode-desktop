@@ -705,15 +705,25 @@ export function MessageTimeline(props: {
 
   const shareMutation = useMutation(() => ({
     mutationFn: (id: string) => globalSDK.client.session.share({ sessionID: id, directory: sdk.directory }),
-    onError: (err) => {
-      console.error("Failed to share session", err)
+    onError: () => {
+      console.error("BharatCode share failed")
+      showToast({
+        title: language.t("toast.session.share.failed.title"),
+        description: language.t("toast.session.share.failed.description"),
+        variant: "error",
+      })
     },
   }))
 
   const unshareMutation = useMutation(() => ({
     mutationFn: (id: string) => globalSDK.client.session.unshare({ sessionID: id, directory: sdk.directory }),
-    onError: (err) => {
-      console.error("Failed to unshare session", err)
+    onError: () => {
+      console.error("BharatCode unshare failed")
+      showToast({
+        title: language.t("toast.session.unshare.failed.title"),
+        description: language.t("toast.session.unshare.failed.description"),
+        variant: "error",
+      })
     },
   }))
 
