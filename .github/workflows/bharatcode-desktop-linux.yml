@@ -179,11 +179,23 @@ jobs:
         working-directory: packages/desktop
         run: bunx electron-builder --linux AppImage deb --x64 --config electron-builder.config.ts --publish never
 
+      - name: Prepare Linux updater metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f packages/desktop/dist/beta-linux.yml && ! -f packages/desktop/dist/latest-linux.yml ]]; then
+            cp packages/desktop/dist/beta-linux.yml packages/desktop/dist/latest-linux.yml
+          fi
+          if ! compgen -G "packages/desktop/dist/*-linux.yml" > /dev/null; then
+            echo "::error::No Linux updater metadata file found in packages/desktop/dist"
+            exit 1
+          fi
+
       - name: Print Linux checksums
         shell: bash
         run: |
           set -euo pipefail
-          shasum -a 256 packages/desktop/dist/*.AppImage packages/desktop/dist/*.deb
+          shasum -a 256 packages/desktop/dist/*.AppImage packages/desktop/dist/*.deb packages/desktop/dist/*-linux.yml
 
       - name: Upload Linux artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -193,13 +205,15 @@ jobs:
           path: |
             packages/desktop/dist/*.AppImage
             packages/desktop/dist/*.deb
+            packages/desktop/dist/*-linux.yml
+            packages/desktop/dist/latest-linux.yml
 
       - name: Upload Linux packages to GitHub Release
         if: ${{ github.event_name == 'release' || inputs.publish_release }}
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t files < <(find packages/desktop/dist -maxdepth 1 -type f \( -name "*.AppImage" -o -name "*.deb" \) | sort)
+          mapfile -t files < <(find packages/desktop/dist -maxdepth 1 -type f \( -name "*.AppImage" -o -name "*.deb" -o -name "*-linux.yml" \) | sort -u)
           if [[ "${#files[@]}" -eq 0 ]]; then
             echo "::error::No Linux release files found in packages/desktop/dist"
             exit 1
