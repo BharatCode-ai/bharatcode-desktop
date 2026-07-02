@@ -64,6 +64,10 @@ function publishFinalText(
     .pipe(Effect.catchCause(() => Effect.void))
 }
 
+function terminalOutput(label: string, goal: Session.Goal, metrics: string) {
+  return `${label}\n\nGoal: ${goal.text}\n\n${goal.report}\n\n${metrics}`
+}
+
 export const GoalSetTool = Tool.define<typeof GoalSetParameters, GoalMetadata, Session.Service>(
   "mcp_goal_set",
   Effect.gen(function* () {
@@ -115,7 +119,7 @@ export const GoalCompleteTool = Tool.define<typeof GoalCompleteParameters, GoalM
           const goal = GoalState.complete(session.goal, { report: params.report }, at)
           yield* sessions.setGoal({ sessionID: ctx.sessionID, goal })
           const metrics = GoalState.formatMetrics(goal, session.tokens ?? EMPTY_TOKENS)
-          const output = `Goal Mode marked complete.\n\n${goal.report}\n\n${metrics}`
+          const output = terminalOutput("Goal Mode marked complete.", goal, metrics)
           yield* publishFinalText(sessions, ctx, output, "goal-complete")
           return {
             title: "Goal complete",
@@ -148,7 +152,7 @@ export const GoalBlockerTool = Tool.define<typeof GoalBlockerParameters, GoalMet
           const goal = GoalState.block(session.goal, params, at)
           yield* sessions.setGoal({ sessionID: ctx.sessionID, goal })
           const metrics = GoalState.formatMetrics(goal, session.tokens ?? EMPTY_TOKENS)
-          const output = `Goal Mode marked blocked.\n\n${goal.report}\n\n${metrics}`
+          const output = terminalOutput("Goal Mode marked blocked.", goal, metrics)
           yield* publishFinalText(sessions, ctx, output, "goal-blocked")
           return {
             title: "Goal blocked",

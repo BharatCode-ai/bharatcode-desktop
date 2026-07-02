@@ -243,6 +243,52 @@ describe("session.message-v2.toModelMessage", () => {
     ])
   })
 
+  test("omits goal terminal transcript text from model replay", async () => {
+    const userID = "m-user"
+    const assistantID = "m-assistant"
+
+    const input: MessageV2.WithParts[] = [
+      {
+        info: userInfo(userID),
+        parts: [
+          {
+            ...basePart(userID, "p1"),
+            type: "text",
+            text: "hi",
+          },
+        ] as MessageV2.Part[],
+      },
+      {
+        info: assistantInfo(assistantID, userID),
+        parts: [
+          {
+            ...basePart(assistantID, "a1"),
+            type: "text",
+            text: "Hi! How can I help you today?",
+          },
+          {
+            ...basePart(assistantID, "a2"),
+            type: "text",
+            text: "Goal Mode marked complete.\n\nGreeted the user.\n\nGoal Mode metrics:",
+            synthetic: true,
+            metadata: { kind: "goal-complete" },
+          },
+        ] as MessageV2.Part[],
+      },
+    ]
+
+    expect(await MessageV2.toModelMessages(input, model)).toStrictEqual([
+      {
+        role: "user",
+        content: [{ type: "text", text: "hi" }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "Hi! How can I help you today?" }],
+      },
+    ])
+  })
+
   test("converts user text/file parts and injects compaction/subtask prompts", async () => {
     const messageID = "m-user"
 

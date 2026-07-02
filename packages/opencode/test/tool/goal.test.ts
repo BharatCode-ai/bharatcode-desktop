@@ -143,6 +143,7 @@ describe("tool.goal", () => {
 
       expect(text?.synthetic).toBe(true)
       expect(text?.text).toContain("Goal Mode marked complete.")
+      expect(text?.text).toContain("Goal: Ship Goal Mode with visible completion")
       expect(text?.text).toContain("Validated with focused tests.")
       expect(text?.text).toContain("Goal Mode metrics:")
     }),
