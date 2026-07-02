@@ -4,6 +4,7 @@ import {
   createGoalClearCommand,
   createGoalSetCommand,
   createGoalToggleCommand,
+  visibleGoal,
   goalToggleLabel,
   formatGoalElapsed,
   goalElapsed,
@@ -34,6 +35,14 @@ describe("SessionGoalRibbon helpers", () => {
     expect(goalToggleLabel(goal("paused"))).toBe("Resume")
     expect(goalToggleLabel(goal("completed"))).toBeUndefined()
     expect(goalToggleLabel(goal("blocked"))).toBeUndefined()
+  })
+
+  test("hides completed goals from the active composer ribbon", () => {
+    expect(visibleGoal(goal("active"))?.status).toBe("active")
+    expect(visibleGoal(goal("paused"))?.status).toBe("paused")
+    expect(visibleGoal(goal("blocked"))?.status).toBe("blocked")
+    expect(visibleGoal(goal("completed"))).toBeUndefined()
+    expect(visibleGoal(undefined)).toBeUndefined()
   })
 
   test("formats elapsed active goal time", () => {

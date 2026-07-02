@@ -39,6 +39,10 @@ export function goalToggleLabel(goal: SessionGoal | undefined) {
   return undefined
 }
 
+export function visibleGoal(goal: SessionGoal | undefined) {
+  return goal?.status === "completed" ? undefined : goal
+}
+
 export function createGoalClearCommand(): SessionGoalUpdate {
   return { action: "clear" }
 }
@@ -53,22 +57,23 @@ export function SessionGoalRibbon(props: {
   const [now, setNow] = createSignal(Date.now())
   let timer: number | undefined
 
-  const active = createMemo(() => props.goal?.status === "active")
-  const visible = createMemo(() => !!props.goal || editing())
-  const toggleLabel = createMemo(() => goalToggleLabel(props.goal))
+  const displayGoal = createMemo(() => visibleGoal(props.goal))
+  const active = createMemo(() => displayGoal()?.status === "active")
+  const visible = createMemo(() => !!displayGoal() || editing())
+  const toggleLabel = createMemo(() => goalToggleLabel(displayGoal()))
   const status = createMemo(() => {
-    const goal = props.goal
+    const goal = displayGoal()
     if (!goal) return "Ready"
     if (goal.status === "active") return "Active"
     if (goal.status === "paused") return "Paused"
     if (goal.status === "blocked") return "Blocked"
     return "Complete"
   })
-  const elapsed = createMemo(() => (props.goal ? formatGoalElapsed(goalElapsed(props.goal, now())) : "0s"))
+  const elapsed = createMemo(() => (displayGoal() ? formatGoalElapsed(goalElapsed(displayGoal()!, now())) : "0s"))
 
   createEffect(() => {
     if (editing()) return
-    setDraft(props.goal?.text ?? "")
+    setDraft(displayGoal()?.text ?? "")
   })
 
   createEffect(() => {
@@ -93,7 +98,7 @@ export function SessionGoalRibbon(props: {
   }
 
   const toggle = () => {
-    const command = createGoalToggleCommand(props.goal)
+    const command = createGoalToggleCommand(displayGoal())
     if (!command) return
     void props.onUpdate(command)
   }
@@ -122,11 +127,11 @@ export function SessionGoalRibbon(props: {
             <div class="min-w-0 flex-1 flex items-center gap-2">
               <span class="text-13-medium text-text-strong shrink-0">Goal Mode</span>
               <span class="text-12-regular text-text-weak shrink-0">{status()}</span>
-              <Show when={props.goal}>
+              <Show when={displayGoal()}>
                 <span class="text-12-regular text-text-weak shrink-0">{elapsed()}</span>
               </Show>
             </div>
-            <Show when={!editing() && props.goal}>
+            <Show when={!editing() && displayGoal()}>
               <Button size="small" variant="ghost" disabled={props.disabled} onClick={() => setEditing(true)}>
                 Edit
               </Button>
@@ -151,8 +156,8 @@ export function SessionGoalRibbon(props: {
           <Show
             when={editing()}
             fallback={
-              <Show when={props.goal}>
-                <p class="text-13-regular text-text-base whitespace-pre-wrap break-words">{props.goal?.text}</p>
+              <Show when={displayGoal()}>
+                <p class="text-13-regular text-text-base whitespace-pre-wrap break-words">{displayGoal()?.text}</p>
               </Show>
             }
           >
@@ -164,7 +169,7 @@ export function SessionGoalRibbon(props: {
               onKeyDown={(event) => {
                 if ((event.metaKey || event.ctrlKey) && event.key === "Enter") submit()
                 if (event.key === "Escape") {
-                  setDraft(props.goal?.text ?? "")
+                  setDraft(displayGoal()?.text ?? "")
                   setEditing(false)
                 }
               }}
@@ -175,7 +180,7 @@ export function SessionGoalRibbon(props: {
                 variant="ghost"
                 disabled={props.disabled}
                 onClick={() => {
-                  setDraft(props.goal?.text ?? "")
+                  setDraft(displayGoal()?.text ?? "")
                   setEditing(false)
                 }}
               >

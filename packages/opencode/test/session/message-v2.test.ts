@@ -428,6 +428,110 @@ describe("session.message-v2.toModelMessage", () => {
     ])
   })
 
+  test("preserves useful assistant text from a goal control turn without replaying goal artifacts", async () => {
+    const initialUserID = "m-user"
+    const assessmentID = "m-goal-assessment"
+    const assistantID = "m-goal-assistant"
+    const followupID = "m-followup"
+
+    const input: MessageV2.WithParts[] = [
+      {
+        info: userInfo(initialUserID),
+        parts: [
+          {
+            ...basePart(initialUserID, "p1"),
+            type: "text",
+            text: "Set a goal and complete it.",
+          },
+        ] as MessageV2.Part[],
+      },
+      {
+        info: userInfo(assessmentID),
+        parts: [
+          {
+            ...basePart(assessmentID, "p2"),
+            type: "text",
+            text: "<goal-mode>The active session goal is still open.</goal-mode>",
+            synthetic: true,
+            metadata: { kind: "goal-assessment" },
+          },
+        ] as MessageV2.Part[],
+      },
+      {
+        info: assistantInfo(assistantID, assessmentID),
+        parts: [
+          {
+            ...basePart(assistantID, "r1"),
+            type: "reasoning",
+            text: "The goal is complete, so I should call mcp_goal_complete.",
+            time: { start: 0 },
+          },
+          {
+            ...basePart(assistantID, "a1"),
+            type: "text",
+            text: "I checked the current Goal Mode objective and completed the requested setup.",
+          },
+          {
+            ...basePart(assistantID, "t1"),
+            type: "tool",
+            tool: "mcp_goal_complete",
+            callID: "goal-complete-1",
+            state: {
+              status: "completed",
+              input: { report: "Completed the requested setup." },
+              output: "Goal Mode marked complete.",
+              title: "Goal complete",
+              metadata: {},
+              time: { start: 0, end: 1 },
+            },
+          },
+          {
+            ...basePart(assistantID, "a2"),
+            type: "text",
+            text: "Goal Mode marked complete.\n\nCompleted the requested setup.\n\nGoal Mode metrics:",
+            synthetic: true,
+            metadata: { kind: "goal-complete" },
+          },
+        ] as MessageV2.Part[],
+      },
+      {
+        info: userInfo(followupID),
+        parts: [
+          {
+            ...basePart(followupID, "p3"),
+            type: "text",
+            text: "Did Goal Mode run successfully?",
+          },
+        ] as MessageV2.Part[],
+      },
+    ]
+
+    const result = await MessageV2.toModelMessages(input, model)
+
+    expect(result).toStrictEqual([
+      {
+        role: "user",
+        content: [{ type: "text", text: "Set a goal and complete it." }],
+      },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "text",
+            text: "I checked the current Goal Mode objective and completed the requested setup.",
+          },
+        ],
+      },
+      {
+        role: "user",
+        content: [{ type: "text", text: "Did Goal Mode run successfully?" }],
+      },
+    ])
+    expect(JSON.stringify(result)).not.toContain("mcp_goal_")
+    expect(JSON.stringify(result)).not.toContain("<goal-mode>")
+    expect(JSON.stringify(result)).not.toContain("Goal Mode marked complete.")
+  })
+
   test("converts user text/file parts and injects compaction/subtask prompts", async () => {
     const messageID = "m-user"
 

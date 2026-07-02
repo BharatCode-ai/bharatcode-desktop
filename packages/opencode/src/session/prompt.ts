@@ -1221,6 +1221,7 @@ export const layer = Layer.effect(
         "1. Continue working: do the next useful action now.",
         "2. Goal complete: call the mcp_goal_complete tool with a concise completion report after validating the goal.",
         "3. Blocked: call the mcp_goal_blocker tool with the blocker, what was tried, and the smallest user input needed.",
+        "Do not call mcp_goal_set from this automatic Goal Mode turn; the active objective is already set.",
         "Do not end with plain text while this goal remains active.",
         "</goal-mode>",
       ].join("\n")
@@ -1262,6 +1263,7 @@ export const layer = Layer.effect(
         "Begin or continue working toward this goal now.",
         "When complete, call mcp_goal_complete with a concise completion report.",
         "When blocked, call mcp_goal_blocker with the blocker, what was tried, and the smallest useful user input needed.",
+        "Do not call mcp_goal_set from this automatic Goal Mode turn; the active objective is already set.",
         "Do not end with plain text while this goal remains active.",
         "</goal-mode>",
       ].join("\n")
@@ -1534,7 +1536,10 @@ export const layer = Layer.effect(
             })
 
             const afterTools = yield* sessions.get(sessionID).pipe(Effect.catchCause(() => Effect.succeed(undefined)))
-            if (GoalState.isTerminal(afterTools?.goal)) {
+            const goalBecameTerminal =
+              GoalState.isTerminal(afterTools?.goal) &&
+              (session.goal?.status !== afterTools.goal.status || session.goal?.updated !== afterTools.goal.updated)
+            if (goalBecameTerminal) {
               if (!handle.message.error && (!handle.message.finish || handle.message.finish === "tool-calls")) {
                 handle.message.finish = "stop"
                 handle.message.time.completed = handle.message.time.completed ?? Date.now()

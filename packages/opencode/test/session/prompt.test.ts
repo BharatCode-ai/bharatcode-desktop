@@ -319,6 +319,18 @@ const useServerConfig = Effect.fn("test.useServerConfig")(function* (config: (ur
   return { dir, llm }
 })
 
+function requestToolNames(input: Record<string, unknown>) {
+  const tools = input.tools
+  if (!Array.isArray(tools)) return []
+  return tools.flatMap((item) => {
+    if (!item || typeof item !== "object") return []
+    const fn = (item as { function?: unknown }).function
+    if (!fn || typeof fn !== "object") return []
+    const name = (fn as { name?: unknown }).name
+    return typeof name === "string" ? [name] : []
+  })
+}
+
 // Wait for a session's runner to enter a busy state. SessionStatus is flipped to
 // "busy" inside Runner.startShell's modifyEffect at the same moment the runner
 // is registered, so this is a deterministic readiness signal — cancel can't
@@ -675,7 +687,81 @@ it.instance("completed goal transcript can be followed by a normal prompt", () =
     const followUp = yield* prompt.loop({ sessionID: session.id })
     expect(followUp.info.role).toBe("assistant")
     expect(followUp.parts.some((part) => part.type === "text" && part.text.includes("track a goal"))).toBe(true)
+    const inputs = yield* llm.inputs
+    expect(inputs).toHaveLength(2)
+    const followUpContext = JSON.stringify(inputs.at(-1)?.messages)
+    expect(followUpContext).toContain("Hi! How can I help you today?")
+    expect(followUpContext).not.toContain("mcp_goal_")
+    expect(followUpContext).not.toContain("<goal-mode>")
+    expect(followUpContext).not.toContain("Goal Mode marked complete.")
     expect(yield* llm.pending).toBe(0)
+  }),
+)
+
+it.instance("goal mode continuations do not expose goal set again until a new user message", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig(providerCfg)
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const session = yield* sessions.create({
+      title: "Goal set once",
+      permission: [{ permission: "*", pattern: "*", action: "allow" }],
+    })
+    yield* prompt.prompt({
+      sessionID: session.id,
+      agent: "build",
+      noReply: true,
+      parts: [{ type: "text", text: "Set a goal, then complete it." }],
+    })
+    yield* llm.push(
+      reply().text("Setting the goal.").tool("mcp_goal_set", { goal: "Set then complete the test goal." }),
+      reply().text("Completing the goal.").tool("mcp_goal_complete", { report: "Validated the test goal." }),
+    )
+
+    const completed = yield* prompt.loop({ sessionID: session.id })
+    expect(completed.info.role).toBe("assistant")
+    const updated = yield* sessions.get(session.id)
+    expect(updated.goal?.status).toBe("completed")
+
+    const inputs = yield* llm.inputs
+    expect(inputs).toHaveLength(2)
+    expect(requestToolNames(inputs[0] ?? {})).toContain("mcp_goal_set")
+    expect(requestToolNames(inputs[1] ?? {})).not.toContain("mcp_goal_set")
+    expect(requestToolNames(inputs[1] ?? {})).toContain("mcp_goal_complete")
+    expect(yield* llm.pending).toBe(0)
+  }),
+)
+
+it.instance("completed goal from a previous turn does not stop normal tool continuation", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig(providerCfg)
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const session = yield* sessions.create({
+      title: "Post-goal tool",
+      permission: [{ permission: "*", pattern: "*", action: "allow" }],
+    })
+    const active = GoalState.set(undefined, { text: "Already completed goal" }, Date.now() - 10_000)
+    yield* sessions.setGoal({
+      sessionID: session.id,
+      goal: GoalState.complete(active, { report: "Completed before this user message." }, Date.now() - 5_000),
+    })
+
+    yield* prompt.prompt({
+      sessionID: session.id,
+      agent: "build",
+      noReply: true,
+      parts: [{ type: "text", text: "Run a command and summarize the result." }],
+    })
+    yield* llm.push(
+      reply().tool("bash", { command: "printf task-result" }).stop(),
+      reply().text("The command returned task-result."),
+    )
+
+    const result = yield* prompt.loop({ sessionID: session.id })
+    expect(yield* llm.calls).toBe(2)
+    expect(result.info.role).toBe("assistant")
+    expect(result.parts.some((part) => part.type === "text" && part.text.includes("task-result"))).toBe(true)
   }),
 )
 

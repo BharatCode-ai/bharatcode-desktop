@@ -62,6 +62,20 @@ function assistantMessage(sessionID: SessionID): MessageV2.Assistant {
   }
 }
 
+function userMessage(sessionID: SessionID, time = Date.now()): MessageV2.User {
+  return {
+    id: MessageID.ascending(),
+    role: "user",
+    agent: "build",
+    model: {
+      providerID: ProviderID.make("test-provider"),
+      modelID: ModelID.make("test-model"),
+    },
+    time: { created: time },
+    sessionID,
+  }
+}
+
 describe("tool.goal", () => {
   it.instance("goal complete returns a model-facing result when no goal is active", () =>
     Effect.gen(function* () {
@@ -119,6 +133,45 @@ describe("tool.goal", () => {
       expect(result.title).toBe("Goal not active")
       expect(updated.goal?.status).toBe("paused")
       expect(updated.goal?.report).toBeUndefined()
+    }),
+  )
+
+  it.instance("goal set refuses to replace an active goal without a newer user message", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const chat = yield* sessions.create({})
+      yield* sessions.updateMessage(userMessage(chat.id))
+      const setTool = yield* GoalSetTool
+      const setDef = yield* setTool.init()
+
+      yield* setDef.execute({ goal: "Initial goal" }, ctx(chat.id))
+      const result = yield* setDef.execute({ goal: "Rewritten same-turn goal" }, ctx(chat.id))
+      const updated = yield* sessions.get(chat.id)
+
+      expect(result.title).toBe("Goal already active")
+      expect(result.output).toContain("Current goal:")
+      expect(result.output).toContain("Initial goal")
+      expect(updated.goal?.status).toBe("active")
+      expect(updated.goal?.text).toBe("Initial goal")
+    }),
+  )
+
+  it.instance("goal set allows replacing an active goal after a newer user message", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const chat = yield* sessions.create({})
+      const setTool = yield* GoalSetTool
+      const setDef = yield* setTool.init()
+      const oldGoal = GoalState.set(undefined, { text: "Initial goal" }, Date.now() - 10_000)
+      yield* sessions.setGoal({ sessionID: chat.id, goal: oldGoal })
+      yield* sessions.updateMessage(userMessage(chat.id, oldGoal.updated + 1_000))
+
+      const result = yield* setDef.execute({ goal: "User-requested replacement" }, ctx(chat.id))
+      const updated = yield* sessions.get(chat.id)
+
+      expect(result.title).toBe("Goal set")
+      expect(updated.goal?.status).toBe("active")
+      expect(updated.goal?.text).toBe("User-requested replacement")
     }),
   )
 

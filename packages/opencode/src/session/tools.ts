@@ -17,6 +17,7 @@ import * as Session from "./session"
 import { SessionProcessor } from "./processor"
 import { PartID } from "./schema"
 import { ToolLoopGuard } from "./tool-loop-guard"
+import { GoalState } from "./goal-state"
 import * as Log from "@opencode-ai/core/util/log"
 import { EffectBridge } from "@/effect/bridge"
 
@@ -91,11 +92,18 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
     return yield* Effect.fail(new ToolLoopGuard.RepeatedToolCallError(failure))
   })
 
+  const shouldHideGoalSet =
+    GoalState.isActive(input.session.goal) &&
+    !input.messages.some(
+      (message) => message.info.role === "user" && message.info.time.created > input.session.goal!.updated,
+    )
+
   for (const item of yield* registry.tools({
     modelID: ModelID.make(input.model.api.id),
     providerID: input.model.providerID,
     agent: input.agent,
   })) {
+    if (item.id === "mcp_goal_set" && shouldHideGoalSet) continue
     const schema = ProviderTransform.schema(input.model, ToolJsonSchema.fromTool(item))
     tools[item.id] = tool({
       description: item.description,
