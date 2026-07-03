@@ -5,6 +5,7 @@ import {
   createGoalSetCommand,
   createGoalToggleCommand,
   visibleGoal,
+  goalTextOverflowState,
   goalToggleLabel,
   formatGoalElapsed,
   goalElapsed,
@@ -49,5 +50,20 @@ describe("SessionGoalRibbon helpers", () => {
     expect(goalElapsed(goal("active", 10_000), 100_000)).toBe(120_000)
     expect(goalElapsed(goal("paused", 10_000), 100_000)).toBe(30_000)
     expect(formatGoalElapsed(120_000)).toBe("2m 0s")
+  })
+
+  test("collapses long goal text unless expanded", () => {
+    expect(goalTextOverflowState({ expanded: false, overflow: false })).toEqual({
+      showToggle: false,
+      collapsed: false,
+    })
+    expect(goalTextOverflowState({ expanded: false, overflow: true })).toEqual({
+      showToggle: true,
+      collapsed: true,
+    })
+    expect(goalTextOverflowState({ expanded: true, overflow: true })).toEqual({
+      showToggle: true,
+      collapsed: false,
+    })
   })
 })

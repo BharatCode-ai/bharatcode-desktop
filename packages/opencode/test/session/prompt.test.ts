@@ -834,6 +834,83 @@ it.instance("loop stops repeated failed tool calls before executing them again",
   }),
 )
 
+it.instance("provider errors during goal mode leave the goal active without terminal goal output", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig(providerCfg)
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const session = yield* sessions.create({
+      title: "Goal provider error",
+      permission: [{ permission: "*", pattern: "*", action: "allow" }],
+    })
+    yield* sessions.setGoal({
+      sessionID: session.id,
+      goal: GoalState.set(undefined, { text: "Complete a task after the provider recovers" }, Date.now()),
+    })
+    yield* prompt.prompt({
+      sessionID: session.id,
+      agent: "build",
+      noReply: true,
+      parts: [{ type: "text", text: "continue the active goal" }],
+    })
+    yield* llm.error(400, { error: { message: "model unavailable" } })
+
+    const result = yield* prompt.loop({ sessionID: session.id })
+    const updated = yield* sessions.get(session.id)
+    const messages = yield* sessions.messages({ sessionID: session.id })
+    const transcript = messages.flatMap((message) => message.parts).map((part) => (part.type === "text" ? part.text : ""))
+
+    expect(result.info.role).toBe("assistant")
+    if (result.info.role === "assistant") expect(result.info.error?.name).toBe("APIError")
+    expect(updated.goal?.status).toBe("active")
+    expect(transcript.join("\n")).not.toContain("Goal Mode marked complete.")
+    expect(transcript.join("\n")).not.toContain("Goal Mode marked blocked.")
+  }),
+)
+
+it.instance("goal mode keeps active goal state when repeated tool-call guard stops execution", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig(providerCfg)
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const session = yield* sessions.create({
+      title: "Goal tool loop guard",
+      permission: [{ permission: "*", pattern: "*", action: "allow" }],
+    })
+    const repeated = { command: "echo should-not-run" }
+
+    yield* sessions.setGoal({
+      sessionID: session.id,
+      goal: GoalState.set(undefined, { text: "Finish without repeating a failed command" }, Date.now()),
+    })
+    yield* seedFailedTool(session.id, 1, "bash", repeated)
+    yield* seedFailedTool(session.id, 2, "bash", repeated)
+    yield* seedFailedTool(session.id, 3, "bash", repeated)
+    yield* prompt.prompt({
+      sessionID: session.id,
+      agent: "build",
+      noReply: true,
+      parts: [{ type: "text", text: "continue the active goal" }],
+    })
+    yield* llm.tool("bash", repeated)
+
+    const result = yield* prompt.loop({ sessionID: session.id })
+    const updated = yield* sessions.get(session.id)
+    const messages = yield* sessions.messages({ sessionID: session.id })
+    const guarded = messages
+      .flatMap((message) => message.parts)
+      .findLast((part): part is ErrorToolPart => part.type === "tool" && part.tool === "bash" && part.state.status === "error")
+
+    expect(result.info.role).toBe("assistant")
+    expect(updated.goal?.status).toBe("active")
+    expect(guarded?.state.error).toContain("Stopped automatic tool execution")
+    expect(guarded?.state.metadata?.toolLoopGuard).toMatchObject({
+      type: "repeated_failed_tool_call",
+      tool: "bash",
+    })
+  }),
+)
+
 it.instance("glob tool keeps instance context during prompt runs", () =>
   Effect.gen(function* () {
     const { dir, llm } = yield* useServerConfig(providerCfg)

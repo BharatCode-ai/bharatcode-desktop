@@ -6,6 +6,8 @@ import type { SessionGoal, SessionGoalUpdate } from "@opencode-ai/sdk/v2"
 
 export type { SessionGoal, SessionGoalUpdate } from "@opencode-ai/sdk/v2"
 
+export const GOAL_TEXT_COLLAPSED_MAX_HEIGHT = 96
+
 export function goalElapsed(goal: SessionGoal, now = Date.now()) {
   if (goal.status !== "active" || goal.activeSince === undefined) return goal.accumulated
   return goal.accumulated + Math.max(0, now - goal.activeSince)
@@ -47,6 +49,13 @@ export function createGoalClearCommand(): SessionGoalUpdate {
   return { action: "clear" }
 }
 
+export function goalTextOverflowState(input: { expanded: boolean; overflow: boolean }) {
+  return {
+    showToggle: input.overflow,
+    collapsed: input.overflow && !input.expanded,
+  }
+}
+
 export function SessionGoalRibbon(props: {
   goal?: SessionGoal
   disabled?: boolean
@@ -55,7 +64,11 @@ export function SessionGoalRibbon(props: {
   const [editing, setEditing] = createSignal(false)
   const [draft, setDraft] = createSignal("")
   const [now, setNow] = createSignal(Date.now())
+  const [goalExpanded, setGoalExpanded] = createSignal(false)
+  const [goalOverflow, setGoalOverflow] = createSignal(false)
   let timer: number | undefined
+  let goalText: HTMLParagraphElement | undefined
+  let goalTextObserver: ResizeObserver | undefined
 
   const displayGoal = createMemo(() => visibleGoal(props.goal))
   const active = createMemo(() => displayGoal()?.status === "active")
@@ -70,10 +83,49 @@ export function SessionGoalRibbon(props: {
     return "Complete"
   })
   const elapsed = createMemo(() => (displayGoal() ? formatGoalElapsed(goalElapsed(displayGoal()!, now())) : "0s"))
+  const textOverflow = createMemo(() =>
+    goalTextOverflowState({
+      expanded: goalExpanded(),
+      overflow: goalOverflow(),
+    }),
+  )
+
+  const measureGoalText = () => {
+    if (!goalText || !displayGoal() || editing()) {
+      setGoalOverflow(false)
+      return
+    }
+    setGoalOverflow(goalText.scrollHeight > GOAL_TEXT_COLLAPSED_MAX_HEIGHT + 1)
+  }
+
+  const setGoalTextRef = (el: HTMLParagraphElement) => {
+    goalText = el
+    goalTextObserver?.disconnect()
+    goalTextObserver = new ResizeObserver(measureGoalText)
+    goalTextObserver.observe(el)
+    window.requestAnimationFrame(measureGoalText)
+  }
 
   createEffect(() => {
     if (editing()) return
     setDraft(displayGoal()?.text ?? "")
+  })
+
+  createEffect((previous?: string) => {
+    const goal = displayGoal()
+    const key = goal ? `${goal.status}:${goal.text}` : ""
+    if (key !== previous) setGoalExpanded(false)
+    return key
+  })
+
+  createEffect(() => {
+    const goal = displayGoal()
+    if (!goal || editing()) {
+      setGoalOverflow(false)
+      return
+    }
+    goal.text
+    window.requestAnimationFrame(measureGoalText)
   })
 
   createEffect(() => {
@@ -88,6 +140,7 @@ export function SessionGoalRibbon(props: {
 
   onCleanup(() => {
     if (timer !== undefined) window.clearInterval(timer)
+    goalTextObserver?.disconnect()
   })
 
   const submit = () => {
@@ -157,7 +210,32 @@ export function SessionGoalRibbon(props: {
             when={editing()}
             fallback={
               <Show when={displayGoal()}>
-                <p class="text-13-regular text-text-base whitespace-pre-wrap break-words">{displayGoal()?.text}</p>
+                <div class="min-w-0">
+                  <p
+                    ref={setGoalTextRef}
+                    class="text-13-regular text-text-base whitespace-pre-wrap break-words overflow-hidden"
+                    style={{
+                      "max-height": textOverflow().collapsed
+                        ? `${GOAL_TEXT_COLLAPSED_MAX_HEIGHT}px`
+                        : undefined,
+                    }}
+                  >
+                    {displayGoal()?.text}
+                  </p>
+                  <Show when={textOverflow().showToggle}>
+                    <div class="mt-1 flex justify-end">
+                      <IconButton
+                        icon="chevron-down"
+                        size="small"
+                        variant="ghost"
+                        disabled={props.disabled}
+                        classList={{ "rotate-180": goalExpanded() }}
+                        onClick={() => setGoalExpanded((value) => !value)}
+                        aria-label={goalExpanded() ? "Collapse Goal Mode objective" : "Expand Goal Mode objective"}
+                      />
+                    </div>
+                  </Show>
+                </div>
               </Show>
             }
           >
