@@ -86,6 +86,7 @@ const elog = EffectLogger.create({ service: "session.prompt" })
 export interface Interface {
   readonly cancel: (sessionID: SessionID) => Effect.Effect<void>
   readonly prompt: (input: PromptInput) => Effect.Effect<MessageV2.WithParts, Image.Error>
+  readonly ensureGoalPauseMessage: (input: GoalRunInput) => Effect.Effect<MessageV2.WithParts | undefined, Image.Error>
   readonly ensureGoalRunMessage: (input: GoalRunInput) => Effect.Effect<MessageV2.WithParts | undefined, Image.Error>
   readonly loop: (input: LoopInput) => Effect.Effect<MessageV2.WithParts>
   readonly shell: (input: ShellInput) => Effect.Effect<MessageV2.WithParts, Session.BusyError>
@@ -1268,14 +1269,57 @@ export const layer = Layer.effect(
         "</goal-mode>",
       ].join("\n")
 
+    const goalPauseMessage = (goal: Session.Goal) =>
+      [
+        "<goal-mode>",
+        "Goal Mode was paused by the user.",
+        "The paused session goal is:",
+        goal.text,
+        "",
+        "Stop working on this goal now.",
+        "Do not continue automatic Goal Mode work until the user resumes it.",
+        "If you need to respond, acknowledge the pause briefly and do not start new tool calls for this paused goal.",
+        "</goal-mode>",
+      ].join("\n")
+
+    const latestUser = (sessionID: SessionID) =>
+      sessions
+        .findMessage(sessionID, (message) => message.info.role === "user")
+        .pipe(
+          Effect.map((option) => (Option.isSome(option) ? option.value : undefined)),
+          Effect.catchCause(() => Effect.succeed(undefined)),
+        )
+
+    const isGoalPauseMessage = (message: MessageV2.WithParts | undefined) =>
+      message?.parts.some((part) => part.type === "text" && part.synthetic && part.metadata?.kind === "goal-pause") ??
+      false
+
+    const ensureGoalPauseMessage: (input: GoalRunInput) => Effect.Effect<
+      MessageV2.WithParts | undefined,
+      Image.Error
+    > = Effect.fn("SessionPrompt.ensureGoalPauseMessage")(function* (input: GoalRunInput) {
+      if (isGoalPauseMessage(yield* latestUser(input.sessionID))) return undefined
+
+      return yield* createUserMessage({
+        sessionID: input.sessionID,
+        noReply: true,
+        parts: [
+          {
+            type: "text",
+            text: goalPauseMessage(input.goal),
+            synthetic: true,
+            metadata: { kind: "goal-pause" },
+          },
+        ],
+      })
+    }, Effect.scoped)
+
     const ensureGoalRunMessage: (input: GoalRunInput) => Effect.Effect<
       MessageV2.WithParts | undefined,
       Image.Error
     > = Effect.fn("SessionPrompt.ensureGoalRunMessage")(function* (input: GoalRunInput) {
-      const hasUserMessage = yield* sessions
-        .findMessage(input.sessionID, (message) => message.info.role === "user")
-        .pipe(Effect.map(Option.isSome), Effect.catchCause(() => Effect.succeed(false)))
-      if (hasUserMessage) return undefined
+      const latest = yield* latestUser(input.sessionID)
+      if (latest && !isGoalPauseMessage(latest)) return undefined
 
       return yield* createUserMessage({
         sessionID: input.sessionID,
@@ -1417,7 +1461,7 @@ export const layer = Layer.effect(
             yield* bus.publish(Session.Event.Error, { sessionID, error: error.toObject() })
             throw error
           }
-          const maxSteps = agent.steps ?? Infinity
+          const maxSteps = GoalState.isActive(session.goal) ? Infinity : (agent.steps ?? Infinity)
           const isLastStep = step >= maxSteps
           msgs = yield* SessionReminders.apply({ messages: msgs, agent, session }).pipe(
             Effect.provideService(RuntimeFlags.Service, flags),
@@ -1724,6 +1768,7 @@ export const layer = Layer.effect(
     return Service.of({
       cancel,
       prompt,
+      ensureGoalPauseMessage,
       ensureGoalRunMessage,
       loop,
       shell,

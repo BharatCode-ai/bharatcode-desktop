@@ -44,6 +44,31 @@ export const apply = Effect.fn("SessionReminders.apply")(function* (input: {
       metadata: { kind: "goal-reminder" },
     })
   }
+  if (
+    goal?.status === "paused" &&
+    userMessage.parts.some(
+      (part) => part.type === "text" && part.synthetic && part.metadata?.kind === "goal-pause",
+    )
+  ) {
+    userMessage.parts.push({
+      id: PartID.ascending(),
+      messageID: userMessage.info.id,
+      sessionID: userMessage.info.sessionID,
+      type: "text",
+      text: [
+        "<goal-mode>",
+        "Goal Mode was paused by the user.",
+        "The paused session goal is:",
+        goal.text,
+        "",
+        "Do not continue automatic Goal Mode work until the user resumes it.",
+        "If you need to respond, acknowledge the pause briefly and do not start new tool calls for this paused goal.",
+        "</goal-mode>",
+      ].join("\n"),
+      synthetic: true,
+      metadata: { kind: "goal-pause-reminder" },
+    })
+  }
 
   if (!flags.experimentalPlanMode) {
     if (input.agent.name === "plan") {

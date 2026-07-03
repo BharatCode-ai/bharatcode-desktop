@@ -335,6 +335,7 @@ describe("session.message-v2.toModelMessage", () => {
     const assistantID = "m-assistant"
     const assessmentID = "m-goal-assessment"
     const goalToolID = "m-goal-tool"
+    const pauseID = "m-goal-pause"
     const followupID = "m-followup"
 
     const input: MessageV2.WithParts[] = [
@@ -397,6 +398,18 @@ describe("session.message-v2.toModelMessage", () => {
               metadata: {},
               time: { start: 0, end: 1 },
             },
+          },
+        ] as MessageV2.Part[],
+      },
+      {
+        info: userInfo(pauseID),
+        parts: [
+          {
+            ...basePart(pauseID, "p-pause"),
+            type: "text",
+            text: "<goal-mode>Goal Mode was paused by the user.</goal-mode>",
+            synthetic: true,
+            metadata: { kind: "goal-pause" },
           },
         ] as MessageV2.Part[],
       },

@@ -732,6 +732,92 @@ it.instance("goal mode continuations do not expose goal set again until a new us
   }),
 )
 
+it.instance("active goal mode bypasses agent max steps for automatic continuations", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig((url) => ({
+      ...providerCfg(url),
+      agent: {
+        build: {
+          model: "test/test-model",
+          steps: 1,
+        },
+      },
+    }))
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const session = yield* sessions.create({
+      title: "Goal max steps",
+      permission: [{ permission: "*", pattern: "*", action: "allow" }],
+    })
+    yield* sessions.setGoal({
+      sessionID: session.id,
+      goal: GoalState.set(undefined, { text: "Keep working past the normal step ceiling." }, Date.now()),
+    })
+    yield* prompt.prompt({
+      sessionID: session.id,
+      agent: "build",
+      noReply: true,
+      parts: [{ type: "text", text: "continue the active goal" }],
+    })
+    yield* llm.push(
+      reply().text("I made initial progress.").stop(),
+      reply().text("Finishing the goal.").tool("mcp_goal_complete", { report: "Completed the goal." }),
+    )
+
+    const result = yield* prompt.loop({ sessionID: session.id })
+    expect(result.info.role).toBe("assistant")
+    const updated = yield* sessions.get(session.id)
+    expect(updated.goal?.status).toBe("completed")
+
+    const inputs = yield* llm.inputs
+    expect(inputs).toHaveLength(2)
+    const firstContext = JSON.stringify(inputs[0]?.messages)
+    const secondContext = JSON.stringify(inputs[1]?.messages)
+    expect(firstContext).not.toContain("CRITICAL - MAXIMUM STEPS REACHED")
+    expect(secondContext).not.toContain("CRITICAL - MAXIMUM STEPS REACHED")
+    expect(requestToolNames(inputs[1] ?? {})).toContain("mcp_goal_complete")
+  }),
+)
+
+it.instance("paused goal turn injects a transient model-facing pause instruction", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig(providerCfg)
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const session = yield* sessions.create({
+      title: "Goal pause turn",
+      permission: [{ permission: "*", pattern: "*", action: "allow" }],
+    })
+    const active = GoalState.set(undefined, { text: "Finish the release checklist" }, Date.now() - 10_000)
+    yield* sessions.setGoal({
+      sessionID: session.id,
+      goal: GoalState.pause(active, Date.now()),
+    })
+    yield* prompt.prompt({
+      sessionID: session.id,
+      agent: "build",
+      noReply: true,
+      parts: [
+        {
+          type: "text",
+          text: "Goal Mode was paused by the user.",
+          synthetic: true,
+          metadata: { kind: "goal-pause" },
+        },
+      ],
+    })
+    yield* llm.text("Goal Mode is paused.")
+
+    const result = yield* prompt.loop({ sessionID: session.id })
+    expect(result.info.role).toBe("assistant")
+    const inputs = yield* llm.inputs
+    expect(inputs).toHaveLength(1)
+    const context = JSON.stringify(inputs[0]?.messages)
+    expect(context).toContain("Goal Mode was paused by the user.")
+    expect(context).toContain("Do not continue automatic Goal Mode work until the user resumes it.")
+  }),
+)
+
 it.instance("completed goal from a previous turn does not stop normal tool continuation", () =>
   Effect.gen(function* () {
     const { llm } = yield* useServerConfig(providerCfg)

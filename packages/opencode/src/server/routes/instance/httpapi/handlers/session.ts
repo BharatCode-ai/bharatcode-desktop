@@ -198,6 +198,9 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
 
         if (next.goal !== undefined) {
           yield* session.setGoal({ sessionID: ctx.params.sessionID, goal: next.goal })
+          if (ctx.payload.goal.action === "pause" && next.goal) {
+            yield* promptSvc.ensureGoalPauseMessage({ sessionID: ctx.params.sessionID, goal: next.goal }).pipe(Effect.exit)
+          }
           if (next.shouldRun && next.goal) {
             const prepared = yield* promptSvc
               .ensureGoalRunMessage({ sessionID: ctx.params.sessionID, goal: next.goal })

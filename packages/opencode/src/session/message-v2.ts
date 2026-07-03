@@ -39,7 +39,7 @@ export const SYNTHETIC_ATTACHMENT_PROMPT = "Attached media from tool result:"
 export { isMedia }
 
 const GOAL_TERMINAL_TEXT_KINDS = new Set(["goal-complete", "goal-blocked"])
-const GOAL_CONTROL_TEXT_KINDS = new Set(["goal-assessment", "goal-resume"])
+const GOAL_CONTROL_TEXT_KINDS = new Set(["goal-assessment", "goal-resume", "goal-pause"])
 const GOAL_CONTROL_TOOLS = new Set(["mcp_goal_set", "mcp_goal_complete", "mcp_goal_blocker"])
 const GOAL_TERMINAL_TEXT_PREFIXES = ["Goal Mode marked complete.", "Goal Mode blocked."]
 

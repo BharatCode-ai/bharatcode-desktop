@@ -621,6 +621,35 @@ describe("session HttpApi", () => {
   )
 
   it.instance(
+    "pausing an active goal creates a synthetic pause turn",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
+        const created = yield* createSession({ title: "goal pause" })
+        const active = GoalState.set(undefined, { text: "Finish the release checklist" }, 100)
+        yield* Session.use.setGoal({ sessionID: created.id, goal: active })
+
+        const updated = yield* requestJson<Session.Info>(pathFor(SessionPaths.update, { sessionID: created.id }), {
+          method: "PATCH",
+          headers,
+          body: JSON.stringify({ goal: { action: "pause" } }),
+        })
+        const messages = yield* Session.use.messages({ sessionID: created.id })
+        const user = messages.find((message) => message.info.role === "user")
+        const text = user?.parts.find(
+          (part): part is MessageV2.TextPart => part.type === "text" && part.metadata?.kind === "goal-pause",
+        )
+
+        expect(updated.goal?.status).toBe("paused")
+        expect(text?.synthetic).toBe(true)
+        expect(text?.text).toContain("Goal Mode was paused")
+        expect(text?.text).toContain("Finish the release checklist")
+      }),
+    { git: true, config: { formatter: false, lsp: false, share: "disabled" } },
+  )
+
+  it.instance(
     "resuming a paused goal with no user messages creates a synthetic goal turn",
     () =>
       Effect.gen(function* () {
