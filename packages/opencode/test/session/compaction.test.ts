@@ -909,6 +909,73 @@ describe("session.compaction.process", () => {
   )
 
   itCompaction.instance(
+    "includes overflow turn progress in the summary input before replaying the user prompt",
+    () => {
+      const stub = llm()
+      let captured = ""
+      stub.push(
+        reply("summary", (input) => {
+          captured = JSON.stringify(input.messages)
+        }),
+      )
+
+      return Effect.gen(function* () {
+        const test = yield* TestInstance
+        const ssn = yield* SessionNs.Service
+        const session = yield* ssn.create({})
+        const older = yield* createUserMessage(session.id, "Earlier setup: use the existing upload API.")
+        const olderReply = yield* createAssistantMessage(session.id, older.id, test.directory)
+        yield* ssn.updatePart({
+          id: PartID.ascending(),
+          messageID: olderReply.id,
+          sessionID: session.id,
+          type: "text",
+          text: "Earlier context retained.",
+        })
+        const current = yield* createUserMessage(session.id, "Implement the streaming upload fix.")
+        const currentReply = yield* createAssistantMessage(session.id, current.id, test.directory)
+        yield* ssn.updatePart({
+          id: PartID.ascending(),
+          messageID: currentReply.id,
+          sessionID: session.id,
+          type: "text",
+          text: "Progress: edited packages/api/upload.ts and observed a 413 from the proxy.",
+        })
+        yield* SessionCompaction.use.create({
+          sessionID: session.id,
+          agent: "build",
+          model: ref,
+          auto: true,
+          overflow: true,
+        })
+
+        const msgs = yield* ssn.messages({ sessionID: session.id })
+        const parent = msgs.at(-1)?.info.id
+        expect(parent).toBeTruthy()
+        yield* SessionCompaction.use.process({
+          parentID: parent!,
+          messages: msgs,
+          sessionID: session.id,
+          auto: true,
+          overflow: true,
+        })
+
+        expect(captured).toContain("Earlier setup")
+        expect(captured).toContain("Implement the streaming upload fix")
+        expect(captured).toContain("edited packages/api/upload.ts")
+
+        const all = yield* ssn.messages({ sessionID: session.id })
+        const replay = all.at(-1)
+        expect(replay?.info.role).toBe("user")
+        expect(
+          replay?.parts.some((part) => part.type === "text" && part.text.includes("Implement the streaming upload fix")),
+        ).toBe(true)
+      }).pipe(withCompaction({ llm: stub.layer, config: cfg({ tail_turns: 0 }) }))
+    },
+    { git: true },
+  )
+
+  itCompaction.instance(
     "persists tail_start_id for retained recent turns",
     Effect.gen(function* () {
       const ssn = yield* SessionNs.Service

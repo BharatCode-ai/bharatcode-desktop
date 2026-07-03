@@ -368,7 +368,7 @@ export const layer = Layer.effect(
           const msg = input.messages[i]
           if (msg.info.role === "user" && !msg.parts.some((p) => p.type === "compaction")) {
             replay = { info: msg.info, parts: msg.parts }
-            messages = input.messages.slice(0, i)
+            messages = input.messages.slice(0, compactionPart ? idx : i)
             break
           }
         }
