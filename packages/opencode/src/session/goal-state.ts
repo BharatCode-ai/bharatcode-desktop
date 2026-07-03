@@ -59,6 +59,13 @@ export namespace GoalState {
   }
 
   export function set(current: Goal | undefined, input: SetInput, at: number): Goal {
+    if (isActive(current)) {
+      return {
+        ...current,
+        text: bounded(input.text, "Continue working toward the user's stated objective.", MAX_GOAL_TEXT),
+        updated: at,
+      }
+    }
     const previous = current && !isTerminal(current) ? account(current, at) : undefined
     return {
       text: bounded(input.text, "Continue working toward the user's stated objective.", MAX_GOAL_TEXT),

@@ -175,6 +175,26 @@ describe("tool.goal", () => {
     }),
   )
 
+  it.instance("agent goal set replacement does not create a synthetic goal update turn", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const chat = yield* sessions.create({})
+      const setTool = yield* GoalSetTool
+      const setDef = yield* setTool.init()
+      const oldGoal = GoalState.set(undefined, { text: "Initial goal" }, Date.now() - 10_000)
+      yield* sessions.setGoal({ sessionID: chat.id, goal: oldGoal })
+      yield* sessions.updateMessage(userMessage(chat.id, oldGoal.updated + 1_000))
+
+      yield* setDef.execute({ goal: "User-requested replacement" }, ctx(chat.id))
+      const messages = yield* sessions.messages({ sessionID: chat.id })
+      const hasGoalUpdate = messages.some((message) =>
+        message.parts.some((part) => part.type === "text" && part.metadata?.kind === "goal-update"),
+      )
+
+      expect(hasGoalUpdate).toBe(false)
+    }),
+  )
+
   it.instance("goal terminal tools write a visible final text part with metrics", () =>
     Effect.gen(function* () {
       const sessions = yield* Session.Service

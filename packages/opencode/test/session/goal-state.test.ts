@@ -17,8 +17,10 @@ test("set preserves elapsed time when editing an active or paused goal", () => {
   const active = GoalState.set(undefined, { text: "Build release checklist" }, 100)
   const editedActive = GoalState.set(active, { text: "Ship release checklist" }, 160)
   expect(editedActive.created).toBe(100)
-  expect(editedActive.accumulated).toBe(60)
-  expect(editedActive.activeSince).toBe(160)
+  expect(editedActive.updated).toBe(160)
+  expect(editedActive.accumulated).toBe(0)
+  expect(editedActive.activeSince).toBe(100)
+  expect(GoalState.elapsed(editedActive, 190)).toBe(90)
 
   const paused = GoalState.pause(editedActive, 190)
   const editedPaused = GoalState.set(paused, { text: "Ship release checklist with docs" }, 250)

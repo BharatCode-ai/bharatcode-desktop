@@ -621,6 +621,41 @@ describe("session HttpApi", () => {
   )
 
   it.instance(
+    "manual abort pauses an active goal without prompting the agent",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
+        const created = yield* createSession({ title: "goal stop" })
+        const active = GoalState.set(undefined, { text: "Finish the release checklist" }, Date.now() - 1_000)
+        yield* Session.use.setGoal({ sessionID: created.id, goal: active })
+
+        expect(
+          yield* requestJson<boolean>(pathFor(SessionPaths.abort, { sessionID: created.id }), {
+            method: "POST",
+            headers,
+          }),
+        ).toBe(true)
+
+        const updated = yield* requestJson<Session.Info>(pathFor(SessionPaths.get, { sessionID: created.id }), {
+          headers,
+        })
+        const messages = yield* Session.use.messages({ sessionID: created.id })
+        const hasGoalControlPrompt = messages.some((message) =>
+          message.parts.some(
+            (part) =>
+              part.type === "text" && (part.metadata?.kind === "goal-pause" || part.metadata?.kind === "goal-update"),
+          ),
+        )
+
+        expect(updated.goal?.status).toBe("paused")
+        expect(updated.goal?.activeSince).toBeUndefined()
+        expect(hasGoalControlPrompt).toBe(false)
+      }),
+    { git: true, config: { formatter: false, lsp: false, share: "disabled" } },
+  )
+
+  it.instance(
     "pausing an active goal creates a synthetic pause turn",
     () =>
       Effect.gen(function* () {
@@ -645,6 +680,37 @@ describe("session HttpApi", () => {
         expect(text?.synthetic).toBe(true)
         expect(text?.text).toContain("Goal Mode was paused")
         expect(text?.text).toContain("Finish the release checklist")
+      }),
+    { git: true, config: { formatter: false, lsp: false, share: "disabled" } },
+  )
+
+  it.instance(
+    "editing an active goal creates a synthetic goal update turn",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
+        const created = yield* createSession({ title: "goal edit" })
+        const active = GoalState.set(undefined, { text: "Finish the release checklist" }, 100)
+        yield* Session.use.setGoal({ sessionID: created.id, goal: active })
+
+        const updated = yield* requestJson<Session.Info>(pathFor(SessionPaths.update, { sessionID: created.id }), {
+          method: "PATCH",
+          headers,
+          body: JSON.stringify({ goal: { action: "set", text: "Finish the release checklist and smoke test it" } }),
+        })
+        const messages = yield* Session.use.messages({ sessionID: created.id })
+        const user = messages.find((message) => message.info.role === "user")
+        const text = user?.parts.find(
+          (part): part is MessageV2.TextPart => part.type === "text" && part.metadata?.kind === "goal-update",
+        )
+
+        expect(updated.goal?.status).toBe("active")
+        expect(updated.goal?.text).toBe("Finish the release checklist and smoke test it")
+        expect(updated.goal?.activeSince).toBe(100)
+        expect(text?.synthetic).toBe(true)
+        expect(text?.text).toContain("Goal Mode objective was updated by the user.")
+        expect(text?.text).toContain("Finish the release checklist and smoke test it")
       }),
     { git: true, config: { formatter: false, lsp: false, share: "disabled" } },
   )

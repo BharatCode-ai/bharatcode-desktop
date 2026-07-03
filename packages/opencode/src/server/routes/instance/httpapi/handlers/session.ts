@@ -198,6 +198,14 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
 
         if (next.goal !== undefined) {
           yield* session.setGoal({ sessionID: ctx.params.sessionID, goal: next.goal })
+          if (
+            ctx.payload.goal.action === "set" &&
+            GoalState.isActive(current.goal) &&
+            next.goal &&
+            current.goal.text !== next.goal.text
+          ) {
+            yield* promptSvc.ensureGoalUpdateMessage({ sessionID: ctx.params.sessionID, goal: next.goal }).pipe(Effect.exit)
+          }
           if (ctx.payload.goal.action === "pause" && next.goal) {
             yield* promptSvc.ensureGoalPauseMessage({ sessionID: ctx.params.sessionID, goal: next.goal }).pipe(Effect.exit)
           }
@@ -241,6 +249,10 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
     })
 
     const abort = Effect.fn("SessionHttpApi.abort")(function* (ctx: { params: { sessionID: SessionID } }) {
+      const current = yield* session.get(ctx.params.sessionID).pipe(Effect.option)
+      if (Option.isSome(current) && GoalState.isActive(current.value.goal)) {
+        yield* session.setGoal({ sessionID: ctx.params.sessionID, goal: GoalState.pause(current.value.goal, Date.now()) })
+      }
       yield* promptSvc.cancel(ctx.params.sessionID)
       return true
     })

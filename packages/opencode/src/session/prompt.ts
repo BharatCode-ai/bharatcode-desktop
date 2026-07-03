@@ -86,6 +86,7 @@ const elog = EffectLogger.create({ service: "session.prompt" })
 export interface Interface {
   readonly cancel: (sessionID: SessionID) => Effect.Effect<void>
   readonly prompt: (input: PromptInput) => Effect.Effect<MessageV2.WithParts, Image.Error>
+  readonly ensureGoalUpdateMessage: (input: GoalRunInput) => Effect.Effect<MessageV2.WithParts | undefined, Image.Error>
   readonly ensureGoalPauseMessage: (input: GoalRunInput) => Effect.Effect<MessageV2.WithParts | undefined, Image.Error>
   readonly ensureGoalRunMessage: (input: GoalRunInput) => Effect.Effect<MessageV2.WithParts | undefined, Image.Error>
   readonly loop: (input: LoopInput) => Effect.Effect<MessageV2.WithParts>
@@ -1282,6 +1283,20 @@ export const layer = Layer.effect(
         "</goal-mode>",
       ].join("\n")
 
+    const goalUpdateMessage = (goal: Session.Goal) =>
+      [
+        "<goal-mode>",
+        "Goal Mode objective was updated by the user.",
+        "The updated session goal is:",
+        goal.text,
+        "",
+        "Continue working toward this updated goal.",
+        "When complete, call mcp_goal_complete with a concise completion report.",
+        "When blocked, call mcp_goal_blocker with the blocker, what was tried, and the smallest useful user input needed.",
+        "Do not call mcp_goal_set in response to this update; the active objective has already been updated.",
+        "</goal-mode>",
+      ].join("\n")
+
     const latestUser = (sessionID: SessionID) =>
       sessions
         .findMessage(sessionID, (message) => message.info.role === "user")
@@ -1293,6 +1308,30 @@ export const layer = Layer.effect(
     const isGoalPauseMessage = (message: MessageV2.WithParts | undefined) =>
       message?.parts.some((part) => part.type === "text" && part.synthetic && part.metadata?.kind === "goal-pause") ??
       false
+
+    const isGoalUpdateMessage = (message: MessageV2.WithParts | undefined) =>
+      message?.parts.some((part) => part.type === "text" && part.synthetic && part.metadata?.kind === "goal-update") ??
+      false
+
+    const ensureGoalUpdateMessage: (input: GoalRunInput) => Effect.Effect<
+      MessageV2.WithParts | undefined,
+      Image.Error
+    > = Effect.fn("SessionPrompt.ensureGoalUpdateMessage")(function* (input: GoalRunInput) {
+      if (isGoalUpdateMessage(yield* latestUser(input.sessionID))) return undefined
+
+      return yield* createUserMessage({
+        sessionID: input.sessionID,
+        noReply: true,
+        parts: [
+          {
+            type: "text",
+            text: goalUpdateMessage(input.goal),
+            synthetic: true,
+            metadata: { kind: "goal-update" },
+          },
+        ],
+      })
+    }, Effect.scoped)
 
     const ensureGoalPauseMessage: (input: GoalRunInput) => Effect.Effect<
       MessageV2.WithParts | undefined,
@@ -1768,6 +1807,7 @@ export const layer = Layer.effect(
     return Service.of({
       cancel,
       prompt,
+      ensureGoalUpdateMessage,
       ensureGoalPauseMessage,
       ensureGoalRunMessage,
       loop,
