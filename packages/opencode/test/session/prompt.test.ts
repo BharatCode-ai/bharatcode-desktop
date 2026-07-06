@@ -432,6 +432,7 @@ const seedFailedTool = Effect.fn("test.seedFailedTool")(function* (
   index: number,
   tool: string,
   input: Record<string, unknown>,
+  error = "exit status 1",
 ) {
   const session = yield* Session.Service
   const msg = yield* user(sessionID, `failed tool ${index}`)
@@ -461,9 +462,41 @@ const seedFailedTool = Effect.fn("test.seedFailedTool")(function* (
     state: {
       status: "error",
       input,
-      error: "exit status 1",
+      error,
       time: { start: Date.now(), end: Date.now() },
     },
+  })
+})
+
+const seedAssistantText = Effect.fn("test.seedAssistantText")(function* (
+  sessionID: SessionID,
+  index: number,
+  text: string,
+) {
+  const session = yield* Session.Service
+  const msg = yield* user(sessionID, `assistant text seed ${index}`)
+  const assistant: MessageV2.Assistant = {
+    id: MessageID.ascending(),
+    role: "assistant",
+    parentID: msg.id,
+    sessionID,
+    mode: "build",
+    agent: "build",
+    cost: 0,
+    path: { cwd: "/tmp", root: "/tmp" },
+    tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+    modelID: ref.modelID,
+    providerID: ref.providerID,
+    time: { created: Date.now(), completed: Date.now() },
+    finish: "stop",
+  }
+  yield* session.updateMessage(assistant)
+  yield* session.updatePart({
+    id: PartID.ascending(),
+    messageID: assistant.id,
+    sessionID,
+    type: "text",
+    text,
   })
 })
 
@@ -776,6 +809,129 @@ it.instance("active goal mode bypasses agent max steps for automatic continuatio
     expect(firstContext).not.toContain("CRITICAL - MAXIMUM STEPS REACHED")
     expect(secondContext).not.toContain("CRITICAL - MAXIMUM STEPS REACHED")
     expect(requestToolNames(inputs[1] ?? {})).toContain("mcp_goal_complete")
+  }),
+)
+
+it.instance("goal mode assessment defines repeated-action blocker policy", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig(providerCfg)
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const session = yield* sessions.create({
+      title: "Goal policy prompt",
+      permission: [{ permission: "*", pattern: "*", action: "allow" }],
+    })
+    yield* sessions.setGoal({
+      sessionID: session.id,
+      goal: GoalState.set(undefined, { text: "Diagnose and fix the issue without looping" }, Date.now()),
+    })
+    yield* prompt.prompt({
+      sessionID: session.id,
+      agent: "build",
+      noReply: true,
+      parts: [{ type: "text", text: "continue the active goal" }],
+    })
+    yield* llm.push(
+      reply().text("I will inspect the same diagnosis again.").stop(),
+      reply().tool("mcp_goal_blocker", {
+        blocker: "No different path was available from the repeated diagnosis.",
+        attempted: "Inspected the repeated action policy.",
+      }),
+    )
+
+    const result = yield* prompt.loop({ sessionID: session.id })
+    expect(result.info.role).toBe("assistant")
+
+    const inputs = yield* llm.inputs
+    expect(inputs).toHaveLength(2)
+    const assessmentContext = JSON.stringify(inputs[1]?.messages)
+    expect(assessmentContext).toContain("Meaningful progress means")
+    expect(assessmentContext).toContain("materially different concrete action")
+    expect(assessmentContext).toContain("repeats prior reasoning")
+    expect(assessmentContext).toContain("mcp_goal_blocker")
+  }),
+)
+
+it.instance("goal mode surfaces repeated assistant response fingerprints without hard-blocking", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig(providerCfg)
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const session = yield* sessions.create({
+      title: "Goal repeated response",
+      permission: [{ permission: "*", pattern: "*", action: "allow" }],
+    })
+    const repeated =
+      "I will inspect the same files again and then apply the same fix if the diagnostics point to it."
+    yield* sessions.setGoal({
+      sessionID: session.id,
+      goal: GoalState.set(undefined, { text: "Finish without repeating the same response" }, Date.now()),
+    })
+    yield* seedAssistantText(session.id, 1, repeated)
+    yield* prompt.prompt({
+      sessionID: session.id,
+      agent: "build",
+      noReply: true,
+      parts: [{ type: "text", text: "continue the active goal" }],
+    })
+    yield* llm.push(
+      reply().text(repeated).stop(),
+      reply().tool("mcp_goal_blocker", {
+        blocker: "The previous response repeated without meaningful progress.",
+        attempted: "Reviewed the repeated-response signal and chose to report a blocker.",
+      }),
+    )
+
+    const result = yield* prompt.loop({ sessionID: session.id })
+    const updated = yield* sessions.get(session.id)
+    const inputs = yield* llm.inputs
+    const assessmentContext = JSON.stringify(inputs[1]?.messages)
+
+    expect(result.info.role).toBe("assistant")
+    expect(updated.goal?.status).toBe("blocked")
+    expect(assessmentContext).toContain("Current blocker signal")
+    expect(assessmentContext).toContain("repeated substantially the same response")
+    expect(assessmentContext).toContain("mcp_goal_blocker")
+    expect(yield* llm.calls).toBe(2)
+  }),
+)
+
+it.instance("goal mode assessment calls out recent user-aborted tool context", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig(providerCfg)
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const session = yield* sessions.create({
+      title: "Goal aborted tool",
+      permission: [{ permission: "*", pattern: "*", action: "allow" }],
+    })
+    yield* sessions.setGoal({
+      sessionID: session.id,
+      goal: GoalState.set(undefined, { text: "Recover from an aborted tool without retrying blindly" }, Date.now()),
+    })
+    yield* seedFailedTool(session.id, 1, "bash", { command: "long running command" }, "User aborted the command")
+    yield* prompt.prompt({
+      sessionID: session.id,
+      agent: "build",
+      noReply: true,
+      parts: [{ type: "text", text: "continue the active goal" }],
+    })
+    yield* llm.push(
+      reply().text("I will retry the command.").stop(),
+      reply().tool("mcp_goal_blocker", {
+        blocker: "The prior command was user-aborted.",
+        attempted: "Detected the aborted tool context.",
+      }),
+    )
+
+    const result = yield* prompt.loop({ sessionID: session.id })
+    expect(result.info.role).toBe("assistant")
+
+    const inputs = yield* llm.inputs
+    expect(inputs).toHaveLength(2)
+    const assessmentContext = JSON.stringify(inputs[1]?.messages)
+    expect(assessmentContext).toContain("A recent tool or command was user-aborted")
+    expect(assessmentContext).toContain("do not retry the same action")
   }),
 )
 

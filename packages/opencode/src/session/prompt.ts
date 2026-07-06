@@ -1212,7 +1212,7 @@ export const layer = Layer.effect(
       return { info, parts }
     }, Effect.scoped)
 
-    const goalAssessmentMessage = (goal: Session.Goal) =>
+    const goalAssessmentMessage = (goal: Session.Goal, notes: string[] = []) =>
       [
         "<goal-mode>",
         "The active session goal is still open:",
@@ -1223,6 +1223,8 @@ export const layer = Layer.effect(
         "1. Continue working: do the next useful action now.",
         "2. Goal complete: call the mcp_goal_complete tool with a concise completion report after validating the goal.",
         "3. Blocked: call the mcp_goal_blocker tool with the blocker, what was tried, and the smallest user input needed.",
+        ...GoalAssessment.progressPolicy(),
+        ...notes,
         "Do not call mcp_goal_set from this automatic Goal Mode turn; the active objective is already set.",
         "Do not end with plain text while this goal remains active.",
         "</goal-mode>",
@@ -1232,7 +1234,10 @@ export const layer = Layer.effect(
       sessionID: SessionID
       goal: Session.Goal
       lastUser: MessageV2.User
+      messages: MessageV2.WithParts[]
+      lastAssistant?: MessageV2.WithParts
     }) {
+      const notes = GoalAssessment.assessmentNotes({ messages: input.messages, assistant: input.lastAssistant })
       return yield* createUserMessage({
         sessionID: input.sessionID,
         agent: input.lastUser.agent,
@@ -1247,7 +1252,7 @@ export const layer = Layer.effect(
         parts: [
           {
             type: "text",
-            text: goalAssessmentMessage(input.goal),
+            text: goalAssessmentMessage(input.goal, notes),
             synthetic: true,
             metadata: { kind: "goal-assessment" },
           },
@@ -1263,6 +1268,7 @@ export const layer = Layer.effect(
         goal.text,
         "",
         "Begin or continue working toward this goal now.",
+        ...GoalAssessment.progressPolicy(),
         "When complete, call mcp_goal_complete with a concise completion report.",
         "When blocked, call mcp_goal_blocker with the blocker, what was tried, and the smallest useful user input needed.",
         "Do not call mcp_goal_set from this automatic Goal Mode turn; the active objective is already set.",
@@ -1291,6 +1297,7 @@ export const layer = Layer.effect(
         goal.text,
         "",
         "Continue working toward this updated goal.",
+        ...GoalAssessment.progressPolicy(),
         "When complete, call mcp_goal_complete with a concise completion report.",
         "When blocked, call mcp_goal_blocker with the blocker, what was tried, and the smallest useful user input needed.",
         "Do not call mcp_goal_set in response to this update; the active objective has already been updated.",
@@ -1446,7 +1453,13 @@ export const layer = Layer.effect(
                 hasToolCalls,
               })
             ) {
-              yield* createGoalAssessmentMessage({ sessionID, goal: session.goal, lastUser }).pipe(Effect.orDie)
+              yield* createGoalAssessmentMessage({
+                sessionID,
+                goal: session.goal,
+                lastUser,
+                messages: msgs,
+                lastAssistant: lastAssistantMsg,
+              }).pipe(Effect.orDie)
               yield* slog.info("goal mode assessment requested")
               continue
             }

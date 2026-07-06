@@ -10,6 +10,7 @@ import * as Session from "./session"
 import PROMPT_PLAN from "./prompt/plan.txt"
 import BUILD_SWITCH from "./prompt/build-switch.txt"
 import PLAN_MODE from "./prompt/plan-mode.txt"
+import { GoalAssessment } from "./goal-assessment"
 
 export const apply = Effect.fn("SessionReminders.apply")(function* (input: {
   messages: MessageV2.WithParts[]
@@ -21,9 +22,14 @@ export const apply = Effect.fn("SessionReminders.apply")(function* (input: {
   const sessions = yield* Session.Service
   const userMessage = input.messages.findLast((msg) => msg.info.role === "user")
   if (!userMessage) return input.messages
+  const assistantMessage = input.messages.findLast((msg) => msg.info.role === "assistant")
 
   const goal = input.session.goal
   if (goal?.status === "active") {
+    const goalNotes = GoalAssessment.assessmentNotes({
+      messages: input.messages,
+      assistant: assistantMessage,
+    })
     userMessage.parts.push({
       id: PartID.ascending(),
       messageID: userMessage.info.id,
@@ -35,6 +41,8 @@ export const apply = Effect.fn("SessionReminders.apply")(function* (input: {
         goal.text,
         "",
         "Keep working toward this goal until it is complete or blocked.",
+        ...GoalAssessment.progressPolicy(),
+        ...goalNotes,
         "When complete, call mcp_goal_complete with a concise completion report.",
         "When blocked, call mcp_goal_blocker with the blocker, what was tried, and the smallest useful user input needed.",
         "Do not end with plain text while this goal remains active.",
@@ -95,7 +103,6 @@ export const apply = Effect.fn("SessionReminders.apply")(function* (input: {
     return input.messages
   }
 
-  const assistantMessage = input.messages.findLast((msg) => msg.info.role === "assistant")
   if (input.agent.name !== "plan" && assistantMessage?.info.agent === "plan") {
     const ctx = yield* InstanceState.context
     const plan = Session.plan(input.session, ctx)
