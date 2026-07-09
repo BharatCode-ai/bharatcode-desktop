@@ -15,7 +15,9 @@ import { Link } from "@/components/link"
 import { useGlobalSDK } from "@/context/global-sdk"
 import { useGlobalSync } from "@/context/global-sync"
 import { useLanguage } from "@/context/language"
+import { usePlatform } from "@/context/platform"
 import { useProviders } from "@/hooks/use-providers"
+import { bharatCodeProviderConnectMode } from "./dialog-connect-provider-mode"
 
 export function DialogConnectProvider(props: { provider: string }) {
   const dialog = useDialog()
@@ -23,6 +25,7 @@ export function DialogConnectProvider(props: { provider: string }) {
   const globalSDK = useGlobalSDK()
   const language = useLanguage()
   const providers = useProviders()
+  const platform = usePlatform()
 
   const all = () => {
     void import("./dialog-select-provider").then((x) => {
@@ -43,7 +46,7 @@ export function DialogConnectProvider(props: { provider: string }) {
   const provider = createMemo(
     () => providers.all().get(props.provider) ?? globalSync.data.provider.all.get(props.provider)!,
   )
-  const isBharatCode = () => props.provider === "bharatcode"
+  const bharatCodeMode = createMemo(() => bharatCodeProviderConnectMode(props.provider, platform))
   const fallback = createMemo<ProviderAuthMethod[]>(() => [
     {
       type: "api" as const,
@@ -68,6 +71,7 @@ export function DialogConnectProvider(props: { provider: string }) {
     authorization: undefined as undefined | ProviderAuthAuthorization,
     state: "pending" as undefined | "pending" | "complete" | "error" | "prompt",
     error: undefined as string | undefined,
+    desktopAuthPending: false,
   })
 
   type Action =
@@ -323,7 +327,7 @@ export function DialogConnectProvider(props: { provider: string }) {
   let auto = false
   createEffect(() => {
     if (auto) return
-    if (isBharatCode()) return
+    if (bharatCodeMode() !== "provider_auth") return
     if (loading()) return
     if (methods().length === 1) {
       auto = true
@@ -461,7 +465,45 @@ export function DialogConnectProvider(props: { provider: string }) {
     )
   }
 
-  function BharatCodeCliAuthView() {
+  async function signInWithDesktopBharatCode() {
+    if (!platform.signInToBharatCode) return
+    setStore("desktopAuthPending", true)
+    try {
+      await platform.signInToBharatCode()
+      await complete()
+    } catch (err) {
+      showToast({
+        variant: "error",
+        title: language.t("settings.account.toast.signInFailed.title"),
+        description: err instanceof Error ? err.message : String(err),
+      })
+    } finally {
+      if (alive.value) setStore("desktopAuthPending", false)
+    }
+  }
+
+  function BharatCodeDesktopAuthView() {
+    return (
+      <div class="flex flex-col items-start gap-4">
+        <div class="text-14-regular text-text-base">{language.t("provider.connect.bharatcode.desktop.line1")}</div>
+        <div class="text-14-regular text-text-base">{language.t("provider.connect.bharatcode.desktop.line2")}</div>
+        <Button
+          class="w-auto"
+          type="button"
+          size="large"
+          variant="primary"
+          disabled={store.desktopAuthPending}
+          onClick={() => void signInWithDesktopBharatCode()}
+        >
+          {store.desktopAuthPending
+            ? language.t("settings.account.action.signingIn")
+            : language.t("provider.connect.bharatcode.desktop.action")}
+        </Button>
+      </div>
+    )
+  }
+
+  function BharatCodeLegacyAuthView() {
     return (
       <div class="flex flex-col items-start gap-4">
         <div class="text-14-regular text-text-base">{language.t("provider.connect.bharatcode.line1")}</div>
@@ -622,8 +664,11 @@ export function DialogConnectProvider(props: { provider: string }) {
                   </div>
                 </div>
               </Match>
-              <Match when={isBharatCode()}>
-                <BharatCodeCliAuthView />
+              <Match when={bharatCodeMode() === "desktop_oauth"}>
+                <BharatCodeDesktopAuthView />
+              </Match>
+              <Match when={bharatCodeMode() === "legacy_guidance"}>
+                <BharatCodeLegacyAuthView />
               </Match>
               <Match when={store.methodIndex === undefined}>
                 <MethodSelection />

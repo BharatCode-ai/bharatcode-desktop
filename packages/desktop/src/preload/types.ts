@@ -28,6 +28,25 @@ export type BharatCodeAuthState = {
   configPath: string
 }
 
+export type BharatCodeAccountState = "signed_out" | "signed_in" | "needs_sign_in" | "connection_issue"
+
+export type BharatCodeConnectionStatus = {
+  ok: boolean
+  endpoint: string
+  kind?: "auth" | "http" | "network" | "service" | "unknown"
+  status?: number
+  message?: string
+}
+
+export type BharatCodeAccountStatus = BharatCodeAuthState & {
+  state: BharatCodeAccountState
+  checkedAt: string
+  email?: string
+  expiresAt?: number
+  message?: string
+  connection?: BharatCodeConnectionStatus
+}
+
 export type FatalRendererError = {
   error: string
   url: string
@@ -113,6 +132,8 @@ export type ElectronAPI = {
   exportDebugLogs: () => Promise<string>
   recordFatalRendererError: (error: FatalRendererError) => Promise<void>
   getBharatCodeAuthState: () => Promise<BharatCodeAuthState>
+  getBharatCodeAccountStatus: () => Promise<BharatCodeAccountStatus>
+  refreshBharatCodeAccountStatus: () => Promise<BharatCodeAccountStatus>
   signInToBharatCode: () => Promise<BharatCodeAuthState>
   transcribeDictation: (audio: DictationAudioInput) => Promise<DictationTranscription>
   getCapabilitySnapshot: () => Promise<CapabilitySnapshot>

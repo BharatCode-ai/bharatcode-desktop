@@ -1047,6 +1047,26 @@ export default function Layout(props: ParentProps) {
         keybind: "mod+comma",
         onSelect: () => openSettings(),
       },
+      ...(platform.getBharatCodeAccountStatus
+        ? [
+            {
+              id: "account.open",
+              title: language.t("command.account.open"),
+              category: language.t("command.category.settings"),
+              onSelect: () => openSettings("account"),
+            },
+          ]
+        : []),
+      ...(platform.signInToBharatCode
+        ? [
+            {
+              id: "account.reconnect",
+              title: language.t("command.account.reconnect"),
+              category: language.t("command.category.settings"),
+              onSelect: () => reconnectBharatCodeAccount(),
+            },
+          ]
+        : []),
       ...(platform.platform === "desktop" && platform.exportDebugLogs
         ? [
             {
@@ -1226,12 +1246,31 @@ export default function Layout(props: ParentProps) {
     })
   }
 
-  function openSettings() {
+  function openSettings(defaultTab?: string) {
     const run = ++dialogRun
     void import("@/components/dialog-settings").then((x) => {
       if (dialogDead || dialogRun !== run) return
-      dialog.show(() => <x.DialogSettings />)
+      dialog.show(() => <x.DialogSettings defaultTab={defaultTab} />)
     })
+  }
+
+  async function reconnectBharatCodeAccount() {
+    if (!platform.signInToBharatCode) return
+    try {
+      await platform.signInToBharatCode()
+      showToast({
+        variant: "success",
+        icon: "circle-check",
+        title: language.t("settings.account.toast.signedIn.title"),
+        description: language.t("settings.account.toast.signedIn.description"),
+      })
+    } catch (err) {
+      showToast({
+        variant: "error",
+        title: language.t("settings.account.toast.signInFailed.title"),
+        description: err instanceof Error ? err.message : String(err),
+      })
+    }
   }
 
   function projectRoot(directory: string) {

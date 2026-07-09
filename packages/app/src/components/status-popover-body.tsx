@@ -6,18 +6,19 @@ import { Tabs } from "@opencode-ai/ui/tabs"
 import { useMutation, useQueryClient } from "@tanstack/solid-query"
 import { showToast } from "@opencode-ai/ui/toast"
 import { useNavigate } from "@solidjs/router"
-import { type Accessor, createEffect, createMemo, For, onCleanup, Show } from "solid-js"
+import { type Accessor, createEffect, createMemo, createResource, For, onCleanup, Show } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
 import { ServerHealthIndicator, ServerRow } from "@/components/server/server-row"
 import { useCapabilities } from "@/context/capabilities"
 import { useLanguage } from "@/context/language"
-import { usePlatform } from "@/context/platform"
+import { usePlatform, type BharatCodeAccountStatus } from "@/context/platform"
 import { useSDK } from "@/context/sdk"
 import { normalizeServerUrl, ServerConnection, useServer } from "@/context/server"
 import { useSync } from "@/context/sync"
 import { useCheckServerHealth, type ServerHealth } from "@/utils/server-health"
 import { useQueryOptions } from "@/context/global-sync"
 import { pathKey } from "@/utils/path-key"
+import { accountStatusViewModel } from "./settings-account"
 
 const pollMs = 10_000
 
@@ -155,6 +156,14 @@ const useMcpToggleMutation = () => {
   }))
 }
 
+const accountIndicatorClass = (status: BharatCodeAccountStatus | undefined) => {
+  const view = accountStatusViewModel(status)
+  if (view.tone === "success") return "bg-icon-success-base"
+  if (view.tone === "warning") return "bg-icon-warning-base"
+  if (view.tone === "danger") return "bg-icon-critical-base"
+  return "bg-border-weak-base"
+}
+
 export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
   const sync = useSync()
   const server = useServer()
@@ -200,6 +209,13 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
   const setupCapabilities = createMemo(
     () => installedCapabilities().filter((item) => item.status === "needs_setup" || item.status === "unhealthy").length,
   )
+  const [accountStatus, { mutate: mutateAccountStatus, refetch: refetchAccountStatus }] = createResource(
+    () => props.shown() && !!platform.getBharatCodeAccountStatus,
+    async (enabled) => {
+      if (!enabled || !platform.getBharatCodeAccountStatus) return undefined
+      return platform.getBharatCodeAccountStatus()
+    },
+  )
 
   const openMarketplace = () => {
     const run = ++dialogRun
@@ -207,6 +223,48 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
       if (dialogDead || dialogRun !== run) return
       dialog.show(() => <x.DialogSettings defaultTab="marketplace" />)
     })
+  }
+
+  const openAccountSettings = () => {
+    const run = ++dialogRun
+    void import("./dialog-settings").then((x) => {
+      if (dialogDead || dialogRun !== run) return
+      dialog.show(() => <x.DialogSettings defaultTab="account" />)
+    })
+  }
+
+  const refreshAccountStatus = async () => {
+    const action = platform.refreshBharatCodeAccountStatus ?? platform.getBharatCodeAccountStatus
+    if (!action) return
+    try {
+      mutateAccountStatus(await action())
+    } catch (err) {
+      showToast({
+        variant: "error",
+        title: language.t("settings.account.toast.refreshFailed.title"),
+        description: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+
+  const signInToBharatCode = async () => {
+    if (!platform.signInToBharatCode) return
+    try {
+      await platform.signInToBharatCode()
+      await refetchAccountStatus()
+      showToast({
+        variant: "success",
+        icon: "circle-check",
+        title: language.t("settings.account.toast.signedIn.title"),
+        description: language.t("settings.account.toast.signedIn.description"),
+      })
+    } catch (err) {
+      showToast({
+        variant: "error",
+        title: language.t("settings.account.toast.signInFailed.title"),
+        description: err instanceof Error ? err.message : String(err),
+      })
+    }
   }
 
   return (
@@ -224,6 +282,11 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
             {sortedServers().length > 0 ? `${sortedServers().length} ` : ""}
             {language.t("status.popover.tab.servers")}
           </Tabs.Trigger>
+          <Show when={platform.getBharatCodeAccountStatus}>
+            <Tabs.Trigger value="account" data-slot="tab" class="text-12-regular">
+              {language.t("status.popover.tab.account")}
+            </Tabs.Trigger>
+          </Show>
           <Tabs.Trigger value="mcp" data-slot="tab" class="text-12-regular">
             {mcpConnected() > 0 ? `${mcpConnected()} ` : ""}
             {language.t("status.popover.tab.mcp")}
@@ -302,6 +365,53 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
             </div>
           </div>
         </Tabs.Content>
+
+        <Show when={platform.getBharatCodeAccountStatus}>
+          <Tabs.Content value="account">
+            <div class="flex flex-col px-2 pb-2">
+              <div class="flex flex-col gap-3 p-3 bg-background-base rounded-sm min-h-14">
+                <div class="flex items-start gap-3 rounded-md bg-surface-base px-3 py-3">
+                  <span class={`mt-1.5 size-2 rounded-full shrink-0 ${accountIndicatorClass(accountStatus())}`} />
+                  <div class="flex min-w-0 flex-col gap-1">
+                    <span class="text-13-medium text-text-base">
+                      {language.t(accountStatusViewModel(accountStatus()).titleKey)}
+                    </span>
+                    <span class="text-12-regular text-text-weak">
+                      {accountStatus()?.email ?? language.t(accountStatusViewModel(accountStatus()).descriptionKey)}
+                    </span>
+                    <Show when={accountStatus()?.connection && !accountStatus()?.connection?.ok}>
+                      <span class="text-11-regular text-icon-warning-base">
+                        {accountStatus()?.connection?.message ?? language.t("settings.account.value.connectionIssue")}
+                      </span>
+                    </Show>
+                  </div>
+                </div>
+                <div class="flex flex-wrap gap-2">
+                  <Show
+                    when={
+                      platform.signInToBharatCode &&
+                      (accountStatus()?.state === "signed_out" || accountStatus()?.state === "needs_sign_in")
+                    }
+                  >
+                    <Button variant="primary" class="h-8 px-3 py-1.5" onClick={() => void signInToBharatCode()}>
+                      {language.t(
+                        accountStatus()?.state === "signed_out"
+                          ? "settings.account.action.signIn"
+                          : "settings.account.action.reconnect",
+                      )}
+                    </Button>
+                  </Show>
+                  <Button variant="secondary" class="h-8 px-3 py-1.5" onClick={() => void refreshAccountStatus()}>
+                    {language.t("settings.account.action.refresh")}
+                  </Button>
+                  <Button variant="secondary" class="h-8 px-3 py-1.5" onClick={openAccountSettings}>
+                    {language.t("status.popover.action.manageAccount")}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </Tabs.Content>
+        </Show>
 
         <Tabs.Content value="mcp">
           <div class="flex flex-col px-2 pb-2">

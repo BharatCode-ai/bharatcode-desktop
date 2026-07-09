@@ -24,6 +24,29 @@ export type DictationTranscription = {
   duration?: number
 }
 
+export type BharatCodeAccountState = "signed_out" | "signed_in" | "needs_sign_in" | "connection_issue"
+
+export type BharatCodeConnectionStatus = {
+  ok: boolean
+  endpoint: string
+  kind?: "auth" | "http" | "network" | "service" | "unknown"
+  status?: number
+  message?: string
+}
+
+export type BharatCodeAccountStatus = {
+  authenticated: boolean
+  configured: boolean
+  credentialsPath: string
+  configPath: string
+  state: BharatCodeAccountState
+  checkedAt: string
+  email?: string
+  expiresAt?: number
+  message?: string
+  connection?: BharatCodeConnectionStatus
+}
+
 export type CapabilityTrust = "bundled" | "curated" | "local"
 export type CapabilityStatus =
   | "available"
@@ -231,6 +254,15 @@ export type Platform = {
 
   /** Transcribe recorded prompt audio (desktop only) */
   transcribeAudio?(audio: DictationAudioInput): Promise<DictationTranscription>
+
+  /** Read safe BharatCode account/auth status without exposing tokens (desktop only) */
+  getBharatCodeAccountStatus?(): Promise<BharatCodeAccountStatus>
+
+  /** Refresh credentials if possible and check BharatCode connectivity (desktop only) */
+  refreshBharatCodeAccountStatus?(): Promise<BharatCodeAccountStatus>
+
+  /** Start BharatCode browser sign-in (desktop only) */
+  signInToBharatCode?(): Promise<unknown>
 
   /** Read installed and available BharatCode capabilities (desktop only) */
   getCapabilitySnapshot?(): Promise<CapabilitySnapshot>

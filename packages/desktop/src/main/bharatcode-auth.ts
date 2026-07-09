@@ -21,6 +21,25 @@ export type BharatCodeAuthState = {
   configPath: string
 }
 
+export type BharatCodeAccountState = "signed_out" | "signed_in" | "needs_sign_in" | "connection_issue"
+
+export type BharatCodeConnectionStatus = {
+  ok: boolean
+  endpoint: string
+  kind?: "auth" | "http" | "network" | "service" | "unknown"
+  status?: number
+  message?: string
+}
+
+export type BharatCodeAccountStatus = BharatCodeAuthState & {
+  state: BharatCodeAccountState
+  checkedAt: string
+  email?: string
+  expiresAt?: number
+  message?: string
+  connection?: BharatCodeConnectionStatus
+}
+
 type BharatCodeCredentials = {
   access_token?: string
   refresh_token?: string
@@ -39,6 +58,13 @@ type SignInOptions = {
   home?: string
   timeoutMs?: number
   pluginSpec?: string
+}
+
+type AccountStatusOptions = {
+  home?: string
+  fetchImpl?: FetchImpl
+  refresh?: boolean
+  checkConnection?: boolean
 }
 
 type PendingSignIn = {
@@ -251,7 +277,7 @@ export async function getBharatCodeAccessToken({
   reauthorize?: ReauthorizeBharatCode
 } = {}) {
   let credentials = await readBharatCodeCredentials(home)
-  if (!credentials?.access_token && !credentials?.refresh_token) {
+  if (!credentials || (!credentials.access_token && !credentials.refresh_token)) {
     if (!reauthorize) throw new Error("No BharatCode credentials found. Sign in to BharatCode first.")
     credentials = (await reauthorize(new Error("No BharatCode credentials found."))) ?? null
     if (credentials) await saveBharatCodeCredentials(credentials, home)
@@ -302,6 +328,167 @@ export async function getBharatCodeAuthState(
     configured: await hasBharatCodePlugin(configPath),
     credentialsPath,
     configPath,
+  }
+}
+
+function emailFromCredentials(credentials: BharatCodeCredentials | null) {
+  const user = credentials?.user
+  if (!user || typeof user !== "object") return
+  const email = (user as { email?: unknown }).email
+  return typeof email === "string" && email ? email : undefined
+}
+
+function safeErrorMessage(error: unknown) {
+  const message =
+    error instanceof Error && error.message ? error.message : typeof error === "string" ? error : "Unknown error"
+  return message
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
+    .replace(/((?:access|refresh|id)_token=)[^&\s]+/gi, "$1[redacted]")
+    .slice(0, 500)
+}
+
+function connectionErrorKind(error: unknown): NonNullable<BharatCodeConnectionStatus["kind"]> {
+  const message = safeErrorMessage(error)
+  if (/network|fetch|econnreset|econnrefused|enotfound|timedout|timeout|dns|getaddrinfo/i.test(message)) {
+    return "network"
+  }
+  return "unknown"
+}
+
+function statusBase({
+  home,
+  configured,
+}: {
+  home: string
+  configured: boolean
+}): Omit<BharatCodeAccountStatus, "state" | "authenticated"> {
+  return {
+    configured,
+    credentialsPath: bharatCodeCredentialsPath(home),
+    configPath: opencodeConfigPath(home),
+    checkedAt: new Date().toISOString(),
+  }
+}
+
+async function checkBharatCodeModelProxy(accessToken: string, fetchImpl: FetchImpl) {
+  const endpoint = new URL("models", `${BHARATCODE_OAUTH.modelProxy}/`).toString()
+  try {
+    const response = await fetchImpl(endpoint, {
+      headers: { authorization: `Bearer ${accessToken}` },
+    })
+    if (response.ok) {
+      return {
+        ok: true,
+        endpoint,
+        status: response.status,
+      } satisfies BharatCodeConnectionStatus
+    }
+    if (response.status === 401 || response.status === 403) {
+      return {
+        ok: false,
+        endpoint,
+        kind: "auth",
+        status: response.status,
+        message: "BharatCode sign-in needs to be refreshed.",
+      } satisfies BharatCodeConnectionStatus
+    }
+    return {
+      ok: false,
+      endpoint,
+      kind: response.status >= 500 ? "service" : "http",
+      status: response.status,
+      message:
+        response.status >= 500
+          ? "BharatCode is reachable, but the model service is unavailable right now."
+          : `BharatCode model proxy returned ${response.status}.`,
+    } satisfies BharatCodeConnectionStatus
+  } catch (error) {
+    return {
+      ok: false,
+      endpoint,
+      kind: connectionErrorKind(error),
+      message: "Desktop could not reach BharatCode. Check your internet connection, VPN, proxy, or firewall.",
+    } satisfies BharatCodeConnectionStatus
+  }
+}
+
+export async function getBharatCodeAccountStatus({
+  home = process.env.BHARATCODE_HOME || homedir(),
+  fetchImpl = fetch,
+  refresh = false,
+  checkConnection = false,
+}: AccountStatusOptions = {}): Promise<BharatCodeAccountStatus> {
+  const configured = await hasBharatCodePlugin(opencodeConfigPath(home))
+  const base = statusBase({ home, configured })
+  let credentials = await readBharatCodeCredentials(home).catch(() => null)
+
+  if (!credentials || (!credentials.access_token && !credentials.refresh_token)) {
+    return {
+      ...base,
+      state: "signed_out",
+      authenticated: false,
+      message: "Sign in to BharatCode to use Desktop.",
+    }
+  }
+
+  let activeCredentials = credentials
+  let accessToken = activeCredentials.access_token
+  if (refresh || shouldRefreshToken(activeCredentials)) {
+    try {
+      accessToken = await getBharatCodeAccessToken({ home, fetchImpl })
+      activeCredentials = (await readBharatCodeCredentials(home).catch(() => activeCredentials)) ?? activeCredentials
+    } catch (error) {
+      return {
+        ...base,
+        state: "needs_sign_in",
+        authenticated: true,
+        email: emailFromCredentials(activeCredentials),
+        expiresAt: activeCredentials.expires_at,
+        message: "Sign in again to refresh BharatCode on this device.",
+        connection: {
+          ok: false,
+          endpoint: `${BHARATCODE_OAUTH.issuer}/oauth/token`,
+          kind: "auth",
+          message: safeErrorMessage(error),
+        },
+      }
+    }
+  }
+
+  if (!accessToken) {
+    return {
+      ...base,
+      state: "needs_sign_in",
+      authenticated: true,
+      email: emailFromCredentials(activeCredentials),
+      expiresAt: activeCredentials.expires_at,
+      message: "Sign in again to refresh BharatCode on this device.",
+    }
+  }
+
+  let email = emailFromCredentials(activeCredentials)
+  if (!email) {
+    try {
+      const user = await fetchBharatCodeUserInfo(accessToken, { fetchImpl })
+      email = typeof user?.email === "string" ? user.email : undefined
+    } catch {}
+  }
+
+  const connection = checkConnection ? await checkBharatCodeModelProxy(accessToken, fetchImpl) : undefined
+  const state: BharatCodeAccountState =
+    connection?.ok === false ? (connection.kind === "auth" ? "needs_sign_in" : "connection_issue") : "signed_in"
+
+  return {
+    ...base,
+    state,
+    authenticated: true,
+    email,
+    expiresAt: activeCredentials.expires_at,
+    ...(connection && { connection }),
+    ...(state === "needs_sign_in" && { message: "Sign in again to refresh BharatCode on this device." }),
+    ...(state === "connection_issue" && {
+      message: connection?.message ?? "Desktop could not reach BharatCode.",
+    }),
   }
 }
 

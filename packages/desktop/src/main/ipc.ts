@@ -11,6 +11,7 @@ import type {
   TitlebarTheme,
   WindowConfig,
   WslConfig,
+  BharatCodeAccountStatus,
   BharatCodeAuthState,
   DictationAudioInput,
 } from "../preload/types"
@@ -47,6 +48,8 @@ type Deps = {
   exportDebugLogs: () => Promise<string>
   recordFatalRendererError: (error: FatalRendererError) => Promise<void> | void
   getBharatCodeAuthState: () => Promise<BharatCodeAuthState>
+  getBharatCodeAccountStatus: () => Promise<BharatCodeAccountStatus>
+  refreshBharatCodeAccountStatus: () => Promise<BharatCodeAccountStatus>
   signInToBharatCode: () => Promise<BharatCodeAuthState>
   transcribeDictation: (audio: DictationAudioInput) => Promise<unknown>
   getCapabilitySnapshot: () => Promise<CapabilitySnapshot> | CapabilitySnapshot
@@ -90,6 +93,8 @@ export function registerIpcHandlers(deps: Deps) {
     deps.recordFatalRendererError(error),
   )
   ipcMain.handle("get-bharatcode-auth-state", () => deps.getBharatCodeAuthState())
+  ipcMain.handle("get-bharatcode-account-status", () => deps.getBharatCodeAccountStatus())
+  ipcMain.handle("refresh-bharatcode-account-status", () => deps.refreshBharatCodeAccountStatus())
   ipcMain.handle("sign-in-to-bharatcode", () => deps.signInToBharatCode())
   ipcMain.handle("transcribe-dictation", (_event: IpcMainInvokeEvent, audio: DictationAudioInput) =>
     deps.transcribeDictation(audio),

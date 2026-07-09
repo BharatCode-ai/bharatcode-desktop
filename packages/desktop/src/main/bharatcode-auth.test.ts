@@ -6,6 +6,7 @@ import { dirname, join } from "node:path"
 import {
   BHARATCODE_OAUTH,
   buildBharatCodeSignInUrl,
+  getBharatCodeAccountStatus,
   getBharatCodeAccessToken,
   handleBharatCodeAuthCallback,
   ensureBharatCodePlugin,
@@ -169,6 +170,191 @@ describe("BharatCode desktop auth contract", () => {
       const saved = JSON.parse(await readFile(credentialsPath, "utf8"))
       expect(saved.access_token).toBe("fresh-token")
       expect(saved.refresh_token).toBe("new-refresh-token")
+    } finally {
+      await rm(home, { recursive: true, force: true })
+    }
+  })
+
+  test("reports a safe signed-out account status without exposing credential internals", async () => {
+    const home = await mkdtemp(join(tmpdir(), "bharatcode-account-status-empty-"))
+
+    try {
+      const status = await getBharatCodeAccountStatus({ home })
+      const serialized = JSON.stringify(status)
+
+      expect(status.state).toBe("signed_out")
+      expect(status.authenticated).toBe(false)
+      expect(status.configured).toBe(false)
+      expect(status.credentialsPath).toBe(join(home, ".bharatcode", "credentials.json"))
+      expect(status.configPath).toBe(join(home, ".config", "opencode", "opencode.jsonc"))
+      expect(serialized).not.toContain("access_token")
+      expect(serialized).not.toContain("refresh_token")
+      expect(serialized).not.toContain("id_token")
+    } finally {
+      await rm(home, { recursive: true, force: true })
+    }
+  })
+
+  test("refreshes expired credentials and reports email plus model proxy connectivity safely", async () => {
+    const home = await mkdtemp(join(tmpdir(), "bharatcode-account-status-refresh-"))
+    const credentialsPath = join(home, ".bharatcode", "credentials.json")
+    const calls: Array<{ url: string; authorization: string | null; body?: string }> = []
+
+    const fetchImpl = async (input: URL | RequestInfo, init?: RequestInit) => {
+      const url = input.toString()
+      const headers = new Headers(init?.headers)
+      calls.push({
+        url,
+        authorization: headers.get("authorization"),
+        body: init?.body instanceof URLSearchParams ? init.body.toString() : undefined,
+      })
+
+      if (url.endsWith("/oauth/token")) {
+        return new Response(
+          JSON.stringify({
+            access_token: "fresh-status-token",
+            refresh_token: "fresh-status-refresh",
+            token_type: "bearer",
+            expires_in: 3600,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        )
+      }
+
+      if (url.endsWith("/oauth/userinfo")) {
+        return new Response(JSON.stringify({ email: "account@example.com", sub: "user-123" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })
+      }
+
+      if (url.endsWith("/models")) {
+        return new Response(JSON.stringify({ data: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })
+      }
+
+      throw new Error(`unexpected fetch: ${url}`)
+    }
+
+    try {
+      await mkdir(dirname(credentialsPath), { recursive: true })
+      await Bun.write(
+        credentialsPath,
+        JSON.stringify({
+          access_token: "expired-status-token",
+          refresh_token: "secret-refresh-token-abc",
+          expires_at: Math.floor(Date.now() / 1000) - 60,
+        }),
+      )
+
+      const status = await getBharatCodeAccountStatus({
+        home,
+        fetchImpl,
+        refresh: true,
+        checkConnection: true,
+      })
+      const serialized = JSON.stringify(status)
+
+      expect(status.state).toBe("signed_in")
+      expect(status.authenticated).toBe(true)
+      expect(status.email).toBe("account@example.com")
+      expect(status.connection?.ok).toBe(true)
+      expect(status.connection?.status).toBe(200)
+      expect(calls.find((call) => call.url.endsWith("/models"))?.authorization).toBe("Bearer fresh-status-token")
+      expect(serialized).not.toContain("fresh-status-token")
+      expect(serialized).not.toContain("fresh-status-refresh")
+      expect(serialized).not.toContain("expired-status-token")
+      expect(serialized).not.toContain("secret-refresh-token-abc")
+    } finally {
+      await rm(home, { recursive: true, force: true })
+    }
+  })
+
+  test("classifies BharatCode model proxy network failures without leaking credentials", async () => {
+    const home = await mkdtemp(join(tmpdir(), "bharatcode-account-status-network-"))
+    const credentialsPath = join(home, ".bharatcode", "credentials.json")
+
+    const fetchImpl = async (input: URL | RequestInfo) => {
+      const url = input.toString()
+      if (url.endsWith("/oauth/userinfo")) {
+        return new Response(JSON.stringify({ email: "net@example.com" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })
+      }
+      if (url.endsWith("/models")) {
+        throw new TypeError("getaddrinfo ENOTFOUND bharatcode.ai")
+      }
+      throw new Error(`unexpected fetch: ${url}`)
+    }
+
+    try {
+      await mkdir(dirname(credentialsPath), { recursive: true })
+      await Bun.write(
+        credentialsPath,
+        JSON.stringify({
+          access_token: "network-token",
+          refresh_token: "network-refresh",
+          expires_at: Math.floor(Date.now() / 1000) + 3600,
+        }),
+      )
+
+      const status = await getBharatCodeAccountStatus({
+        home,
+        fetchImpl,
+        checkConnection: true,
+      })
+      const serialized = JSON.stringify(status)
+
+      expect(status.state).toBe("connection_issue")
+      expect(status.authenticated).toBe(true)
+      expect(status.email).toBe("net@example.com")
+      expect(status.connection?.ok).toBe(false)
+      expect(status.connection?.kind).toBe("network")
+      expect(status.message).toContain("could not reach BharatCode")
+      expect(serialized).not.toContain("network-token")
+      expect(serialized).not.toContain("network-refresh")
+    } finally {
+      await rm(home, { recursive: true, force: true })
+    }
+  })
+
+  test("sanitizes refresh failure details in account status", async () => {
+    const home = await mkdtemp(join(tmpdir(), "bharatcode-account-status-refresh-failed-"))
+    const credentialsPath = join(home, ".bharatcode", "credentials.json")
+
+    const fetchImpl = async () =>
+      new Response(
+        JSON.stringify({
+          error_description:
+            "invalid Bearer leaked-access-token access_token=leaked-access refresh_token=leaked-refresh",
+        }),
+        { status: 400, headers: { "content-type": "application/json" } },
+      )
+
+    try {
+      await mkdir(dirname(credentialsPath), { recursive: true })
+      await Bun.write(
+        credentialsPath,
+        JSON.stringify({
+          access_token: "expired-visible-token",
+          refresh_token: "stored-refresh-token",
+          expires_at: Math.floor(Date.now() / 1000) - 60,
+        }),
+      )
+
+      const status = await getBharatCodeAccountStatus({ home, fetchImpl, refresh: true })
+      const serialized = JSON.stringify(status)
+
+      expect(status.state).toBe("needs_sign_in")
+      expect(status.connection?.message).toContain("Bearer [redacted]")
+      expect(serialized).not.toContain("leaked-access-token")
+      expect(serialized).not.toContain("leaked-access")
+      expect(serialized).not.toContain("leaked-refresh")
+      expect(serialized).not.toContain("stored-refresh-token")
+      expect(serialized).not.toContain("expired-visible-token")
     } finally {
       await rm(home, { recursive: true, force: true })
     }

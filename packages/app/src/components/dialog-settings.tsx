@@ -1,4 +1,4 @@
-import { Component } from "solid-js"
+import { Component, Show } from "solid-js"
 import { Dialog } from "@opencode-ai/ui/dialog"
 import { Tabs } from "@opencode-ai/ui/tabs"
 import { Icon } from "@opencode-ai/ui/icon"
@@ -9,6 +9,7 @@ import { SettingsKeybinds } from "./settings-keybinds"
 import { SettingsMarketplace } from "./settings-marketplace"
 import { SettingsProviders } from "./settings-providers"
 import { SettingsModels } from "./settings-models"
+import { SettingsAccount } from "./settings-account"
 
 export const DialogSettings: Component<{ defaultTab?: string }> = (props) => {
   const language = useLanguage()
@@ -28,6 +29,12 @@ export const DialogSettings: Component<{ defaultTab?: string }> = (props) => {
                       <Icon name="sliders" />
                       {language.t("settings.tab.general")}
                     </Tabs.Trigger>
+                    <Show when={platform.getBharatCodeAccountStatus}>
+                      <Tabs.Trigger value="account">
+                        <Icon name="shield" />
+                        {language.t("settings.account.title")}
+                      </Tabs.Trigger>
+                    </Show>
                     <Tabs.Trigger value="shortcuts">
                       <Icon name="keyboard" />
                       {language.t("settings.tab.shortcuts")}
@@ -63,6 +70,11 @@ export const DialogSettings: Component<{ defaultTab?: string }> = (props) => {
         <Tabs.Content value="general" class="no-scrollbar">
           <SettingsGeneral />
         </Tabs.Content>
+        <Show when={platform.getBharatCodeAccountStatus}>
+          <Tabs.Content value="account" class="no-scrollbar">
+            <SettingsAccount />
+          </Tabs.Content>
+        </Show>
         <Tabs.Content value="shortcuts" class="no-scrollbar">
           <SettingsKeybinds />
         </Tabs.Content>

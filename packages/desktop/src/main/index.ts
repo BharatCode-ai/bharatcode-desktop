@@ -14,6 +14,7 @@ import contextMenu from "electron-context-menu"
 
 import {
   ensureBharatCodePlugin,
+  getBharatCodeAccountStatus,
   getBharatCodeAuthState,
   handleBharatCodeAuthCallback,
   resolveBundledBharatCodePluginPath,
@@ -311,6 +312,8 @@ const main = Effect.gen(function* () {
     exportDebugLogs: () => exportDebugLogs(),
     recordFatalRendererError: (error) => writeLog("renderer", "fatal renderer error", { ...error }, "error"),
     getBharatCodeAuthState: () => getBharatCodeAuthState(),
+    getBharatCodeAccountStatus: () => getBharatCodeAccountStatus(),
+    refreshBharatCodeAccountStatus: () => getBharatCodeAccountStatus({ refresh: true, checkConnection: true }),
     signInToBharatCode: () =>
       signInToBharatCode({
         openExternal: (url) => shell.openExternal(url),

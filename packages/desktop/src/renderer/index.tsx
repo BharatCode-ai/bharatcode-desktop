@@ -296,6 +296,12 @@ const createPlatform = (): Platform => {
 
     transcribeAudio: (audio) => window.api.transcribeDictation(audio),
 
+    getBharatCodeAccountStatus: () => window.api.getBharatCodeAccountStatus(),
+
+    refreshBharatCodeAccountStatus: () => window.api.refreshBharatCodeAccountStatus(),
+
+    signInToBharatCode: () => window.api.signInToBharatCode(),
+
     getCapabilitySnapshot: () => window.api.getCapabilitySnapshot(),
 
     installCapability: (id) => window.api.installCapability(id),
