@@ -300,7 +300,12 @@ const createPlatform = (): Platform => {
 
     refreshBharatCodeAccountStatus: () => window.api.refreshBharatCodeAccountStatus(),
 
-    signInToBharatCode: () => window.api.signInToBharatCode(),
+    signInToBharatCode: (options) => {
+      const removeListener = options?.onBrowserUrl ? window.api.onBharatCodeSignInUrl(options.onBrowserUrl) : undefined
+      return window.api
+        .signInToBharatCode({ forceAccountSelection: options?.forceAccountSelection })
+        .finally(() => removeListener?.())
+    },
 
     getCapabilitySnapshot: () => window.api.getCapabilitySnapshot(),
 
@@ -318,14 +323,21 @@ function BharatCodeAuthGate(props: ParentProps) {
   const [auth, { refetch }] = createResource(() => window.api.getBharatCodeAuthState())
   const [signingIn, setSigningIn] = createSignal(false)
   const [error, setError] = createSignal<string | null>(null)
+  const [pendingSignInUrl, setPendingSignInUrl] = createSignal<string | null>(null)
+  const [copiedSignInUrl, setCopiedSignInUrl] = createSignal(false)
   const ready = () => auth()?.authenticated && auth()?.configured
 
   async function signIn() {
     setSigningIn(true)
     setError(null)
+    setPendingSignInUrl(null)
+    setCopiedSignInUrl(false)
+    const removeListener = window.api.onBharatCodeSignInUrl(setPendingSignInUrl)
     try {
       const next = await window.api.signInToBharatCode()
       if (next.authenticated && next.configured) {
+        setPendingSignInUrl(null)
+        setCopiedSignInUrl(false)
         window.api.relaunch()
         return
       }
@@ -334,8 +346,16 @@ function BharatCodeAuthGate(props: ParentProps) {
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
+      removeListener()
       setSigningIn(false)
     }
+  }
+
+  async function copyPendingSignInUrl() {
+    const url = pendingSignInUrl()
+    if (!url) return
+    await navigator.clipboard.writeText(url)
+    setCopiedSignInUrl(true)
   }
 
   return (
@@ -361,6 +381,23 @@ function BharatCodeAuthGate(props: ParentProps) {
             >
               {signingIn() ? "Waiting for browser sign-in..." : "Continue with BharatCode"}
             </Button>
+            <Show when={pendingSignInUrl()}>
+              {(url) => (
+                <div class="flex flex-col gap-2 rounded-md border border-border-weak-base bg-background-muted p-3">
+                  <div class="text-12-regular text-text-base">{t("settings.account.signInFallback.description")}</div>
+                  <div class="flex min-w-0 items-center gap-2">
+                    <code class="min-w-0 flex-1 truncate rounded-sm bg-background-base px-2 py-1 text-11-regular text-text-weak">
+                      {url()}
+                    </code>
+                    <Button type="button" size="large" variant="secondary" onClick={() => void copyPendingSignInUrl()}>
+                      {copiedSignInUrl()
+                        ? t("settings.account.action.copied")
+                        : t("settings.account.action.copySignInUrl")}
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </Show>
             <Show when={error()}>
               {(message) => <div class="text-12-regular text-text-danger-base whitespace-pre-wrap">{message()}</div>}
             </Show>

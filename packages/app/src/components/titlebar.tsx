@@ -5,6 +5,7 @@ import { IconButton } from "@opencode-ai/ui/icon-button"
 import { Icon } from "@opencode-ai/ui/icon"
 import { Button } from "@opencode-ai/ui/button"
 import { Tooltip, TooltipKeybind } from "@opencode-ai/ui/tooltip"
+import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { useTheme } from "@opencode-ai/ui/theme/context"
 import { IconButtonV2 } from "@opencode-ai/ui/v2/components/icon-button-v2.jsx"
 import { Icon as IconV2 } from "@opencode-ai/ui/v2/components/icon.jsx"
@@ -65,6 +66,7 @@ export function Titlebar(props: { update?: TitlebarUpdate }) {
   const layout = useLayout()
   const platform = usePlatform()
   const command = useCommand()
+  const dialog = useDialog()
   const language = useLanguage()
   const settings = useSettings()
   const theme = useTheme()
@@ -87,6 +89,12 @@ export function Titlebar(props: { update?: TitlebarUpdate }) {
     return undefined
   }
   const windowsControlsWidth = () => `${windowsControlsBaseWidth / Math.max(titlebarZoom(), 1)}px`
+
+  const openAccountSettings = () => {
+    void import("./dialog-settings").then((x) => {
+      dialog.show(() => <x.DialogSettings defaultTab="account" />)
+    })
+  }
 
   const [history, setHistory] = createStore({
     stack: [] as string[],
@@ -411,6 +419,28 @@ export function Titlebar(props: { update?: TitlebarUpdate }) {
                 <ChannelIndicator />
                 <Show when={windows() || linux()}>
                   <WindowsAppMenu command={command} platform={platform} variant="v2" />
+                </Show>
+                <Show when={platform.getBharatCodeAccountStatus}>
+                  <Tooltip placement="bottom" value={language.t("settings.account.title")}>
+                    <Button
+                      variant="ghost"
+                      class="titlebar-icon size-6 rounded-full p-0 box-border shrink-0"
+                      onClick={openAccountSettings}
+                      aria-label={language.t("settings.account.title")}
+                    >
+                      <span class="flex size-5 items-center justify-center rounded-full bg-background-muted text-icon-base">
+                        <svg viewBox="0 0 16 16" class="size-4" aria-hidden="true" fill="none">
+                          <circle cx="8" cy="5.25" r="2.25" stroke="currentColor" stroke-width="1.25" />
+                          <path
+                            d="M3.75 13.25C4.25 10.8 5.8 9.5 8 9.5C10.2 9.5 11.75 10.8 12.25 13.25"
+                            stroke="currentColor"
+                            stroke-width="1.25"
+                            stroke-linecap="round"
+                          />
+                        </svg>
+                      </span>
+                    </Button>
+                  </Tooltip>
                 </Show>
                 <IconButtonV2
                   variant="ghost-muted"

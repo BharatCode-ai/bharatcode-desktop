@@ -34,6 +34,7 @@ import { checkAppExists, resolveAppPath, wslPath } from "./apps"
 import { CHANNEL, UPDATER_ENABLED } from "./constants"
 import { transcribeDictationAudio } from "./dictation"
 import { registerIpcHandlers, sendDeepLinks, sendMenuCommand, sendSqliteMigrationProgress } from "./ipc"
+import { openExternalUrl } from "./external-browser"
 import { exportDebugLogs, initCrashReporter, initLogging, startNetLog, write as writeLog } from "./logging"
 import { parseMarkdown } from "./markdown"
 import { createMenu } from "./menu"
@@ -314,9 +315,10 @@ const main = Effect.gen(function* () {
     getBharatCodeAuthState: () => getBharatCodeAuthState(),
     getBharatCodeAccountStatus: () => getBharatCodeAccountStatus(),
     refreshBharatCodeAccountStatus: () => getBharatCodeAccountStatus({ refresh: true, checkConnection: true }),
-    signInToBharatCode: () =>
+    signInToBharatCode: (options) =>
       signInToBharatCode({
-        openExternal: (url) => shell.openExternal(url),
+        ...options,
+        openExternal: (url) => openExternalUrl(url, { openExternal: (target) => shell.openExternal(target) }),
         pluginSpec: desktopBharatCodePluginPath(),
       }),
     transcribeDictation: (audio) => transcribeDictationAudio(audio),

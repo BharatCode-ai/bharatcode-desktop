@@ -24,6 +24,11 @@ export type DictationTranscription = {
   duration?: number
 }
 
+export type BharatCodeSignInOptions = {
+  forceAccountSelection?: boolean
+  onBrowserUrl?: (url: string) => void
+}
+
 export type BharatCodeAccountState = "signed_out" | "signed_in" | "needs_sign_in" | "connection_issue"
 
 export type BharatCodeConnectionStatus = {
@@ -262,7 +267,7 @@ export type Platform = {
   refreshBharatCodeAccountStatus?(): Promise<BharatCodeAccountStatus>
 
   /** Start BharatCode browser sign-in (desktop only) */
-  signInToBharatCode?(): Promise<unknown>
+  signInToBharatCode?(options?: BharatCodeSignInOptions): Promise<unknown>
 
   /** Read installed and available BharatCode capabilities (desktop only) */
   getCapabilitySnapshot?(): Promise<CapabilitySnapshot>

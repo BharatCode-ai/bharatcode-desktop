@@ -4,11 +4,12 @@ import { showToast } from "@opencode-ai/ui/toast"
 import { createResource, Match, Show, Switch, type Component, type JSX } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useLanguage } from "@/context/language"
-import { type BharatCodeAccountStatus, usePlatform } from "@/context/platform"
+import { type BharatCodeAccountStatus, type BharatCodeSignInOptions, usePlatform } from "@/context/platform"
 import { SettingsList } from "./settings-list"
 
 type AccountTone = "success" | "warning" | "danger" | "muted"
 type AccountPrimaryAction = "sign_in" | "reconnect" | "refresh"
+type AccountSignInIntent = "default" | "switch_account"
 type AccountTitleKey =
   | "settings.account.state.checking.title"
   | "settings.account.state.signedOut.title"
@@ -80,6 +81,10 @@ export function accountPrimaryActionLabelKey(action: AccountPrimaryAction): Acco
   return "settings.account.action.refresh"
 }
 
+export function accountSignInOptions(intent: AccountSignInIntent): BharatCodeSignInOptions {
+  return intent === "switch_account" ? { forceAccountSelection: true } : {}
+}
+
 function toneClass(tone: AccountTone) {
   if (tone === "success") return "bg-icon-success-base"
   if (tone === "warning") return "bg-icon-warning-base"
@@ -119,6 +124,8 @@ export const SettingsAccount: Component = () => {
     signingIn: false,
     refreshing: false,
     exporting: false,
+    pendingSignInUrl: undefined as string | undefined,
+    copiedSignInUrl: false,
   })
 
   const [status, { mutate, refetch }] = createResource(() => platform.getBharatCodeAccountStatus?.())
@@ -141,13 +148,20 @@ export const SettingsAccount: Component = () => {
     }
   }
 
-  async function signIn() {
+  async function signIn(intent: AccountSignInIntent = "default") {
     if (!platform.signInToBharatCode) return
+    setStore("pendingSignInUrl", undefined)
+    setStore("copiedSignInUrl", false)
     setStore("signingIn", true)
     try {
-      await platform.signInToBharatCode()
+      await platform.signInToBharatCode({
+        ...accountSignInOptions(intent),
+        onBrowserUrl: (url) => setStore("pendingSignInUrl", url),
+      })
       if (platform.refreshBharatCodeAccountStatus) mutate(await platform.refreshBharatCodeAccountStatus())
       else await refetch()
+      setStore("pendingSignInUrl", undefined)
+      setStore("copiedSignInUrl", false)
       showToast({
         variant: "success",
         icon: "circle-check",
@@ -162,6 +176,20 @@ export const SettingsAccount: Component = () => {
       })
     } finally {
       setStore("signingIn", false)
+    }
+  }
+
+  async function copyPendingSignInUrl() {
+    if (!store.pendingSignInUrl) return
+    try {
+      await navigator.clipboard.writeText(store.pendingSignInUrl)
+      setStore("copiedSignInUrl", true)
+    } catch (error) {
+      showToast({
+        variant: "error",
+        title: language.t("settings.account.toast.copyFailed.title"),
+        description: error instanceof Error ? error.message : String(error),
+      })
     }
   }
 
@@ -213,7 +241,7 @@ export const SettingsAccount: Component = () => {
           <div class="flex flex-wrap gap-2">
             <Switch>
               <Match when={view().primaryAction === "sign_in" || view().primaryAction === "reconnect"}>
-                <Button size="large" variant="primary" disabled={store.signingIn} onClick={() => void signIn()}>
+                <Button size="large" variant="primary" disabled={store.signingIn} onClick={() => void signIn("default")}>
                   {store.signingIn
                     ? language.t("settings.account.action.signingIn")
                     : language.t(accountPrimaryActionLabelKey(view().primaryAction!))}
@@ -221,7 +249,7 @@ export const SettingsAccount: Component = () => {
               </Match>
             </Switch>
             <Show when={view().tone === "success" && platform.signInToBharatCode}>
-              <Button size="large" variant="secondary" disabled={store.signingIn} onClick={() => void signIn()}>
+              <Button size="large" variant="secondary" disabled={store.signingIn} onClick={() => void signIn("switch_account")}>
                 {store.signingIn
                   ? language.t("settings.account.action.signingIn")
                   : language.t("settings.account.action.useAnother")}
@@ -240,6 +268,31 @@ export const SettingsAccount: Component = () => {
               </Button>
             </Show>
           </div>
+
+          <Show when={store.pendingSignInUrl}>
+            {(url) => (
+              <div class="flex flex-col gap-2 rounded-md border border-border-weak-base bg-background-muted p-3">
+                <div class="flex flex-col gap-1">
+                  <span class="text-13-medium text-text-strong">
+                    {language.t("settings.account.signInFallback.title")}
+                  </span>
+                  <span class="text-12-regular text-text-base">
+                    {language.t("settings.account.signInFallback.description")}
+                  </span>
+                </div>
+                <div class="flex min-w-0 flex-wrap items-center gap-2">
+                  <code class="min-w-0 flex-1 truncate rounded-sm bg-background-base px-2 py-1 text-11-regular text-text-weak">
+                    {url()}
+                  </code>
+                  <Button size="large" variant="secondary" onClick={() => void copyPendingSignInUrl()}>
+                    {store.copiedSignInUrl
+                      ? language.t("settings.account.action.copied")
+                      : language.t("settings.account.action.copySignInUrl")}
+                  </Button>
+                </div>
+              </div>
+            )}
+          </Show>
         </div>
 
         <div class="flex flex-col gap-1">

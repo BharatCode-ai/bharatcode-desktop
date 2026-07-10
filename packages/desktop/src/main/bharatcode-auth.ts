@@ -52,7 +52,12 @@ type BharatCodeCredentials = {
 type FetchImpl = typeof fetch
 type ReauthorizeBharatCode = (error: unknown) => Promise<BharatCodeCredentials | null | undefined>
 
-type SignInOptions = {
+export type BharatCodeSignInOptions = {
+  forceAccountSelection?: boolean
+  onBrowserUrl?: (url: string) => void
+}
+
+type SignInOptions = BharatCodeSignInOptions & {
   openExternal?: (url: string) => Promise<void> | void
   fetchImpl?: FetchImpl
   home?: string
@@ -93,10 +98,12 @@ export function buildBharatCodeSignInUrl({
   state,
   codeChallenge,
   redirectUri = BHARATCODE_OAUTH.desktopRedirectUri,
+  forceAccountSelection = false,
 }: {
   state: string
   codeChallenge: string
   redirectUri?: string
+  forceAccountSelection?: boolean
 }) {
   const url = new URL(`${BHARATCODE_OAUTH.issuer}/oauth/authorize`)
   url.searchParams.set("client_id", BHARATCODE_OAUTH.nativeClientId)
@@ -106,6 +113,7 @@ export function buildBharatCodeSignInUrl({
   url.searchParams.set("code_challenge", codeChallenge)
   url.searchParams.set("code_challenge_method", "S256")
   url.searchParams.set("state", state)
+  if (forceAccountSelection) url.searchParams.set("prompt", "select_account")
   return url
 }
 
@@ -498,6 +506,8 @@ export async function signInToBharatCode({
   home = process.env.BHARATCODE_HOME || homedir(),
   timeoutMs = DEFAULT_SIGN_IN_TIMEOUT_MS,
   pluginSpec,
+  forceAccountSelection = false,
+  onBrowserUrl,
 }: SignInOptions = {}) {
   if (!openExternal) throw new Error("BharatCode sign-in requires an external browser opener.")
   if (pendingSignIn) throw new Error("BharatCode sign-in is already in progress.")
@@ -510,6 +520,7 @@ export async function signInToBharatCode({
     state,
     redirectUri,
     codeChallenge: codeChallenge(codeVerifier),
+    forceAccountSelection,
   })
 
   const completion = new Promise<BharatCodeAuthState>((resolve, reject) => {
@@ -534,8 +545,13 @@ export async function signInToBharatCode({
     }
   })
 
+  const authorizationUrlString = authorizationUrl.toString()
   try {
-    await openExternal(authorizationUrl.toString())
+    onBrowserUrl?.(authorizationUrlString)
+  } catch {}
+
+  try {
+    await openExternal(authorizationUrlString)
   } catch (error) {
     failPendingSignIn(error)
   }

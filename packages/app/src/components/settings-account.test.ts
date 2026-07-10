@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { accountPrimaryActionLabelKey, accountStatusViewModel } from "./settings-account"
+import { accountPrimaryActionLabelKey, accountSignInOptions, accountStatusViewModel } from "./settings-account"
 import type { BharatCodeAccountStatus } from "@/context/platform"
 
 const base: BharatCodeAccountStatus = {
@@ -56,5 +56,13 @@ describe("accountStatusViewModel", () => {
     expect(view.descriptionKey).toBe("settings.account.state.connectionIssue.description")
     expect(view.tone).toBe("danger")
     expect(view.primaryAction).toBe("refresh")
+  })
+})
+
+
+describe("accountSignInOptions", () => {
+  test("requests provider account selection only for explicit account switching", () => {
+    expect(accountSignInOptions("default")).toEqual({})
+    expect(accountSignInOptions("switch_account")).toEqual({ forceAccountSelection: true })
   })
 })

@@ -28,6 +28,10 @@ export type BharatCodeAuthState = {
   configPath: string
 }
 
+export type BharatCodeSignInOptions = {
+  forceAccountSelection?: boolean
+}
+
 export type BharatCodeAccountState = "signed_out" | "signed_in" | "needs_sign_in" | "connection_issue"
 
 export type BharatCodeConnectionStatus = {
@@ -94,6 +98,7 @@ export type ElectronAPI = {
   onSqliteMigrationProgress: (cb: (progress: SqliteMigrationProgress) => void) => () => void
   onMenuCommand: (cb: (id: string) => void) => () => void
   onDeepLink: (cb: (urls: string[]) => void) => () => void
+  onBharatCodeSignInUrl: (cb: (url: string) => void) => () => void
 
   openDirectoryPicker: (opts?: {
     multiple?: boolean
@@ -134,7 +139,7 @@ export type ElectronAPI = {
   getBharatCodeAuthState: () => Promise<BharatCodeAuthState>
   getBharatCodeAccountStatus: () => Promise<BharatCodeAccountStatus>
   refreshBharatCodeAccountStatus: () => Promise<BharatCodeAccountStatus>
-  signInToBharatCode: () => Promise<BharatCodeAuthState>
+  signInToBharatCode: (options?: BharatCodeSignInOptions) => Promise<BharatCodeAuthState>
   transcribeDictation: (audio: DictationAudioInput) => Promise<DictationTranscription>
   getCapabilitySnapshot: () => Promise<CapabilitySnapshot>
   installCapability: (id: string) => Promise<CapabilitySnapshot>

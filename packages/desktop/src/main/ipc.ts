@@ -13,6 +13,7 @@ import type {
   WslConfig,
   BharatCodeAccountStatus,
   BharatCodeAuthState,
+  BharatCodeSignInOptions,
   DictationAudioInput,
 } from "../preload/types"
 import type { CapabilitySnapshot } from "./capabilities"
@@ -50,7 +51,7 @@ type Deps = {
   getBharatCodeAuthState: () => Promise<BharatCodeAuthState>
   getBharatCodeAccountStatus: () => Promise<BharatCodeAccountStatus>
   refreshBharatCodeAccountStatus: () => Promise<BharatCodeAccountStatus>
-  signInToBharatCode: () => Promise<BharatCodeAuthState>
+  signInToBharatCode: (options?: BharatCodeSignInOptions & { onBrowserUrl?: (url: string) => void }) => Promise<BharatCodeAuthState>
   transcribeDictation: (audio: DictationAudioInput) => Promise<unknown>
   getCapabilitySnapshot: () => Promise<CapabilitySnapshot> | CapabilitySnapshot
   installCapability: (id: string) => Promise<CapabilitySnapshot> | CapabilitySnapshot
@@ -95,7 +96,12 @@ export function registerIpcHandlers(deps: Deps) {
   ipcMain.handle("get-bharatcode-auth-state", () => deps.getBharatCodeAuthState())
   ipcMain.handle("get-bharatcode-account-status", () => deps.getBharatCodeAccountStatus())
   ipcMain.handle("refresh-bharatcode-account-status", () => deps.refreshBharatCodeAccountStatus())
-  ipcMain.handle("sign-in-to-bharatcode", () => deps.signInToBharatCode())
+  ipcMain.handle("sign-in-to-bharatcode", (event: IpcMainInvokeEvent, options?: BharatCodeSignInOptions) =>
+    deps.signInToBharatCode({
+      ...options,
+      onBrowserUrl: (url) => event.sender.send("bharatcode-sign-in-url", url),
+    }),
+  )
   ipcMain.handle("transcribe-dictation", (_event: IpcMainInvokeEvent, audio: DictationAudioInput) =>
     deps.transcribeDictation(audio),
   )

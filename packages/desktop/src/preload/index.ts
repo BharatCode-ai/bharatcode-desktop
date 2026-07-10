@@ -46,6 +46,11 @@ const api: ElectronAPI = {
     ipcRenderer.on("deep-link", handler)
     return () => ipcRenderer.removeListener("deep-link", handler)
   },
+  onBharatCodeSignInUrl: (cb) => {
+    const handler = (_: unknown, url: string) => cb(url)
+    ipcRenderer.on("bharatcode-sign-in-url", handler)
+    return () => ipcRenderer.removeListener("bharatcode-sign-in-url", handler)
+  },
 
   openDirectoryPicker: (opts) => ipcRenderer.invoke("open-directory-picker", opts),
   openFilePicker: (opts) => ipcRenderer.invoke("open-file-picker", opts),
@@ -84,7 +89,7 @@ const api: ElectronAPI = {
   getBharatCodeAuthState: () => ipcRenderer.invoke("get-bharatcode-auth-state"),
   getBharatCodeAccountStatus: () => ipcRenderer.invoke("get-bharatcode-account-status"),
   refreshBharatCodeAccountStatus: () => ipcRenderer.invoke("refresh-bharatcode-account-status"),
-  signInToBharatCode: () => ipcRenderer.invoke("sign-in-to-bharatcode"),
+  signInToBharatCode: (options) => ipcRenderer.invoke("sign-in-to-bharatcode", options),
   transcribeDictation: (audio) => ipcRenderer.invoke("transcribe-dictation", audio),
   getCapabilitySnapshot: () => ipcRenderer.invoke("capabilities:get-snapshot"),
   installCapability: (id) => ipcRenderer.invoke("capabilities:install", id),

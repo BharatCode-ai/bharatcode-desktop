@@ -39,6 +39,41 @@ describe("BharatCode desktop auth contract", () => {
     expect(url.toString()).not.toContain("offline_access")
   })
 
+  test("can ask the browser provider to select another account", () => {
+    const url = buildBharatCodeSignInUrl({
+      state: "state-123",
+      codeChallenge: "challenge-456",
+      forceAccountSelection: true,
+    })
+
+    expect(url.searchParams.get("prompt")).toBe("select_account")
+  })
+
+  test("reports the generated browser sign-in URL for manual fallback", async () => {
+    const home = await mkdtemp(join(tmpdir(), "bharatcode-desktop-fallback-url-"))
+    const browserUrls: string[] = []
+
+    try {
+      const signIn = signInToBharatCode({
+        home,
+        timeoutMs: 25,
+        openExternal: async () => undefined,
+        onBrowserUrl: (url) => browserUrls.push(url),
+      })
+
+      await new Promise((resolve) => setTimeout(resolve, 0))
+
+      expect(browserUrls).toHaveLength(1)
+      const url = new URL(browserUrls[0])
+      expect(url.origin + url.pathname).toBe(`${BHARATCODE_OAUTH.issuer}/oauth/authorize`)
+      expect(url.searchParams.get("redirect_uri")).toBe(BHARATCODE_OAUTH.loopbackRedirectUri)
+
+      await expect(signIn).rejects.toThrow("Timed out waiting for BharatCode OAuth callback.")
+    } finally {
+      await rm(home, { recursive: true, force: true })
+    }
+  })
+
   test("recognizes the Desktop deep-link callback", () => {
     expect(isBharatCodeAuthCallback("bharatcode://auth/callback?code=abc&state=xyz")).toBe(true)
     expect(isBharatCodeAuthCallback("http://127.0.0.1:27182/callback?code=abc&state=xyz")).toBe(true)
