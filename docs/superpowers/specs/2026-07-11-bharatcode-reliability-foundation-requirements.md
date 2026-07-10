@@ -1,12 +1,12 @@
 # BharatCode Reliability Foundation Requirements
 
-| Metadata               | Value                                                         |
-| ---------------------- | ------------------------------------------------------------- |
-| Date                   | 2026-07-11                                                    |
-| Status                 | Product decisions approved; requirements pending final review |
-| Primary repository     | `BharatCode-ai/bharatcode-desktop`                            |
-| Coordinated repository | `BharatCode-ai/bharatcode`                                    |
-| Owning lane            | Product Head — Desktop                                        |
+| Metadata               | Value                                |
+| ---------------------- | ------------------------------------ |
+| Date                   | 2026-07-11                           |
+| Status                 | Approved for GPT-5.6 Ultra execution |
+| Primary repository     | `BharatCode-ai/bharatcode-desktop`   |
+| Coordinated repository | `BharatCode-ai/bharatcode`           |
+| Owning lane            | Product Head — Desktop               |
 
 ## 1. Purpose
 
