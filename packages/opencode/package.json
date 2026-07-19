@@ -30,6 +30,11 @@
       "node": "./src/storage/db.node.ts",
       "default": "./src/storage/db.bun.ts"
     },
+    "#auth-lock-db": {
+      "bun": "./src/auth/auth-lock-db.bun.ts",
+      "node": "./src/auth/auth-lock-db.node.ts",
+      "default": "./src/auth/auth-lock-db.bun.ts"
+    },
     "#pty": {
       "bun": "./src/pty/pty.bun.ts",
       "node": "./src/pty/pty.node.ts",

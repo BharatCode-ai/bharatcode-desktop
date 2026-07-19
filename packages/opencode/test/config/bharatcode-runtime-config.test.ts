@@ -5,6 +5,8 @@ import path from "node:path"
 import { Effect } from "effect"
 import { AppFileSystem } from "@opencode-ai/core/filesystem"
 import { ConfigPaths } from "@/config/paths"
+import { Database } from "@/storage/db"
+import { Global } from "@opencode-ai/core/global"
 
 const roots: string[] = []
 const packageRoot = path.resolve(import.meta.dir, "../..")
@@ -12,6 +14,12 @@ const packageRoot = path.resolve(import.meta.dir, "../..")
 afterAll(() => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))))
 
 describe("BharatCode runtime config discovery", () => {
+  test("uses the canonical BharatCode database destination", () => {
+    const database = Database.getChannelPath({ disableChannelDb: false })
+    expect(database).toBe(Global.Path.database)
+    expect(path.basename(database)).toBe("bharatcode.db")
+  })
+
   test("discovers only branded server and TUI identities", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "bharatcode-runtime-config-"))
     roots.push(root)

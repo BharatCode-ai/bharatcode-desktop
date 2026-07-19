@@ -13,6 +13,7 @@ import { AppFileSystem } from "@opencode-ai/core/filesystem"
 import { Account } from "@/account/account"
 import { Agent } from "@/agent/agent"
 import { Auth } from "@/auth"
+import { BharatCodeAccount } from "@/bharatcode/account"
 import { Bus } from "@/bus"
 import { Config } from "@/config/config"
 import { Command } from "@/command"
@@ -194,6 +195,7 @@ export function createRoutes(
       Account.defaultLayer,
       Agent.defaultLayer,
       Auth.defaultLayer,
+      BharatCodeAccount.defaultLayer,
       Command.defaultLayer,
       Config.defaultLayer,
       File.defaultLayer,

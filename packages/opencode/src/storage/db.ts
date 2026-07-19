@@ -10,7 +10,6 @@ import { NamedError } from "@opencode-ai/core/util/error"
 import path from "path"
 import { readFileSync, readdirSync, existsSync } from "fs"
 import { Flag } from "@opencode-ai/core/flag/flag"
-import { InstallationChannel } from "@opencode-ai/core/installation/version"
 import { EffectBridge } from "@/effect/bridge"
 import { init } from "#db"
 import { Effect, Schema } from "effect"
@@ -28,11 +27,8 @@ type DatabaseFlags = Pick<RuntimeFlags.Info, "disableChannelDb" | "skipMigration
 const readRuntimeFlags = () =>
   Effect.runSync(RuntimeFlags.Service.useSync((flags) => flags).pipe(Effect.provide(RuntimeFlags.defaultLayer)))
 
-export function getChannelPath(flags: Pick<DatabaseFlags, "disableChannelDb"> = readRuntimeFlags()) {
-  if (["latest", "beta", "prod"].includes(InstallationChannel) || flags.disableChannelDb)
-    return path.join(Global.Path.data, "opencode.db")
-  const safe = InstallationChannel.replace(/[^a-zA-Z0-9._-]/g, "-")
-  return path.join(Global.Path.data, `opencode-${safe}.db`)
+export function getChannelPath(_flags: Pick<DatabaseFlags, "disableChannelDb"> = readRuntimeFlags()) {
+  return Global.Path.database
 }
 
 export const getPath = (flags?: Pick<DatabaseFlags, "disableChannelDb">) => {

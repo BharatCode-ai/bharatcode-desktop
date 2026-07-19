@@ -5,6 +5,7 @@ import * as Observability from "@opencode-ai/core/effect/observability"
 import { AppFileSystem } from "@opencode-ai/core/filesystem"
 import { Bus } from "@/bus"
 import { Auth } from "@/auth"
+import { BharatCodeAccount } from "@/bharatcode/account"
 import { Account } from "@/account/account"
 import { Config } from "@/config/config"
 import { Git } from "@/git"
@@ -64,6 +65,7 @@ export const AppLayer = Layer.mergeAll(
   AppFileSystem.defaultLayer,
   Bus.defaultLayer,
   Auth.defaultLayer,
+  BharatCodeAccount.defaultLayer,
   Account.defaultLayer,
   Config.defaultLayer,
   Git.defaultLayer,
