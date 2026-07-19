@@ -28,3 +28,4 @@ resources/opencode-cli*
 resources/icons
 resources/*.metainfo.xml
 resources/wsl-runtime/
+.artifacts/wsl-acceptance/

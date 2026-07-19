@@ -61,6 +61,7 @@ import {
   retainWslAuthorizationWhileRunning,
   rewriteWslProjectDeepLinks,
 } from "./wsl-lifecycle"
+import { resolveWslAcceptanceInvocation, runPackagedWslAcceptance } from "./wsl-acceptance"
 
 const TEST_ONBOARDING = process.env.BHARATCODE_TEST_ONBOARDING === "1" || process.env.OPENCODE_TEST_ONBOARDING === "1"
 const jsCallStackFeature = "DocumentPolicyIncludeJSCallStacksInCrashReports"
@@ -606,4 +607,29 @@ const main = Effect.gen(function* () {
   overlay?.close()
 })
 
-Effect.runFork(main)
+let dispatch: ReturnType<typeof resolveWslAcceptanceInvocation> | { readonly kind: "rejected" }
+try {
+  dispatch = resolveWslAcceptanceInvocation(process.argv.slice(1), {
+    packaged: app.isPackaged,
+    platform: process.platform,
+  })
+} catch {
+  process.stderr.write("Packaged WSL acceptance invocation rejected\n")
+  app.exit(1)
+  dispatch = { kind: "rejected" }
+}
+
+if (dispatch.kind === "acceptance") {
+  void runPackagedWslAcceptance(dispatch.input).then(
+    (record) => {
+      process.stdout.write(`${record}\n`)
+      app.exit(0)
+    },
+    () => {
+      process.stderr.write("Packaged WSL acceptance failed\n")
+      app.exit(1)
+    },
+  )
+} else if (dispatch.kind === "ordinary") {
+  Effect.runFork(main)
+}
