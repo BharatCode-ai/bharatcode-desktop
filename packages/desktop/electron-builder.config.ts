@@ -1,11 +1,11 @@
 import { execFile } from "node:child_process"
-import { access, mkdtemp, readdir, rm } from "node:fs/promises"
+import { access, mkdtemp, readFile, readdir, rm } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
 
-import type { Configuration } from "electron-builder"
+import { Arch, type Configuration } from "electron-builder"
 import {
   BRANDING,
   type Channel,
@@ -14,9 +14,11 @@ import {
   packageNameForChannel,
   productNameForChannel,
 } from "./src/main/branding"
+import { verifyWslArtifact, wslRuntimeFilename, type WslRuntimeArch } from "./src/main/wsl-artifact"
 
 const execFileAsync = promisify(execFile)
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
+const desktopDir = path.dirname(fileURLToPath(import.meta.url))
 const signScript = path.join(rootDir, "script", "sign-windows.ps1")
 const execBuffer = 10 * 1024 * 1024
 
@@ -203,7 +205,33 @@ function updateChannelForChannel(channel: Channel) {
 
 const allowUnsignedMac = process.env.BHARATCODE_ALLOW_UNSIGNED_MAC === "1"
 
+function requiredWslBuildEnv(name: string) {
+  const value = process.env[name]?.trim()
+  if (!value) throw new Error(`Missing required WSL runtime build environment variable: ${name}`)
+  return value
+}
+
+const verifyWslBeforePack: NonNullable<Configuration["beforePack"]> = async (context) => {
+  if (context.electronPlatformName !== "win32") return
+  const arch: WslRuntimeArch = (() => {
+    if (context.arch === Arch.x64) return "x64"
+    if (context.arch === Arch.arm64) return "arm64"
+    throw new Error("Windows WSL runtime packaging supports only x64 or arm64")
+  })()
+  const packageJson = JSON.parse(await readFile(path.join(desktopDir, "package.json"), "utf8")) as { version?: unknown }
+  if (typeof packageJson.version !== "string") throw new Error("Desktop package version is missing")
+  const resourceDir = path.join(desktopDir, "resources", "wsl-runtime")
+  await verifyWslArtifact({
+    runtimePath: path.join(resourceDir, wslRuntimeFilename(arch)),
+    manifestPath: path.join(resourceDir, "manifest.json"),
+    expectedSourceSha: requiredWslBuildEnv("INTEGRATED_HEAD"),
+    expectedVersion: packageJson.version,
+    expectedArch: arch,
+  })
+}
+
 const getBase = (): Configuration => ({
+  beforePack: verifyWslBeforePack,
   afterSign: process.platform === "darwin" && !allowUnsignedMac ? notarizeMac : undefined,
   artifactName: "bharatcode-desktop-${os}-${arch}.${ext}",
   directories: {
@@ -247,6 +275,13 @@ const getBase = (): Configuration => ({
     schemes: [BRANDING.protocol],
   },
   win: {
+    extraResources: [
+      {
+        from: "resources/wsl-runtime",
+        to: "wsl-runtime",
+        filter: ["manifest.json", "bharatcode-runtime-linux-x64-glibc", "bharatcode-runtime-linux-arm64-glibc"],
+      },
+    ],
     icon: `resources/icons/icon.ico`,
     signtoolOptions: {
       sign: signWindows,
