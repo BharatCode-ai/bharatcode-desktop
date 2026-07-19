@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, join, resolve } from "node:path"
 
+import * as acceptance from "./lean-upgrade-acceptance.mjs"
 import {
   parseUpgradeAcceptanceArguments,
   runLeanUpgradeAcceptance,
@@ -20,6 +21,11 @@ const candidate = {
   filename: "bharatcode-desktop-next-beta-win-x64.exe",
   bytes: 120_000_000,
   sha256: "a".repeat(64),
+}
+const session = { id: "ses_upgrade_acceptance", title: "Preserved packaged beta session" }
+
+function pe() {
+  return Buffer.concat([Buffer.from("MZ"), Buffer.alloc(16), Buffer.from("PE\0\0"), Buffer.alloc(16)])
 }
 
 async function currentBeta() {
@@ -110,6 +116,199 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
       }
     } finally {
       await rm(input.root, { recursive: true, force: true })
+    }
+  })
+
+  test("discovers exactly BharatCode Beta.exe and closes the owned utility process tree", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lean-upgrade-installed-"))
+    const executable = join(root, "BharatCode Beta.exe")
+    try {
+      await writeFile(executable, pe())
+      await writeFile(join(root, "Uninstall BharatCode Beta.exe"), pe())
+      expect(await acceptance.discoverPackagedApplication(root)).toEqual({ executable })
+
+      const records = [
+        {
+          process_id: 4100,
+          parent_process_id: 1,
+          executable_path: executable,
+          command_line: `"${executable}" --disable-gpu`,
+        },
+        {
+          process_id: 4101,
+          parent_process_id: 4100,
+          executable_path: executable,
+          command_line: `"${executable}" --type=utility --utility-sub-type=node.mojom.NodeService`,
+        },
+      ]
+      expect(acceptance.validateOwnedProcessTree(records, { rootPid: 4100, executable })).toEqual({
+        rootPid: 4100,
+        utilityPid: 4101,
+        pids: [4100, 4101],
+      })
+      expect(acceptance.validateOwnedProcessesGone([4100, 4101], [])).toBeTrue()
+      expect(() => acceptance.validateOwnedProcessesGone([4100, 4101], [records[1]])).toThrow()
+      expect(() => acceptance.validateOwnedProcessTree(records.slice(0, 1), { rootPid: 4100, executable })).toThrow()
+      expect(() =>
+        acceptance.validateOwnedProcessTree(
+          [records[0], { ...records[1], executable_path: join(root, "substituted.exe") }],
+          { rootPid: 4100, executable },
+        ),
+      ).toThrow()
+
+      await rm(executable)
+      await expect(acceptance.discoverPackagedApplication(root)).rejects.toThrow(/missing|exactly one/i)
+      await writeFile(executable, pe())
+      await writeFile(join(root, "Another.exe"), pe())
+      await expect(acceptance.discoverPackagedApplication(root)).rejects.toThrow(/ambiguous|exactly one/i)
+
+      const source = await readFile(new URL("./lean-upgrade-acceptance.mjs", import.meta.url), "utf8")
+      expect(source).not.toContain('const INSTALLED_EXECUTABLE = "bharatcode-beta.exe"')
+      const branding = await readFile(new URL("../src/main/branding.ts", import.meta.url), "utf8")
+      expect(branding).toContain('appName: "BharatCode"')
+      expect(branding).toContain("return `${BRANDING.appName} ${channel.charAt(0).toUpperCase() + channel.slice(1)}`")
+      expect(await readFile(new URL("../electron-builder.config.ts", import.meta.url), "utf8")).toContain(
+        "productName: productNameForChannel(channel)",
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  test("recognizes only the shipped post-initialization log and rejects premature or failed startup", () => {
+    const prior = "[info] init step { step: { phase: 'done' } }\r\n"
+    expect(acceptance.parsePackagedReadinessLog(`[2026-07-20 10:00:00.000] ${prior}`)).toBeTrue()
+    expect(() => acceptance.parsePackagedReadinessDelta(prior, `${prior}[info] app starting\r\n`)).toThrow()
+    expect(acceptance.parsePackagedReadinessDelta(prior, `${prior}${prior}`)).toBeTrue()
+    expect(() => acceptance.parsePackagedReadinessDelta(prior, `[info] truncated\r\n${prior}`)).toThrow()
+    for (const hostile of [
+      "[info] app starting { version: '1.2.3', packaged: true }\r\n",
+      '[info] init step { step: { phase: "server_waiting" } }\r\n',
+      "[info] init step { step: { phase: done } }\r\n",
+      "[error] sidecar exited before ready\r\n",
+    ]) {
+      expect(() => acceptance.parsePackagedReadinessLog(hostile)).toThrow()
+    }
+  })
+
+  test("accepts only the exact legacy OpenCode recovery source and observation-derived preserved state", () => {
+    const recovery = {
+      state: "choose-source",
+      sources: [
+        {
+          id: `opencode-cli-${"a".repeat(64)}`,
+          label: "Existing BharatCode data · opencode-cli · aaaaaaaa",
+          contentFingerprint: "b".repeat(64),
+        },
+      ],
+    }
+    expect(acceptance.selectLegacyRecoverySource(recovery)).toEqual({
+      id: recovery.sources[0].id,
+      contentFingerprint: recovery.sources[0].contentFingerprint,
+    })
+    for (const hostile of [
+      { state: "start-fresh", reason: "no-source" },
+      { ...recovery, sources: [] },
+      { ...recovery, sources: [...recovery.sources, recovery.sources[0]] },
+      { ...recovery, sources: [{ ...recovery.sources[0], label: "Existing BharatCode data · opencode-desktop" }] },
+    ]) {
+      expect(() => acceptance.selectLegacyRecoverySource(hostile)).toThrow()
+    }
+
+    const evidence = {
+      schema: "bharatcode-packaged-state-evidence-v1",
+      source: {
+        database_before_sha256: "1".repeat(64),
+        database_after_sha256: "1".repeat(64),
+        config_before_sha256: "2".repeat(64),
+        config_after_sha256: "2".repeat(64),
+      },
+      recovery: {
+        selected_source_id: recovery.sources[0].id,
+        selected_content_fingerprint: recovery.sources[0].contentFingerprint,
+        actions: ["choose-source"],
+        final_state: "ready",
+        journal_sha256: "3".repeat(64),
+        snapshot_verified: true,
+      },
+      candidate: {
+        database_quick_check: "ok",
+        session,
+        config: { snapshot: false },
+        account_state: "signed-out",
+        auth_file_present: false,
+        secret_like_present: false,
+      },
+      rollback: {
+        database_quick_check: "ok",
+        session,
+        config: { snapshot: false },
+      },
+    }
+    expect(acceptance.validateStateEvidence(evidence, session)).toEqual({
+      eligibleStatePreserved: true,
+      migrationSourcePreserved: true,
+      recoveryEvidencePreserved: true,
+      rollbackStateStructurallyValid: true,
+    })
+    for (const hostile of [
+      { ...evidence, source: { ...evidence.source, database_after_sha256: "3".repeat(64) } },
+      { ...evidence, recovery: { ...evidence.recovery, actions: ["start-fresh"] } },
+      { ...evidence, recovery: { ...evidence.recovery, snapshot_verified: false } },
+      { ...evidence, recovery: { ...evidence.recovery, journal_sha256: "invalid" } },
+      { ...evidence, candidate: { ...evidence.candidate, session: undefined } },
+      { ...evidence, candidate: { ...evidence.candidate, secret_like_present: true } },
+      { ...evidence, rollback: { ...evidence.rollback, database_quick_check: "corrupt" } },
+    ]) {
+      expect(() => acceptance.validateStateEvidence(hostile, session)).toThrow()
+    }
+  })
+
+  test("requires executed share/unshare refusal and complete nonempty network captures", () => {
+    const event = {
+      source: { id: 1, start_time: "1" },
+      type: 1,
+      phase: 0,
+      time: "2",
+      params: { url: "https://bharatcode.ai/api/model/v1/models" },
+    }
+    expect(
+      acceptance.validatePackagedNetLogBytes(
+        Buffer.from(JSON.stringify({ constants: { logEventTypes: {} }, events: [event] })),
+      ),
+    ).toBeTrue()
+    for (const hostile of [
+      Buffer.alloc(0),
+      Buffer.from("{"),
+      Buffer.from("{}"),
+      Buffer.from(JSON.stringify({ constants: {}, events: [] })),
+      Buffer.from(
+        JSON.stringify({ constants: {}, events: [{ ...event, params: { url: "https://bharatcode.ai/api/share" } }] }),
+      ),
+    ]) {
+      expect(() => acceptance.validatePackagedNetLogBytes(hostile)).toThrow()
+    }
+
+    const observation = {
+      schema: "bharatcode-share-surface-observation-v1",
+      session_status: 200,
+      share_status: 500,
+      unshare_status: 500,
+      audit_requests: 0,
+      utility_process_observed: true,
+    }
+    expect(acceptance.validateShareSurfaceObservation(observation)).toEqual({
+      sharenextAbsent: true,
+      shareNetworkAttemptAbsent: true,
+    })
+    for (const hostile of [
+      { help_only: true },
+      { ...observation, share_status: 200 },
+      { ...observation, unshare_status: 200 },
+      { ...observation, audit_requests: 1 },
+      { ...observation, utility_process_observed: false },
+    ]) {
+      expect(() => acceptance.validateShareSurfaceObservation(hostile)).toThrow()
     }
   })
 
@@ -263,10 +462,11 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
       '"/S"',
       '"taskkill"',
       "PROCESS_TIMEOUT_MS",
-      "bharatcode-beta.exe",
+      "productNameForChannel",
       "recovery",
       "status",
-      "start-fresh",
+      "choose-source",
+      "--content-fingerprint",
       "--confirm",
       "--json",
       '"models", "opencode"',
@@ -279,18 +479,26 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
       "betaStart.netLog",
       "candidateStart.netLog",
       "rollbackStart.netLog",
-      "migration-source.json",
-      "recovery-evidence.json",
+      "seedLegacyBetaState",
+      "observeCandidateState",
+      "observeRollbackState",
+      "validateStateEvidence",
+      "verifyRecoveryEvidence",
+      "lean-migration-v1.json",
+      "migration-snapshots",
+      "validateShareSurfaceObservation",
+      "validatePackagedNetLogBytes",
+      "Get-CimInstance Win32_Process",
       "initializeIsolatedProfile",
       "parseLeanUpgradeReceiptBytes",
     ]) {
       expect(source).toContain(required)
     }
-    expect(source).not.toMatch(/extract|mock.*PASS|force.*PASS/iu)
-    const betaStart = source.indexOf('startDesktop(installDirectory, profile, "current-beta"')
+    expect(source).not.toMatch(/extract|mock.*PASS|force.*PASS|app starting|recovery", "start-fresh/iu)
+    const betaStart = source.indexOf('profile, "current-beta", active')
     const candidateInstall = source.indexOf("runInstaller(input.candidate")
-    const recovery = source.indexOf("initializeRecoveryState(installDirectory, profile)")
-    const candidateStart = source.indexOf('startDesktop(installDirectory, profile, "candidate"')
+    const recovery = source.indexOf("completeCandidateRecovery(candidateRuntime, profile)")
+    const candidateStart = source.indexOf('profile,\n      "candidate",')
     expect(betaStart).toBeGreaterThan(-1)
     expect(candidateInstall).toBeGreaterThan(betaStart)
     expect(recovery).toBeGreaterThan(candidateInstall)
