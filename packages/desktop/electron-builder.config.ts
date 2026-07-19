@@ -137,11 +137,9 @@ async function notarizeMac(context: MacAfterSignContext) {
 
   try {
     console.log(`Preparing ${path.basename(appPath)} for Apple notarization`)
-    await runMacTool(
-      "ditto",
-      ["-c", "-k", "--sequesterRsrc", "--keepParent", path.basename(appPath), zipPath],
-      { cwd: path.dirname(appPath) },
-    )
+    await runMacTool("ditto", ["-c", "-k", "--sequesterRsrc", "--keepParent", path.basename(appPath), zipPath], {
+      cwd: path.dirname(appPath),
+    })
 
     console.log("Submitting BharatCode macOS app to Apple notarization service")
     const submitResult = await runMacTool(
@@ -149,7 +147,10 @@ async function notarizeMac(context: MacAfterSignContext) {
       ["notarytool", "submit", zipPath, ...authArgs, "--no-wait", "--output-format", "json"],
       { timeoutMs: submitTimeoutMs },
     )
-    const submission = JSON.parse((submitResult.stdout || submitResult.output).trim()) as { id?: string; status?: string }
+    const submission = JSON.parse((submitResult.stdout || submitResult.output).trim()) as {
+      id?: string
+      status?: string
+    }
     if (!submission.id) throw new Error(`Apple notarization did not return a submission id: ${submitResult.output}`)
 
     while (Date.now() - started < timeoutMs) {
@@ -183,7 +184,9 @@ async function notarizeMac(context: MacAfterSignContext) {
           "--output-format",
           "json",
         ])
-        throw new Error(`Apple notarization ${info.status.toLowerCase()} submission ${submission.id}:\n${logResult.output}`)
+        throw new Error(
+          `Apple notarization ${info.status.toLowerCase()} submission ${submission.id}:\n${logResult.output}`,
+        )
       }
 
       await new Promise((resolve) => setTimeout(resolve, 30_000))
