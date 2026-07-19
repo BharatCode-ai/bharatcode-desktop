@@ -264,6 +264,7 @@ export async function spawnWslServer(
     health: { wait: Promise.resolve() },
     authorization: runtime.authorization,
     identity: runtime.identity,
+    selectedIdentity: selected,
     owned: {
       stop: runtime.stop,
       closeInput: runtime.closeInput,

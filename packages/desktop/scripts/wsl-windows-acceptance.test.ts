@@ -117,6 +117,30 @@ async function fixture() {
         unrelated_process_preserved: true,
       },
     },
+    "scenario-10-before-restart": {
+      ...common,
+      case: "scenario-10-before-restart",
+      checks: {
+        credentials_main_only: true,
+        harness_processes_gone: true,
+        invalid_distribution_recovery: true,
+        missing_prerequisite_recovery: true,
+        one_reconnect: true,
+        ordinary_stop: true,
+        repeated_crash_visible: true,
+        restart: true,
+        unrelated_process_preserved: true,
+      },
+    },
+    "scenario-10-after-restart": {
+      ...common,
+      case: "scenario-10-after-restart",
+      checks: {
+        harness_processes_gone: true,
+        ordinary_stop: true,
+        persisted_selection: true,
+      },
+    },
   } as const
   return { root, argv, desktopExe, runtimePath, runtimeManifest, acceptanceDirectory, observations }
 }
@@ -170,6 +194,26 @@ describe("packaged Windows/WSL2 acceptance contract", () => {
       APPDATA: "C:\\Users\\runner\\AppData\\Roaming",
       LOCALAPPDATA: "C:\\Users\\runner\\AppData\\Local",
     })
+  })
+
+  test("executes scenario 10 as ordered packaged processes over one isolated state root", async () => {
+    const input = await fixture()
+    const calls: Array<{ case: string; acceptanceDirectory?: string }> = []
+    await runWindowsAcceptance(
+      input.argv,
+      dependencies(input, {
+        runCase: async (value: { case: keyof typeof input.observations; acceptanceDirectory?: string }) => {
+          calls.push(value)
+          return input.observations[value.case]
+        },
+      }),
+    )
+    expect(calls.map((item) => item.case)).toEqual([
+      "scenario-9",
+      "scenario-10-before-restart",
+      "scenario-10-after-restart",
+    ])
+    expect(calls.every((item) => item.acceptanceDirectory === input.acceptanceDirectory)).toBeTrue()
   })
 
   test("parses only the exact single-use closed argument set", async () => {
@@ -436,7 +480,7 @@ describe("packaged Windows/WSL2 acceptance contract", () => {
   test("writes no final receipt for an incomplete, mismatched, or failed case", async () => {
     for (const runCase of [
       async (input: Awaited<ReturnType<typeof fixture>>, name: keyof typeof input.observations) => {
-        if (name === "scenario-10") throw new Error("case failed")
+        if (name === "scenario-10-before-restart") throw new Error("case failed")
         return input.observations[name]
       },
       async (input: Awaited<ReturnType<typeof fixture>>, name: keyof typeof input.observations) => ({
@@ -447,6 +491,10 @@ describe("packaged Windows/WSL2 acceptance contract", () => {
         ...input.observations[name],
         checks: { ...input.observations[name].checks, [Object.keys(input.observations[name].checks)[0]]: false },
       }),
+      async (input: Awaited<ReturnType<typeof fixture>>, name: keyof typeof input.observations) =>
+        name === "scenario-10-before-restart"
+          ? input.observations["scenario-10-after-restart"]
+          : input.observations[name],
     ]) {
       const input = await fixture()
       await expect(

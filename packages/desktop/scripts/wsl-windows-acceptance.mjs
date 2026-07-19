@@ -60,6 +60,18 @@ const scenarioChecks = {
     "restart",
     "unrelated_process_preserved",
   ],
+  "scenario-10-before-restart": [
+    "credentials_main_only",
+    "harness_processes_gone",
+    "invalid_distribution_recovery",
+    "missing_prerequisite_recovery",
+    "one_reconnect",
+    "ordinary_stop",
+    "repeated_crash_visible",
+    "restart",
+    "unrelated_process_preserved",
+  ],
+  "scenario-10-after-restart": ["harness_processes_gone", "ordinary_stop", "persisted_selection"],
 }
 const childEnvironmentKeys = [
   "SystemRoot",
@@ -197,13 +209,39 @@ export async function runWindowsAcceptance(argv, dependencies = {}) {
     missingPrerequisiteDistribution: input.missingPrerequisiteDistribution,
     windowsProject: input.windowsProject,
     sourceSha: input.sourceSha,
+    acceptanceDirectory,
   }
   const runCase = dependencies.runCase ?? runExecutableCase
-  const scenario9 = parseAcceptanceObservation(await runCase({ ...caseInput, case: "scenario-9" }))
-  const scenario10 = parseAcceptanceObservation(await runCase({ ...caseInput, case: "scenario-10" }))
+  const runPhase = async (name) => {
+    const observation = parseAcceptanceObservation(await runCase({ ...caseInput, case: name }))
+    if (observation.case !== name) throw new Error("Packaged acceptance phase mismatch")
+    return observation
+  }
+  const scenario9 = await runPhase("scenario-9")
+  const beforeRestart = await runPhase("scenario-10-before-restart")
+  const afterRestart = await runPhase("scenario-10-after-restart")
   verifyObservationIdentity(scenario9, artifacts, input)
-  verifyObservationIdentity(scenario10, artifacts, input)
-  if (!sameObservationIdentity(scenario9, scenario10)) throw new Error("Acceptance case identity mismatch")
+  verifyObservationIdentity(beforeRestart, artifacts, input)
+  verifyObservationIdentity(afterRestart, artifacts, input)
+  if (!sameObservationIdentity(scenario9, beforeRestart) || !sameObservationIdentity(beforeRestart, afterRestart)) {
+    throw new Error("Acceptance case identity mismatch")
+  }
+  const scenario10 = parseAcceptanceObservation({
+    ...afterRestart,
+    case: "scenario-10",
+    checks: {
+      credentials_main_only: beforeRestart.checks.credentials_main_only,
+      desktop_restart: afterRestart.checks.persisted_selection,
+      harness_processes_gone: beforeRestart.checks.harness_processes_gone && afterRestart.checks.harness_processes_gone,
+      invalid_distribution_recovery: beforeRestart.checks.invalid_distribution_recovery,
+      missing_prerequisite_recovery: beforeRestart.checks.missing_prerequisite_recovery,
+      one_reconnect: beforeRestart.checks.one_reconnect,
+      ordinary_stop: beforeRestart.checks.ordinary_stop && afterRestart.checks.ordinary_stop,
+      repeated_crash_visible: beforeRestart.checks.repeated_crash_visible,
+      restart: beforeRestart.checks.restart,
+      unrelated_process_preserved: beforeRestart.checks.unrelated_process_preserved,
+    },
+  })
 
   if (!authority) return { authority: "DIAGNOSTIC", receiptPath: undefined, digestPath: undefined }
   const receipt = {
@@ -394,6 +432,8 @@ async function runExecutableCase(input) {
       input.windowsProject,
       "--source-sha",
       input.sourceSha,
+      "--acceptance-dir",
+      input.acceptanceDirectory,
     ],
     {
       windowsHide: true,
