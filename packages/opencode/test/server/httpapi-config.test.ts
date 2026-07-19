@@ -59,7 +59,7 @@ describe("config HttpApi", () => {
         lsp: false,
       })
       yield* Fiber.join(disposed)
-      expect(yield* Effect.promise(() => Bun.file(path.join(tmp.path, "config.json")).json())).toMatchObject({
+      expect(yield* Effect.promise(() => Bun.file(path.join(tmp.path, "bharatcode.json")).json())).toMatchObject({
         username: "patched-user",
         formatter: false,
         lsp: false,
@@ -68,7 +68,7 @@ describe("config HttpApi", () => {
   )
 
   it.live(
-    "serves config with active provider model status",
+    "does not surface unsupported provider configuration",
     Effect.gen(function* () {
       const tmp = yield* tmpdirEffect({
         config: {
@@ -97,16 +97,29 @@ describe("config HttpApi", () => {
       )
 
       expect(response.status).toBe(200)
+      expect(yield* Effect.promise(() => response.json())).not.toHaveProperty("provider.omniroute")
+    }),
+  )
+
+  it.live(
+    "rejects provider mutation with a clear BharatCode-only error",
+    Effect.gen(function* () {
+      const tmp = yield* tmpdirEffect({ config: { formatter: false, lsp: false } })
+      const response = yield* Effect.promise(() =>
+        Promise.resolve(
+          app().request("/config", {
+            method: "PATCH",
+            headers: { "content-type": "application/json", "x-opencode-directory": tmp.path },
+            body: JSON.stringify({ provider: { openai: { api: "https://api.openai.com" } } }),
+          }),
+        ),
+      )
+
+      expect(response.status).toBe(400)
       expect(yield* Effect.promise(() => response.json())).toMatchObject({
-        provider: {
-          omniroute: {
-            models: {
-              "gpt-4o": {
-                status: "active",
-              },
-            },
-          },
-        },
+        code: "bharatcode_provider_only",
+        source: "provider_configuration",
+        message: expect.stringContaining("only BharatCode"),
       })
     }),
   )

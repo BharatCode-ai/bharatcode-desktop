@@ -1,14 +1,20 @@
 import { ProviderAuth } from "@/provider/auth"
-import { Config } from "@/config/config"
-import { ModelsDev } from "@opencode-ai/core/models-dev"
 import { Provider } from "@/provider/provider"
 import { ProviderID } from "@/provider/schema"
-import { mapValues } from "remeda"
 import { Effect, Schema } from "effect"
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import { InstanceHttpApi } from "../api"
 import { ProviderAuthApiError } from "../groups/provider"
+
+const unavailable = (providerID?: ProviderID) =>
+  new ProviderAuthApiError({
+    name: "BadRequest",
+    data: {
+      ...(providerID ? { providerID } : {}),
+      message: "BharatCode accounts are managed through `bharatcode auth`; provider connections are unavailable.",
+    },
+  })
 
 function mapProviderAuthError<A, R>(self: Effect.Effect<A, ProviderAuth.Error, R>) {
   return self.pipe(
@@ -32,46 +38,26 @@ function mapProviderAuthError<A, R>(self: Effect.Effect<A, ProviderAuth.Error, R
 
 export const providerHandlers = HttpApiBuilder.group(InstanceHttpApi, "provider", (handlers) =>
   Effect.gen(function* () {
-    const cfg = yield* Config.Service
     const provider = yield* Provider.Service
-    const svc = yield* ProviderAuth.Service
 
     const list = Effect.fn("ProviderHttpApi.list")(function* () {
-      const config = yield* cfg.get()
-      const all = yield* ModelsDev.Service.use((s) => s.get())
-      const disabled = new Set(config.disabled_providers ?? [])
-      const enabled = config.enabled_providers ? new Set(config.enabled_providers) : undefined
-      const filtered: Record<string, (typeof all)[string]> = {}
-      for (const [key, value] of Object.entries(all)) {
-        if ((enabled ? enabled.has(key) : true) && !disabled.has(key)) filtered[key] = value
-      }
       const connected = yield* provider.list()
-      const providers = Object.assign(
-        mapValues(filtered, (item) => Provider.fromModelsDevProvider(item)),
-        connected,
-      )
       return {
-        all: Object.values(providers).map(Provider.toPublicInfo),
-        default: Provider.defaultModelIDs(providers),
+        all: Object.values(connected).map(Provider.toPublicInfo),
+        default: Provider.defaultModelIDs(connected),
         connected: Object.keys(connected),
       }
     })
 
     const auth = Effect.fn("ProviderHttpApi.auth")(function* () {
-      return yield* svc.methods()
+      return {}
     })
 
     const authorize = Effect.fn("ProviderHttpApi.authorize")(function* (ctx: {
       params: { providerID: ProviderID }
       payload: ProviderAuth.AuthorizeInput
     }) {
-      return yield* mapProviderAuthError(
-        svc.authorize({
-          providerID: ctx.params.providerID,
-          method: ctx.payload.method,
-          inputs: ctx.payload.inputs,
-        }),
-      )
+      return yield* unavailable(ctx.params.providerID)
     })
 
     const authorizeRaw = Effect.fn("ProviderHttpApi.authorizeRaw")(function* (ctx: {
@@ -93,14 +79,7 @@ export const providerHandlers = HttpApiBuilder.group(InstanceHttpApi, "provider"
       params: { providerID: ProviderID }
       payload: ProviderAuth.CallbackInput
     }) {
-      yield* mapProviderAuthError(
-        svc.callback({
-          providerID: ctx.params.providerID,
-          method: ctx.payload.method,
-          code: ctx.payload.code,
-        }),
-      )
-      return true
+      return yield* unavailable(ctx.params.providerID)
     })
 
     return handlers

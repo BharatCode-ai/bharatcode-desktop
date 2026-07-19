@@ -5,6 +5,7 @@ import { Authorization } from "../middleware/authorization"
 import { InstanceContextMiddleware } from "../middleware/instance-context"
 import { WorkspaceRoutingMiddleware, WorkspaceRoutingQuery } from "../middleware/workspace-routing"
 import { described } from "./metadata"
+import { ProductPolicy } from "@/product/policy"
 
 const root = "/config"
 
@@ -26,7 +27,7 @@ export const ConfigApi = HttpApi.make("config")
           query: WorkspaceRoutingQuery,
           payload: Config.Info,
           success: described(Config.Info, "Successfully updated config"),
-          error: HttpApiError.BadRequest,
+          error: [HttpApiError.BadRequest, ProductPolicy.ProviderPolicyError],
         }).annotateMerge(
           OpenApi.annotations({
             identifier: "config.update",

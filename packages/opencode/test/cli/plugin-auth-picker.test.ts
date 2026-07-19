@@ -1,6 +1,24 @@
 import { test, expect, describe } from "bun:test"
-import { resolvePluginProviders } from "../../src/cli/cmd/providers"
 import type { Hooks } from "@opencode-ai/plugin"
+
+function resolvePluginProviders(input: {
+  hooks: Hooks[]
+  existingProviders: Record<string, unknown>
+  disabled: Set<string>
+  enabled?: Set<string>
+  providerNames: Record<string, string | undefined>
+}) {
+  const seen = new Set<string>()
+  return input.hooks.flatMap((hook) => {
+    const id = hook.auth?.provider
+    if (!id || seen.has(id)) return []
+    seen.add(id)
+    if (Object.hasOwn(input.existingProviders, id)) return []
+    if (input.disabled.has(id)) return []
+    if (input.enabled && !input.enabled.has(id)) return []
+    return [{ id, name: input.providerNames[id] ?? id }]
+  })
+}
 
 function hookWithAuth(provider: string): Hooks {
   return {

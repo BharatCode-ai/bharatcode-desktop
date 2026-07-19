@@ -14,6 +14,7 @@ import { Account } from "@/account/account"
 import { Agent } from "@/agent/agent"
 import { Auth } from "@/auth"
 import { BharatCodeAccount } from "@/bharatcode/account"
+import { BharatCodeCatalog } from "@/bharatcode/catalog"
 import { Bus } from "@/bus"
 import { Config } from "@/config/config"
 import { Command } from "@/command"
@@ -89,6 +90,7 @@ import { corsVaryFix } from "./middleware/cors-vary"
 import { errorLayer } from "./middleware/error"
 import { fenceLayer } from "./middleware/fence"
 import { schemaErrorLayer } from "./middleware/schema-error"
+import { ProductPolicy } from "@/product/policy"
 
 export const context = Context.makeUnsafe<unknown>(new Map())
 
@@ -196,6 +198,7 @@ export function createRoutes(
       Agent.defaultLayer,
       Auth.defaultLayer,
       BharatCodeAccount.defaultLayer,
+      BharatCodeCatalog.defaultLayer,
       Command.defaultLayer,
       Config.defaultLayer,
       File.defaultLayer,
@@ -210,6 +213,7 @@ export function createRoutes(
       Project.defaultLayer,
       ProviderAuth.defaultLayer,
       Provider.defaultLayer,
+      ProductPolicy.defaultLayer,
       Pty.defaultLayer,
       PtyTicket.defaultLayer,
       Question.defaultLayer,

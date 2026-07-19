@@ -24,6 +24,9 @@ import { MessageV2 } from "../../src/session/message-v2"
 import { MessageID, SessionID } from "../../src/session/schema"
 import { TestInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
+import { ProductPolicy } from "@/product/policy"
+import { BharatCodeAccount } from "@/bharatcode/account"
+import { BharatCodeCatalog } from "@/bharatcode/catalog"
 
 const FIXTURES_DIR = path.join(import.meta.dir, "../fixtures/recordings")
 
@@ -276,6 +279,9 @@ function recordedNativeLLMLayer(scenario: RecordedScenario) {
     Layer.provide(Plugin.defaultLayer),
     Layer.provide(ModelsDev.defaultLayer),
     Layer.provide(RuntimeFlags.defaultLayer),
+    Layer.provide(ProductPolicy.genericInternalLayer),
+    Layer.provide(BharatCodeAccount.defaultLayer),
+    Layer.provide(BharatCodeCatalog.defaultLayer),
   )
   // Only the HTTP client is recorded; RequestExecutor and the opencode LLM stack remain real.
   const recordedClient = LLMClient.layer.pipe(

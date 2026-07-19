@@ -18,6 +18,9 @@ import { RuntimeFlags } from "@/effect/runtime-flags"
 import { Filesystem } from "@/util/filesystem"
 import { InstanceLayer } from "@/project/instance-layer"
 import { testEffect } from "../lib/effect"
+import { ProductPolicy } from "@/product/policy"
+import { BharatCodeAccount } from "@/bharatcode/account"
+import { BharatCodeCatalog } from "@/bharatcode/catalog"
 
 const originalEnv = new Map<string, string | undefined>()
 
@@ -63,6 +66,9 @@ const providerLayer = (flags: Partial<RuntimeFlags.Info> = {}) =>
     Layer.provide(Plugin.defaultLayer),
     Layer.provide(ModelsDev.defaultLayer),
     Layer.provide(RuntimeFlags.layer(flags)),
+    Layer.provide(ProductPolicy.genericInternalLayer),
+    Layer.provide(BharatCodeAccount.defaultLayer),
+    Layer.provide(BharatCodeCatalog.defaultLayer),
   )
 
 const list = Provider.use.list()
@@ -75,7 +81,7 @@ const paid = (providers: Record<string, { models: Record<string, { cost: { input
 
 const languageBaseURL = (language: unknown) => (language as { config: { baseURL: string } }).config.baseURL
 
-const it = testEffect(Layer.mergeAll(Provider.defaultLayer, Env.defaultLayer, Plugin.defaultLayer))
+const it = testEffect(Layer.mergeAll(Provider.genericInternalLayer, Env.defaultLayer, Plugin.defaultLayer))
 const experimentalModels = testEffect(providerLayer({ enableExperimentalModels: true }))
 
 const alphaProviderConfig = {

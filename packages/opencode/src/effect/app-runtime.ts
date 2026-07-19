@@ -6,6 +6,7 @@ import { AppFileSystem } from "@opencode-ai/core/filesystem"
 import { Bus } from "@/bus"
 import { Auth } from "@/auth"
 import { BharatCodeAccount } from "@/bharatcode/account"
+import { BharatCodeCatalog } from "@/bharatcode/catalog"
 import { Account } from "@/account/account"
 import { Config } from "@/config/config"
 import { Git } from "@/git"
@@ -59,6 +60,7 @@ import { DataMigration } from "@/data-migration"
 import { BackgroundJob } from "@/background/job"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { RuntimeFlags } from "@/effect/runtime-flags"
+import { ProductPolicy } from "@/product/policy"
 
 export const AppLayer = Layer.mergeAll(
   Npm.defaultLayer,
@@ -66,6 +68,7 @@ export const AppLayer = Layer.mergeAll(
   Bus.defaultLayer,
   Auth.defaultLayer,
   BharatCodeAccount.defaultLayer,
+  BharatCodeCatalog.defaultLayer,
   Account.defaultLayer,
   Config.defaultLayer,
   Git.defaultLayer,
@@ -88,6 +91,7 @@ export const AppLayer = Layer.mergeAll(
   SessionStatus.defaultLayer,
   BackgroundJob.defaultLayer,
   RuntimeFlags.defaultLayer,
+  ProductPolicy.defaultLayer,
   SessionRunState.defaultLayer,
   SessionProcessor.defaultLayer,
   SessionCompaction.defaultLayer,
