@@ -32,6 +32,24 @@ export async function withMigrationMaintenanceLock<T>(stateRoot: string, operati
   }
 }
 
+export function withMigrationMaintenanceLockSync<T>(root: string, operation: () => T): T {
+  const database = new Database(path.join(root, "lean-migration-maintenance.sqlite"), { create: true })
+  database.run("PRAGMA busy_timeout = 5000")
+  try {
+    database.run("BEGIN IMMEDIATE")
+    const result = operation()
+    database.run("COMMIT")
+    return result
+  } catch (error) {
+    try {
+      database.run("ROLLBACK")
+    } catch {}
+    throw error
+  } finally {
+    database.close()
+  }
+}
+
 async function acquire(database: Database) {
   for (let attempt = 0; attempt < 100; attempt++) {
     try {

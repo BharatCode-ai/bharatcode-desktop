@@ -9,11 +9,7 @@ import {
   verifyCapturedSnapshot,
   type MigrationDestination,
 } from "./capture"
-import {
-  advanceMigrationJournal,
-  readMigrationJournal,
-  type MigrationJournal,
-} from "./journal"
+import { advanceMigrationJournal, readMigrationJournal, type MigrationJournal } from "./journal"
 import type { MigrationChoice, MigrationSource } from "./source"
 import { withMigrationMaintenanceLock } from "../storage/migration-maintenance-lock"
 
@@ -41,7 +37,7 @@ export async function prepareMigration(
   input: PrepareMigrationInput,
 ): Promise<RecoveryAction | { type: "prepared"; operationID: string }> {
   validateDestinationLayout(input.destination)
-  return withMigrationMaintenanceLock(input.destination.state, async () => {
+  return withMigrationMaintenanceLock(path.dirname(input.destination.database), async () => {
     const existing = await readMigrationJournal(input.destination.state)
     if (existing) return { type: "retry", operationID: existing.operationID }
     if (input.sources.length === 0) return { type: "start-fresh", reason: "no-source" }
@@ -86,9 +82,11 @@ export async function prepareMigration(
   })
 }
 
-export async function activateMigration(input: ActivateMigrationInput): Promise<{ state: "complete"; sourceID: string }> {
+export async function activateMigration(
+  input: ActivateMigrationInput,
+): Promise<{ state: "complete"; sourceID: string }> {
   validateDestinationLayout(input.destination)
-  return withMigrationMaintenanceLock(input.destination.state, async () => {
+  return withMigrationMaintenanceLock(path.dirname(input.destination.database), async () => {
     let journal = await readMigrationJournal(input.destination.state)
     if (!journal || journal.operationID !== input.operationID) {
       throw new MigrationCutoverError("The requested migration operation was not available.")
@@ -102,7 +100,11 @@ export async function activateMigration(input: ActivateMigrationInput): Promise<
     }
     if (journal.phase === "prepared") {
       await activateSnapshot(journal, input.destination)
-      const next = { ...journal, phase: "activated" as const, artifacts: [...journal.artifacts, `migration-staging/${journal.operationID}`] }
+      const next = {
+        ...journal,
+        phase: "activated" as const,
+        artifacts: [...journal.artifacts, `migration-staging/${journal.operationID}`],
+      }
       journal = await advanceMigrationJournal({ stateRoot: input.destination.state, expected: journal, next })
     }
     if (journal.phase === "activated") {
@@ -130,9 +132,10 @@ export async function activateMigration(input: ActivateMigrationInput): Promise<
 export async function startFresh(input: StartFreshInput): Promise<{ state: "fresh"; quarantine?: string }> {
   if (input.confirmed !== true) throw new MigrationCutoverError("Start Fresh requires explicit confirmation.")
   validateDestinationLayout(input.destination)
-  return withMigrationMaintenanceLock(input.destination.state, async () => {
+  return withMigrationMaintenanceLock(path.dirname(input.destination.database), async () => {
     const existing = await readMigrationJournal(input.destination.state).catch(() => undefined)
-    if (existing?.phase === "complete") throw new MigrationCutoverError("A healthy completed destination cannot Start Fresh.")
+    if (existing?.phase === "complete")
+      throw new MigrationCutoverError("A healthy completed destination cannot Start Fresh.")
     await validateKnownDestinations(input.destination)
     const operationID = randomUUID()
     const quarantine = path.join(input.destination.state, "migration-quarantine", operationID)
@@ -194,7 +197,8 @@ async function activateSnapshot(journal: MigrationJournal, destination: Migratio
   const records = path.join(destination.state, "migration-snapshots", journal.snapshotDigest, "records")
   await rm(staging, { recursive: true, force: true })
   await mkdir(staging, { recursive: true, mode: 0o700 })
-  for (const role of await readdir(records)) await cp(path.join(records, role), path.join(staging, role), { recursive: true })
+  for (const role of await readdir(records))
+    await cp(path.join(records, role), path.join(staging, role), { recursive: true })
   await moveRole(path.join(staging, "config"), destination.config)
   await moveRole(path.join(staging, "data"), destination.data)
   await moveRole(path.join(staging, "desktop"), path.join(destination.data, "desktop"))
@@ -204,7 +208,13 @@ async function activateSnapshot(journal: MigrationJournal, destination: Migratio
 async function moveRole(source: string, destination: string) {
   if (!(await exists(source))) return
   if (await exists(destination)) {
-    if ((await readdir(destination)).length > 0) throw new MigrationCutoverError("The migration destination changed.")
+    const existing = await readdir(destination)
+    if (existing.length > 0 && existing.every((name) => name.startsWith("lean-migration-maintenance.sqlite"))) {
+      for (const name of await readdir(source)) await rename(path.join(source, name), path.join(destination, name))
+      await rm(source, { recursive: true })
+      return
+    }
+    if (existing.length > 0) throw new MigrationCutoverError("The migration destination changed.")
     await rm(destination, { recursive: true })
   }
   await mkdir(path.dirname(destination), { recursive: true, mode: 0o700 })
@@ -212,7 +222,13 @@ async function moveRole(source: string, destination: string) {
 }
 
 async function validateKnownDestinations(destination: MigrationDestination) {
-  for (const item of [destination.data, destination.config, destination.state, destination.storage, destination.database]) {
+  for (const item of [
+    destination.data,
+    destination.config,
+    destination.state,
+    destination.storage,
+    destination.database,
+  ]) {
     const info = await lstat(item).catch((error) => (nodeError(error, "ENOENT") ? undefined : Promise.reject(error)))
     if (info?.isSymbolicLink()) throw new MigrationCutoverError("A destination artifact was an unsupported link.")
   }
@@ -234,7 +250,11 @@ async function quarantinePartials(destination: MigrationDestination, quarantine:
   if (present.length === 0) return false
   await mkdir(quarantine, { recursive: true, mode: 0o700 })
   for (const [source, name] of present) await rename(source, path.join(quarantine, name))
-  await writeFile(path.join(quarantine, "manifest.json"), JSON.stringify({ version: 1, artifacts: present.map(([, name]) => name) }), { mode: 0o600 })
+  await writeFile(
+    path.join(quarantine, "manifest.json"),
+    JSON.stringify({ version: 1, artifacts: present.map(([, name]) => name) }),
+    { mode: 0o600 },
+  )
   return true
 }
 
@@ -284,7 +304,8 @@ async function configContainsForbiddenTarget(root: string): Promise<boolean> {
       if (await configContainsForbiddenTarget(file)) return true
       continue
     }
-    if (/\.(?:json|jsonc)$/i.test(name) && /opencode\.ai|opncd\.ai|models\.dev/i.test(await readFile(file, "utf8"))) return true
+    if (/\.(?:json|jsonc)$/i.test(name) && /opencode\.ai|opncd\.ai|models\.dev/i.test(await readFile(file, "utf8")))
+      return true
   }
   return false
 }
