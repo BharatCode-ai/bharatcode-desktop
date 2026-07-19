@@ -6,12 +6,15 @@ import path from "path"
 import { fileURLToPath } from "url"
 import { createSolidTransformPlugin } from "@opentui/solid/bun-plugin"
 import { DISTRIBUTION, PLATFORM_TARGETS, createPlatformPackageManifest, platformPackageName } from "./distribution.mjs"
+import { resolveWslBuildSourceSha } from "../src/server/wsl-desktop-transport"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const dir = path.resolve(__dirname, "..")
 
 process.chdir(dir)
+
+const wslSourceSha = resolveWslBuildSourceSha(process.env, process.argv.includes("--wsl-candidate"))
 
 const generated = await import("./generate.ts")
 
@@ -152,6 +155,7 @@ for (const item of targets) {
       OPENCODE_WORKER_PATH: workerPath,
       OPENCODE_CHANNEL: `'${Script.channel}'`,
       OPENCODE_LIBC: item.os === "linux" ? `'${item.abi ?? "glibc"}'` : "",
+      BHARATCODE_WSL_COMPILED_SOURCE_SHA: JSON.stringify(wslSourceSha),
     },
   })
 

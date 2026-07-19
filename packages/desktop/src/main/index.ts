@@ -35,6 +35,7 @@ import {
   preferAppEnv,
   setDefaultServerUrl,
   spawnLocalServer,
+  spawnWslServer,
   type SidecarListener,
 } from "./server"
 import {
@@ -422,7 +423,6 @@ const main = Effect.gen(function* () {
   const url = `http://${hostname}:${port}`
   const password = randomUUID()
   const sidecarID = randomUUID()
-  sidecarAuthorization = createSidecarAuthorizationPolicy({ origin: url, username: "bharatcode", password })
   accountClient = createBharatCodeAccountClient({
     getConnection: async () => ({ url, username: "bharatcode", password }),
   })
@@ -440,16 +440,39 @@ const main = Effect.gen(function* () {
     useEnvProxy()
 
     logger.log("spawning sidecar", { url })
-    const { listener, health } = yield* Effect.promise(() =>
-      spawnLocalServer(hostname, port, password, {
+    const wslSnapshot = yield* Effect.promise(() => wslService.snapshot())
+    const spawned = yield* Effect.promise(async () => {
+      if (wslSnapshot.enabled) {
+        if (wslSnapshot.status.phase !== "ready" || !wslSnapshot.selectedDisplayName) {
+          throw new Error("Enabled WSL selection is not ready")
+        }
+        if (process.arch !== "x64" && process.arch !== "arm64") {
+          throw new Error("WSL runtime supports only x64 or arm64")
+        }
+        const result = await spawnWslServer(hostname, port, password, {
+          selectedDisplayName: wslSnapshot.selectedDisplayName,
+          resourcesPath: process.resourcesPath,
+          version: app.getVersion(),
+          arch: process.arch,
+          channel: CHANNEL,
+          hostEnv: process.env,
+          onSqliteProgress: (progress) => initEmitter.emit("sqlite", progress),
+          onStderr: (message) => writeLog("server", "stderr", { message }, "warn"),
+        })
+        sidecarAuthorization = result.authorization
+        return result
+      }
+      sidecarAuthorization = createSidecarAuthorizationPolicy({ origin: url, username: "bharatcode", password })
+      return spawnLocalServer(hostname, port, password, {
         needsMigration,
         userDataPath: app.getPath("userData"),
         onSqliteProgress: (progress) => initEmitter.emit("sqlite", progress),
         onStdout: (message) => writeLog("server", "stdout", { message }),
         onStderr: (message) => writeLog("server", "stderr", { message }, "warn"),
         onExit: (code) => writeLog("utility", "sidecar exited", { code }, "warn"),
-      }),
-    )
+      })
+    })
+    const { listener, health } = spawned
     server = listener
     yield* Deferred.succeed(serverReady, {
       url,
