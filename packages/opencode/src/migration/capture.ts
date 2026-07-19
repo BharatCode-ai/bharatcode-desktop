@@ -77,6 +77,20 @@ export async function captureMigrationSource(
   return { sourceID: source.id, contentFingerprint, snapshotDigest, snapshotDirectory, records: entries.length }
 }
 
+export async function fingerprintMigrationSource(source: MigrationSource) {
+  return fingerprint(await scanSource(source))
+}
+
+export async function verifyCapturedSnapshot(input: {
+  snapshotDirectory: string
+  snapshotDigest: string
+  contentFingerprint: string
+}) {
+  if (!(await snapshotMatches(input.snapshotDirectory, input.snapshotDigest))) return false
+  const manifest = JSON.parse(await readFile(path.join(input.snapshotDirectory, "manifest.json"), "utf8")) as Manifest
+  return manifest.contentFingerprint === input.contentFingerprint
+}
+
 export async function verifyCapturedSource(input: { captured: CapturedSource; source: MigrationSource }): Promise<boolean> {
   try {
     if (input.captured.sourceID !== input.source.id) return false

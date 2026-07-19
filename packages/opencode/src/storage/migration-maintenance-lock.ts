@@ -1,0 +1,52 @@
+import { Database } from "bun:sqlite"
+import { mkdir } from "node:fs/promises"
+import path from "node:path"
+
+export class MigrationMaintenanceLockError extends Error {
+  constructor() {
+    super("BharatCode migration maintenance is already active.")
+    this.name = "BharatCodeMigrationMaintenanceLockError"
+  }
+}
+
+export async function withMigrationMaintenanceLock<T>(stateRoot: string, operation: () => Promise<T>): Promise<T> {
+  await mkdir(stateRoot, { recursive: true, mode: 0o700 })
+  const database = new Database(path.join(stateRoot, "lean-migration-maintenance.sqlite"), { create: true })
+  database.run("PRAGMA busy_timeout = 50")
+  const acquired = await acquire(database)
+  if (!acquired) {
+    database.close()
+    throw new MigrationMaintenanceLockError()
+  }
+  try {
+    const result = await operation()
+    database.run("COMMIT")
+    return result
+  } catch (error) {
+    try {
+      database.run("ROLLBACK")
+    } catch {}
+    throw error
+  } finally {
+    database.close()
+  }
+}
+
+async function acquire(database: Database) {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    try {
+      database.run("BEGIN IMMEDIATE")
+      return true
+    } catch (error) {
+      if (!sqliteBusy(error)) throw error
+      await Bun.sleep(Math.min(10 + attempt * 2, 100))
+    }
+  }
+  return false
+}
+
+function sqliteBusy(error: unknown) {
+  return error instanceof Error && /database is locked|SQLITE_BUSY/i.test(error.message)
+}
+
+export * as MigrationMaintenanceLock from "./migration-maintenance-lock"
