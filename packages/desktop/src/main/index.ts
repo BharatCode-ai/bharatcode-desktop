@@ -61,7 +61,7 @@ import {
   retainWslAuthorizationWhileRunning,
   rewriteWslProjectDeepLinks,
 } from "./wsl-lifecycle"
-import { resolveWslAcceptanceInvocation, runPackagedWslAcceptance } from "./wsl-acceptance"
+import { completeWslAcceptanceOutput, resolveWslAcceptanceInvocation, runPackagedWslAcceptance } from "./wsl-acceptance"
 
 const TEST_ONBOARDING = process.env.BHARATCODE_TEST_ONBOARDING === "1" || process.env.OPENCODE_TEST_ONBOARDING === "1"
 const jsCallStackFeature = "DocumentPolicyIncludeJSCallStacksInCrashReports"
@@ -622,8 +622,10 @@ try {
 if (dispatch.kind === "acceptance") {
   void runPackagedWslAcceptance(dispatch.input).then(
     (record) => {
-      process.stdout.write(`${record}\n`)
-      app.exit(0)
+      completeWslAcceptanceOutput(record, process.stdout, (code) => {
+        if (code !== 0) process.stderr.write("Packaged WSL acceptance output failed\n")
+        app.exit(code)
+      })
     },
     () => {
       process.stderr.write("Packaged WSL acceptance failed\n")

@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-import { resolveWslAcceptanceInvocation, runPackagedWslAcceptance } from "./wsl-acceptance"
+import { completeWslAcceptanceOutput, resolveWslAcceptanceInvocation, runPackagedWslAcceptance } from "./wsl-acceptance"
 
 const validArguments = [
   "--bharatcode-wsl-acceptance-case",
@@ -204,6 +204,41 @@ describe("packaged WSL acceptance entrypoint", () => {
     const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8")
     expect(source).toContain('dispatch = { kind: "rejected" }')
     expect(source).toContain('else if (dispatch.kind === "ordinary")')
+  })
+
+  test("waits for stdout completion before success and fails closed on write errors", () => {
+    const exits: number[] = []
+    let flush: ((error?: Error | null) => void) | undefined
+    completeWslAcceptanceOutput(
+      "closed-record",
+      {
+        write(chunk, callback) {
+          expect(chunk).toBe("closed-record\n")
+          flush = callback
+          return false
+        },
+      },
+      (code) => exits.push(code),
+    )
+    expect(exits).toEqual([])
+    flush?.()
+    expect(exits).toEqual([0])
+
+    const failures: number[] = []
+    completeWslAcceptanceOutput(
+      "closed-record",
+      { write: (_chunk, callback) => callback(new Error("EPIPE")) },
+      (code) => failures.push(code),
+    )
+    expect(failures).toEqual([1])
+  })
+
+  test("shipped acceptance completion cannot fall through to ordinary main", () => {
+    const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8")
+    const dispatch = source.slice(source.lastIndexOf('if (dispatch.kind === "acceptance")'))
+    expect(dispatch).toContain("completeWslAcceptanceOutput(record, process.stdout")
+    expect(dispatch).toContain('else if (dispatch.kind === "ordinary")')
+    expect(dispatch).not.toContain("app.exit(0)")
   })
 
   test("fails closed off Windows without producing acceptance output", async () => {

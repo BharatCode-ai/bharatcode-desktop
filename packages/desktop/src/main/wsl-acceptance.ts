@@ -79,6 +79,24 @@ export function resolveWslAcceptanceInvocation(
   }
 }
 
+export function completeWslAcceptanceOutput(
+  record: string,
+  output: { write: (chunk: string, callback: (error?: Error | null) => void) => unknown },
+  exit: (code: number) => void,
+) {
+  let completed = false
+  const finish = (code: number) => {
+    if (completed) return
+    completed = true
+    exit(code)
+  }
+  try {
+    output.write(`${record}\n`, (error) => finish(error ? 1 : 0))
+  } catch {
+    finish(1)
+  }
+}
+
 type SessionSnapshot = {
   enabled?: boolean
   selectedDisplayName?: string
