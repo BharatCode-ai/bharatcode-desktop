@@ -56,6 +56,7 @@ function parse(value: string) {
       {
         needs?: string[]
         permissions?: Record<string, string>
+        "runs-on"?: string | string[]
         steps?: { name?: string; run?: string; uses?: string }[]
       }
     >
@@ -250,7 +251,12 @@ describe("lean next-beta candidate workflow", () => {
     const value = await source()
     expect(upgradeValidationViolations(value)).toEqual([])
     expect(
-      upgradeValidationViolations(value.replace("parseLeanUpgradeReceiptBytes(", "removedUpgradeReceiptParser(")),
+      upgradeValidationViolations(
+        value.replace(
+          "parseLeanUpgradeReceiptBytes(new Uint8Array(await Bun.file(upgradePath)",
+          "removedUpgradeReceiptParser(new Uint8Array(await Bun.file(upgradePath)",
+        ),
+      ),
     ).not.toEqual([])
     expect(
       upgradeValidationViolations(
@@ -271,6 +277,42 @@ describe("lean next-beta candidate workflow", () => {
     ).not.toEqual([])
   })
 
+  test("runs the real Windows upgrade harness and validates its receipt before attestation", async () => {
+    const value = await source()
+    const job = parse(value).jobs["upgrade-rollback-windows-x64"]
+    expect(job["runs-on"]).toBe("windows-2025")
+    const run = runStep(value, "upgrade-rollback-windows-x64", "Run real packaged upgrade and rollback acceptance")
+    for (const required of [
+      "packages/desktop/scripts/lean-upgrade-acceptance.mjs",
+      `--fixture ${currentBetaFixture}`,
+      "--candidate candidate-input/bharatcode-desktop-next-beta-win-x64.exe",
+      "--source-sha '${{ inputs.source_sha }}'",
+      '--acceptance-dir "$env:RUNNER_TEMP\\bharatcode-upgrade-acceptance"',
+    ]) {
+      expect(run).toContain(required)
+    }
+    expect(run).not.toMatch(/extract|mock|ShareNext|share.*https?:/iu)
+    const steps = job.steps ?? []
+    const harness = steps.findIndex((step) => step.name === "Run real packaged upgrade and rollback acceptance")
+    const validation = steps.findIndex((step) => step.name === "Validate packaged upgrade receipt before attestation")
+    const attestation = steps.findIndex((step) => step.name === "Attest upgrade and rollback receipt")
+    expect(harness).toBeGreaterThan(-1)
+    expect(validation).toBeGreaterThan(harness)
+    expect(attestation).toBeGreaterThan(validation)
+    const validator = steps[validation]?.run ?? ""
+    for (const required of [
+      "parseCurrentBetaFixtureBytes",
+      "parseLeanUpgradeReceiptBytes",
+      currentBetaFixture,
+      "candidate-input/bharatcode-desktop-next-beta-win-x64.exe",
+      "process.env.GITHUB_RUN_ID",
+      "process.env.GITHUB_RUN_ATTEMPT",
+      "process.env.SOURCE_SHA",
+    ]) {
+      expect(validator).toContain(required)
+    }
+  })
+
   test("hostile authority, identity, mutability, and cohort regressions are observable", async () => {
     const value = await source()
     expect(authorityViolations(value.replace("contents: read", "contents: write"))).not.toEqual([])
@@ -279,6 +321,6 @@ describe("lean next-beta candidate workflow", () => {
     expect(authorityViolations(`${value}\n# BHARATCODE_ALLOW_UNSIGNED_WINDOWS=1\n`)).not.toEqual([])
     expect(value.replace("ref: ${{ inputs.source_sha }}", "ref: dev")).not.toContain("ref: ${{ inputs.source_sha }}")
     expect(value.replace(checkout, "actions/checkout@v7")).toContain("actions/checkout@v7")
-    expect(value.replace("desktop-windows-x64", "desktop-windows-arm64")).not.toContain("desktop-windows-x64")
+    expect(value.replaceAll("desktop-windows-x64", "desktop-windows-arm64")).not.toContain("desktop-windows-x64")
   })
 })

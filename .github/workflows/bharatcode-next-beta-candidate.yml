@@ -623,7 +623,7 @@ jobs:
 
   upgrade-rollback-windows-x64:
     needs: [admit-source, package-windows]
-    runs-on: [self-hosted, windows, x64, bharatcode-upgrade-acceptance]
+    runs-on: windows-2025
     permissions:
       contents: read
       id-token: write
@@ -656,6 +656,24 @@ jobs:
             --source-sha '${{ inputs.source_sha }}' `
             --acceptance-dir "$env:RUNNER_TEMP\bharatcode-upgrade-acceptance"
           Copy-Item "$env:RUNNER_TEMP\bharatcode-upgrade-acceptance\upgrade-rollback-windows-x64.json" bharatcode-upgrade-rollback-windows-x64.json
+
+      - name: Validate packaged upgrade receipt before attestation
+        shell: pwsh
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          bun --eval '
+            import { createHash } from "node:crypto"
+            import { stat } from "node:fs/promises"
+            import { basename } from "node:path"
+            import { parseCurrentBetaFixtureBytes, parseLeanUpgradeReceiptBytes } from "./packages/desktop/scripts/lean-upgrade-receipt.mjs"
+            const fixturePath = "packages/desktop/test/fixtures/current-beta-windows-x64.json"
+            const candidatePath = "candidate-input/bharatcode-desktop-next-beta-win-x64.exe"
+            const currentBeta = parseCurrentBetaFixtureBytes(new Uint8Array(await Bun.file(fixturePath).arrayBuffer()))
+            const candidateBytes = new Uint8Array(await Bun.file(candidatePath).arrayBuffer())
+            const candidate = { key: "desktop-windows-x64", filename: basename(candidatePath), bytes: (await stat(candidatePath)).size, sha256: createHash("sha256").update(candidateBytes).digest("hex") }
+            parseLeanUpgradeReceiptBytes(new Uint8Array(await Bun.file("bharatcode-upgrade-rollback-windows-x64.json").arrayBuffer()), { source_sha: process.env.SOURCE_SHA, run_id: process.env.GITHUB_RUN_ID, run_attempt: process.env.GITHUB_RUN_ATTEMPT, current_beta: currentBeta, candidate })
+          '
 
       - name: Attest upgrade and rollback receipt
         id: attest_upgrade
