@@ -11,6 +11,12 @@ import {
 const fixturePath = resolve(import.meta.dir, "../test/fixtures/current-beta-windows-x64.json")
 const sourceSha = "3b09dcff0d7e8ad7487c6d40199b704ed0712005"
 const bindings = { source_sha: sourceSha, run_id: "123456789", run_attempt: "1" }
+const candidate = {
+  key: "desktop-windows-x64",
+  filename: "bharatcode-desktop-next-beta-win-x64.exe",
+  bytes: 120_000_000,
+  sha256: "a".repeat(64),
+}
 
 async function fixture() {
   return parseCurrentBetaFixtureBytes(new Uint8Array(await Bun.file(fixturePath).arrayBuffer()))
@@ -50,12 +56,7 @@ async function receipt() {
       source_sha: currentBeta.source_sha,
       asset: currentBeta.assets[0],
     },
-    candidate: {
-      key: "desktop-windows-x64",
-      filename: "bharatcode-desktop-next-beta-win-x64.exe",
-      bytes: 120_000_000,
-      sha256: "a".repeat(64),
-    },
+    candidate: { ...candidate },
     checks: checks(),
     completed_at: "2026-07-20T10:00:00.000Z",
   }
@@ -86,11 +87,12 @@ describe("lean packaged upgrade/rollback receipt contract", () => {
   test("accepts one complete secret-free Windows x64 PASS receipt", async () => {
     const value = await receipt()
     const currentBeta = await fixture()
-    expect(validateLeanUpgradeReceipt(value, { ...bindings, current_beta: currentBeta })).toEqual(value)
+    expect(validateLeanUpgradeReceipt(value, { ...bindings, current_beta: currentBeta, candidate })).toEqual(value)
     expect(
       parseLeanUpgradeReceiptBytes(Buffer.from(canonicalLeanJson(value)), {
         ...bindings,
         current_beta: currentBeta,
+        candidate,
       }),
     ).toEqual(value)
     expect(JSON.stringify(value)).not.toMatch(/token|password|secret|cookie|authorization|user_data_path/i)
@@ -101,11 +103,11 @@ describe("lean packaged upgrade/rollback receipt contract", () => {
     const missing = (await receipt()) as Record<string, unknown>
     const extra = await receipt()
     delete missing.host
-    expect(() => validateLeanUpgradeReceipt(missing, { ...bindings, current_beta: currentBeta })).toThrow()
+    expect(() => validateLeanUpgradeReceipt(missing, { ...bindings, current_beta: currentBeta, candidate })).toThrow()
     expect(() =>
       validateLeanUpgradeReceipt(
         { ...extra, browser_download_url: "https://github.com/latest" },
-        { ...bindings, current_beta: currentBeta },
+        { ...bindings, current_beta: currentBeta, candidate },
       ),
     ).toThrow()
     expect(() =>
@@ -113,7 +115,7 @@ describe("lean packaged upgrade/rollback receipt contract", () => {
         Buffer.from(
           '{"schema":"bharatcode-lean-upgrade-rollback-receipt-v1","schema":"bharatcode-lean-upgrade-rollback-receipt-v1"}',
         ),
-        { ...bindings, current_beta: currentBeta },
+        { ...bindings, current_beta: currentBeta, candidate },
       ),
     ).toThrow(/canonical|duplicate|keys/i)
   })
@@ -128,22 +130,44 @@ describe("lean packaged upgrade/rollback receipt contract", () => {
       { ...(await receipt()), host: { os: "linux", arch: "x64", runner_image: "ubuntu-24.04" } },
       { ...(await receipt()), candidate: { ...(await receipt()).candidate, key: "desktop-linux-x64-deb" } },
     ]) {
-      expect(() => validateLeanUpgradeReceipt(value, { ...bindings, current_beta: currentBeta })).toThrow()
+      expect(() => validateLeanUpgradeReceipt(value, { ...bindings, current_beta: currentBeta, candidate })).toThrow()
     }
+  })
+
+  test("rejects a well-formed alternate candidate artifact identity", async () => {
+    const currentBeta = await fixture()
+    const value = await receipt()
+    value.candidate = {
+      key: "desktop-windows-x64",
+      filename: "bharatcode-desktop-substituted-win-x64.exe",
+      bytes: 1,
+      sha256: "b".repeat(64),
+    }
+    expect(() => validateLeanUpgradeReceipt(value, { ...bindings, current_beta: currentBeta, candidate })).toThrow(
+      /candidate.*(?:match|identity)/i,
+    )
+    const original = await receipt()
+    expect(() =>
+      validateLeanUpgradeReceipt(original, {
+        ...bindings,
+        current_beta: currentBeta,
+        candidate: { ...candidate, url: "https://example.invalid/latest" },
+      }),
+    ).toThrow(/candidate.*keys/i)
   })
 
   test("rejects changed current-beta asset identity and incomplete host checks", async () => {
     const currentBeta = await fixture()
     const changedReceipt = await receipt()
     changedReceipt.current_beta.asset = { ...changedReceipt.current_beta.asset, bytes: 119910145 }
-    expect(() => validateLeanUpgradeReceipt(changedReceipt, { ...bindings, current_beta: currentBeta })).toThrow(
-      /beta|asset|bytes|identity/i,
-    )
+    expect(() =>
+      validateLeanUpgradeReceipt(changedReceipt, { ...bindings, current_beta: currentBeta, candidate }),
+    ).toThrow(/beta|asset|bytes|identity/i)
 
     const incomplete = await receipt()
     const incompleteChecks = incomplete.checks as Record<string, boolean>
     delete incompleteChecks.rollback_installed
-    expect(() => validateLeanUpgradeReceipt(incomplete, { ...bindings, current_beta: currentBeta })).toThrow(
+    expect(() => validateLeanUpgradeReceipt(incomplete, { ...bindings, current_beta: currentBeta, candidate })).toThrow(
       /check|keys|complete/i,
     )
   })
@@ -153,7 +177,7 @@ describe("lean packaged upgrade/rollback receipt contract", () => {
     for (const checksOverride of [{ sharenext_absent: false }, { share_network_attempt_absent: false }]) {
       const value = await receipt()
       value.checks = { ...value.checks, ...checksOverride }
-      expect(() => validateLeanUpgradeReceipt(value, { ...bindings, current_beta: currentBeta })).toThrow(
+      expect(() => validateLeanUpgradeReceipt(value, { ...bindings, current_beta: currentBeta, candidate })).toThrow(
         /ShareNext|network|check/i,
       )
     }

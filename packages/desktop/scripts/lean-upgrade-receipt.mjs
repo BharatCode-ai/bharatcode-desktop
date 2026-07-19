@@ -58,8 +58,9 @@ export function parseLeanUpgradeReceiptBytes(bytes, bindings) {
 }
 
 export function validateLeanUpgradeReceipt(value, bindings) {
-  exactKeys(bindings, ["current_beta", "run_attempt", "run_id", "source_sha"], "lean upgrade bindings")
+  exactKeys(bindings, ["candidate", "current_beta", "run_attempt", "run_id", "source_sha"], "lean upgrade bindings")
   const currentBeta = validateCurrentBetaFixture(bindings.current_beta)
+  const candidate = validateCandidateArtifact(bindings.candidate, "expected lean upgrade candidate artifact")
   exactKeys(
     value,
     [
@@ -109,17 +110,11 @@ export function validateLeanUpgradeReceipt(value, bindings) {
       }),
     "lean upgrade current-beta release or asset identity changed",
   )
-  exactKeys(value.candidate, ["bytes", "filename", "key", "sha256"], "lean upgrade candidate artifact")
-  requireValue(value.candidate.key === "desktop-windows-x64", "lean upgrade candidate artifact key is invalid")
+  validateCandidateArtifact(value.candidate, "lean upgrade candidate artifact")
   requireValue(
-    typeof value.candidate.filename === "string" && SAFE_FILENAME.test(value.candidate.filename),
-    "lean upgrade candidate filename is invalid or mutable",
+    canonicalLeanJson(value.candidate) === canonicalLeanJson(candidate),
+    "lean upgrade candidate artifact identity does not match",
   )
-  requireValue(
-    Number.isSafeInteger(value.candidate.bytes) && value.candidate.bytes > 0,
-    "lean upgrade candidate size is invalid",
-  )
-  requirePattern(value.candidate.sha256, SHA256, "lean upgrade candidate SHA-256")
   exactKeys(value.checks, CHECK_KEYS, "lean upgrade checks")
   requireValue(
     Object.values(value.checks).every((item) => item === true),
@@ -127,6 +122,18 @@ export function validateLeanUpgradeReceipt(value, bindings) {
   )
   requireTimestamp(value.completed_at, "lean upgrade completion")
   requireValue(!containsForbiddenValue(value), "lean upgrade receipt contains a forbidden public or secret value")
+  return structuredClone(value)
+}
+
+function validateCandidateArtifact(value, label) {
+  exactKeys(value, ["bytes", "filename", "key", "sha256"], label)
+  requireValue(value.key === "desktop-windows-x64", `${label} key is invalid`)
+  requireValue(
+    typeof value.filename === "string" && SAFE_FILENAME.test(value.filename),
+    `${label} filename is invalid or mutable`,
+  )
+  requireValue(Number.isSafeInteger(value.bytes) && value.bytes > 0, `${label} size is invalid`)
+  requirePattern(value.sha256, SHA256, `${label} SHA-256`)
   return structuredClone(value)
 }
 
