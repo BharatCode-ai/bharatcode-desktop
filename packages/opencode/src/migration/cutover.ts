@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto"
-import { cp, lstat, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises"
+import { lstat, mkdir, open, readFile, readdir, rename, rm, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { Database } from "bun:sqlite"
 
@@ -137,6 +137,8 @@ export async function startFresh(input: StartFreshInput): Promise<{ state: "fres
     if (existing?.phase === "complete")
       throw new MigrationCutoverError("A healthy completed destination cannot Start Fresh.")
     await validateKnownDestinations(input.destination)
+    if (await healthyDatabase(input.destination.database))
+      throw new MigrationCutoverError("A healthy data-bearing destination cannot Start Fresh.")
     const operationID = randomUUID()
     const quarantine = path.join(input.destination.state, "migration-quarantine", operationID)
     const moved = await quarantinePartials(input.destination, quarantine)
@@ -146,6 +148,8 @@ export async function startFresh(input: StartFreshInput): Promise<{ state: "fres
       mkdir(input.destination.state, { recursive: true, mode: 0o700 }),
       mkdir(input.destination.storage, { recursive: true, mode: 0o700 }),
     ])
+    if (!(await freshDestinationIsEmpty(input.destination)))
+      throw new MigrationCutoverError("Start Fresh could not produce an empty canonical destination.")
     const blank = "0".repeat(64)
     const journal: MigrationJournal = {
       version: 1,
@@ -194,28 +198,59 @@ export async function validateFreshDestination(destination: MigrationDestination
 
 async function activateSnapshot(journal: MigrationJournal, destination: MigrationDestination) {
   const staging = path.join(destination.state, "migration-staging", journal.operationID)
-  const records = path.join(destination.state, "migration-snapshots", journal.snapshotDigest, "records")
+  const snapshot = path.join(destination.state, "migration-snapshots", journal.snapshotDigest)
+  const records = path.join(snapshot, "records")
   await rm(staging, { recursive: true, force: true })
   await mkdir(staging, { recursive: true, mode: 0o700 })
-  for (const role of await readdir(records))
-    await cp(path.join(records, role), path.join(staging, role), { recursive: true })
+  const manifest = JSON.parse(await readFile(path.join(snapshot, "manifest.json"), "utf8")) as {
+    entries: readonly { relative: string }[]
+  }
+  for (const entry of manifest.entries) {
+    const target = path.join(staging, entry.relative)
+    await mkdir(path.dirname(target), { recursive: true, mode: 0o700 })
+    await writeFile(target, await readFile(path.join(records, entry.relative)), { mode: 0o600, flag: "wx" })
+  }
   await moveRole(path.join(staging, "config"), destination.config)
   await moveRole(path.join(staging, "data"), destination.data)
+  await moveFile(path.join(staging, "database", "main.sqlite"), destination.database)
   await moveRole(path.join(staging, "desktop"), path.join(destination.data, "desktop"))
-  await mkdir(destination.storage, { recursive: true, mode: 0o700 })
+  await Promise.all([
+    mkdir(destination.config, { recursive: true, mode: 0o700 }),
+    mkdir(destination.storage, { recursive: true, mode: 0o700 }),
+  ])
 }
 
 async function moveRole(source: string, destination: string) {
   if (!(await exists(source))) return
   if (await exists(destination)) {
     const existing = await readdir(destination)
-    if (existing.length > 0 && existing.every((name) => name.startsWith("lean-migration-maintenance.sqlite"))) {
-      for (const name of await readdir(source)) await rename(path.join(source, name), path.join(destination, name))
+    if (await sameTree(source, destination)) {
+      await rm(source, { recursive: true })
+      return
+    }
+    if (existing.filter((name) => !name.startsWith("lean-migration-maintenance.sqlite")).length === 0) {
+      for (const name of await readdir(source)) {
+        const target = path.join(destination, name)
+        if (await exists(target)) throw new MigrationCutoverError("The migration destination changed.")
+        await rename(path.join(source, name), target)
+      }
       await rm(source, { recursive: true })
       return
     }
     if (existing.length > 0) throw new MigrationCutoverError("The migration destination changed.")
     await rm(destination, { recursive: true })
+  }
+  await mkdir(path.dirname(destination), { recursive: true, mode: 0o700 })
+  await rename(source, destination)
+}
+
+async function moveFile(source: string, destination: string) {
+  if (!(await exists(source))) return
+  if (await exists(destination)) {
+    if (digestBytes(await readFile(source)) !== digestBytes(await readFile(destination)))
+      throw new MigrationCutoverError("The migration destination changed.")
+    await rm(source)
+    return
   }
   await mkdir(path.dirname(destination), { recursive: true, mode: 0o700 })
   await rename(source, destination)
@@ -231,31 +266,124 @@ async function validateKnownDestinations(destination: MigrationDestination) {
   ]) {
     const info = await lstat(item).catch((error) => (nodeError(error, "ENOENT") ? undefined : Promise.reject(error)))
     if (info?.isSymbolicLink()) throw new MigrationCutoverError("A destination artifact was an unsupported link.")
+    if (info?.isDirectory()) await assertNoLinks(item)
   }
 }
 
 async function quarantinePartials(destination: MigrationDestination, quarantine: string) {
-  const items = [
-    [destination.database, "bharatcode.db"],
-    [`${destination.database}-wal`, "bharatcode.db-wal"],
-    [`${destination.database}-shm`, "bharatcode.db-shm"],
-    [destination.storage, "storage"],
-    [destination.config, "config"],
-    [path.join(destination.state, "lean-migration-v1.json"), "journal.json"],
-    [path.join(destination.state, "migration-snapshots"), "snapshots"],
-    [path.join(destination.state, "migration-staging"), "staging"],
-  ] as const
-  const present = [] as (typeof items)[number][]
-  for (const item of items) if (await exists(item[0])) present.push(item)
+  const present: { source: string; relative: string; sha256: string }[] = []
+  if (await exists(destination.data)) {
+    for (const name of await readdir(destination.data)) {
+      if (name.startsWith("lean-migration-maintenance.sqlite")) continue
+      const source = path.join(destination.data, name)
+      present.push({ source, relative: path.posix.join("data", name), sha256: await digestArtifact(source) })
+    }
+  }
+  if (await exists(destination.config))
+    present.push({ source: destination.config, relative: "config", sha256: await digestArtifact(destination.config) })
+  if (await exists(destination.state)) {
+    for (const name of await readdir(destination.state)) {
+      if (name === "migration-quarantine") continue
+      const source = path.join(destination.state, name)
+      present.push({ source, relative: path.posix.join("state", name), sha256: await digestArtifact(source) })
+    }
+  }
   if (present.length === 0) return false
   await mkdir(quarantine, { recursive: true, mode: 0o700 })
-  for (const [source, name] of present) await rename(source, path.join(quarantine, name))
+  for (const item of present) {
+    const target = path.join(quarantine, item.relative)
+    await mkdir(path.dirname(target), { recursive: true, mode: 0o700 })
+    await rename(item.source, target)
+  }
   await writeFile(
     path.join(quarantine, "manifest.json"),
-    JSON.stringify({ version: 1, artifacts: present.map(([, name]) => name) }),
+    JSON.stringify({ version: 1, artifacts: present.map(({ relative, sha256 }) => ({ relative, sha256 })) }),
     { mode: 0o600 },
   )
+  await syncDirectory(quarantine)
+  await syncDirectory(destination.state)
   return true
+}
+
+async function healthyDatabase(file: string) {
+  if (!(await exists(file))) return false
+  try {
+    const database = new Database(file, { readonly: true })
+    try {
+      const rows = database.query("PRAGMA integrity_check").all() as Record<string, unknown>[]
+      return rows.length === 1 && Object.values(rows[0] ?? {})[0] === "ok"
+    } finally {
+      database.close()
+    }
+  } catch {
+    return false
+  }
+}
+
+async function freshDestinationIsEmpty(destination: MigrationDestination) {
+  const data = (await readdir(destination.data)).filter(
+    (name) => name !== path.basename(destination.storage) && !name.startsWith("lean-migration-maintenance.sqlite"),
+  )
+  return (
+    data.length === 0 &&
+    (await readdir(destination.config)).length === 0 &&
+    (await readdir(destination.storage)).length === 0
+  )
+}
+
+async function sameTree(source: string, destination: string) {
+  return (await treeIdentity(source, false)) === (await treeIdentity(destination, true))
+}
+
+async function treeIdentity(root: string, ignoreMaintenance: boolean) {
+  const entries: string[] = []
+  const visit = async (directory: string, prefix: string): Promise<void> => {
+    for (const name of (await readdir(directory)).toSorted()) {
+      if (ignoreMaintenance && !prefix && name.startsWith("lean-migration-maintenance.sqlite")) continue
+      const absolute = path.join(directory, name)
+      const relative = prefix ? path.posix.join(prefix, name) : name
+      const info = await lstat(absolute)
+      if (info.isSymbolicLink()) throw new MigrationCutoverError("A destination artifact was an unsupported link.")
+      if (info.isDirectory()) {
+        await visit(absolute, relative)
+        continue
+      }
+      if (!info.isFile()) throw new MigrationCutoverError("A destination artifact was unsupported.")
+      entries.push(`${relative}\0${digestBytes(await readFile(absolute))}`)
+    }
+  }
+  await visit(root, "")
+  return createHash("sha256").update(entries.join("\0")).digest("hex")
+}
+
+async function assertNoLinks(root: string): Promise<void> {
+  for (const name of await readdir(root)) {
+    const item = path.join(root, name)
+    const info = await lstat(item)
+    if (info.isSymbolicLink()) throw new MigrationCutoverError("A destination artifact was an unsupported link.")
+    if (info.isDirectory()) await assertNoLinks(item)
+  }
+}
+
+async function digestArtifact(item: string) {
+  const info = await lstat(item)
+  if (info.isSymbolicLink()) throw new MigrationCutoverError("A destination artifact was an unsupported link.")
+  if (info.isFile()) return digestBytes(await readFile(item))
+  if (!info.isDirectory()) throw new MigrationCutoverError("A destination artifact was unsupported.")
+  return treeIdentity(item, false)
+}
+
+function digestBytes(bytes: Uint8Array) {
+  return createHash("sha256").update(bytes).digest("hex")
+}
+
+async function syncDirectory(directory: string) {
+  const handle = await open(directory, "r")
+  try {
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
 }
 
 function snapshotInput(journal: MigrationJournal, destination: MigrationDestination) {

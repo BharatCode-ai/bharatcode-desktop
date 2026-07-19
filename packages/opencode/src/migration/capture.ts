@@ -1,6 +1,10 @@
+import { Database } from "bun:sqlite"
 import { createHash, randomUUID } from "node:crypto"
+import { mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { chmod, lstat, mkdir, open, readFile, readdir, rename, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
 import path from "node:path"
+import { parse as parseJsonc, type ParseError } from "jsonc-parser"
 
 import { sanitizeMigrationRecord } from "./sanitize"
 import type { MigrationSource } from "./source"
@@ -54,6 +58,7 @@ export async function captureMigrationSource(
   const staging = path.join(parent, `.capture-${randomUUID()}`)
   await mkdir(staging, { mode: 0o700 })
   try {
+    await mkdir(path.join(staging, "records"), { mode: 0o700 })
     for (const entry of entries) await writeDurable(path.join(staging, "records", entry.relative), entry.bytes)
     await writeDurable(path.join(staging, "manifest.json"), manifest)
     await syncDirectory(staging)
@@ -91,7 +96,10 @@ export async function verifyCapturedSnapshot(input: {
   return manifest.contentFingerprint === input.contentFingerprint
 }
 
-export async function verifyCapturedSource(input: { captured: CapturedSource; source: MigrationSource }): Promise<boolean> {
+export async function verifyCapturedSource(input: {
+  captured: CapturedSource
+  source: MigrationSource
+}): Promise<boolean> {
   try {
     if (input.captured.sourceID !== input.source.id) return false
     if (fingerprint(await scanSource(input.source)) !== input.captured.contentFingerprint) return false
@@ -104,11 +112,16 @@ export async function verifyCapturedSource(input: { captured: CapturedSource; so
 async function scanSource(source: MigrationSource) {
   const entries = (
     await Promise.all(
-      Object.entries(source.roots).map(async ([role, root]) => (root ? scanDirectory(role, root) : Promise.resolve([]))),
+      Object.entries(source.roots).map(async ([role, root]) =>
+        root ? scanDirectory(role, root) : Promise.resolve([]),
+      ),
     )
   )
     .flat()
     .toSorted((left, right) => left.relative.localeCompare(right.relative))
+  if (new Set(entries.map((entry) => entry.relative)).size !== entries.length) {
+    throw new MigrationCaptureError("The migration source contained multiple database candidates.")
+  }
   if (entries.length > MAX_FILES || entries.reduce((total, entry) => total + entry.size, 0) > MAX_TOTAL_BYTES) {
     throw new MigrationCaptureError("The migration source exceeded its capture budget.")
   }
@@ -129,8 +142,10 @@ async function scanDirectory(role: string, root: string): Promise<CapturedEntry[
         continue
       }
       if (!before.isFile()) throw new MigrationCaptureError("A migration source contained an unsupported entry.")
-      if (before.size > MAX_FILE_BYTES) throw new MigrationCaptureError("A migration source file exceeded its capture budget.")
-      const bytes = await readFile(absolute)
+      if (before.size > MAX_FILE_BYTES)
+        throw new MigrationCaptureError("A migration source file exceeded its capture budget.")
+      if (/\.(?:db)-(?:wal|shm)$/i.test(relative)) continue
+      const bytes = /\.db$/i.test(relative) ? snapshotDatabase(absolute) : await readFile(absolute)
       const after = await lstat(absolute)
       if (
         before.dev !== after.dev ||
@@ -141,8 +156,16 @@ async function scanDirectory(role: string, root: string): Promise<CapturedEntry[
         throw new MigrationCaptureError("The migration source changed during capture.")
       }
       const sanitized = sanitizeBytes(role, relative, bytes)
-      const capturedRelative = path.posix.join(role, relative)
-      result.push({ relative: capturedRelative, bytes: sanitized, digest: digest(sanitized), size: sanitized.byteLength })
+      const capturedRelative = /\.db$/i.test(relative) ? "database/main.sqlite" : path.posix.join(role, relative)
+      if (result.some((entry) => entry.relative === capturedRelative)) {
+        throw new MigrationCaptureError("The migration source contained multiple database candidates.")
+      }
+      result.push({
+        relative: capturedRelative,
+        bytes: sanitized,
+        digest: digest(sanitized),
+        size: sanitized.byteLength,
+      })
     }
   }
   await visit(root, "")
@@ -152,9 +175,91 @@ async function scanDirectory(role: string, root: string): Promise<CapturedEntry[
 function sanitizeBytes(role: string, relative: string, bytes: Uint8Array) {
   if (!/\.(?:json|jsonc|dat)$/i.test(relative)) return bytes
   const text = new TextDecoder().decode(bytes)
-  const value = JSON.parse(text) as unknown
-  const kind = role === "config" ? (path.basename(relative).startsWith("tui.") ? "tui" : "config") : role === "desktop" ? "desktop" : relative.includes("project") ? "project" : "session"
+  const errors: ParseError[] = []
+  const value = /\.jsonc$/i.test(relative)
+    ? parseJsonc(text, errors, { allowTrailingComma: true, disallowComments: false })
+    : (JSON.parse(text) as unknown)
+  if (errors.length > 0) throw new MigrationCaptureError("A migration JSONC record was invalid.")
+  const kind =
+    role === "config"
+      ? path.basename(relative).startsWith("tui.")
+        ? "tui"
+        : "config"
+      : role === "desktop"
+        ? "desktop"
+        : relative.includes("project")
+          ? "project"
+          : "session"
   return new TextEncoder().encode(JSON.stringify(sanitizeMigrationRecord({ kind, value }).value))
+}
+
+function snapshotDatabase(file: string) {
+  const directory = mkdtempSync(path.join(tmpdir(), "bharatcode-migration-db-"))
+  const snapshot = path.join(directory, "snapshot.sqlite")
+  const source = new Database(file, { readonly: true })
+  try {
+    source.run(`VACUUM INTO ${quoteSql(snapshot)}`)
+  } finally {
+    source.close()
+  }
+  const database = new Database(snapshot)
+  try {
+    try {
+      database.run("PRAGMA foreign_keys = OFF")
+      for (const table of ["session_share", "account_state", "account", "control_account"]) {
+        if (hasTable(database, table)) database.run(`DROP TABLE ${quoteIdentifier(table)}`)
+      }
+      clearColumns(database, "project", ["commands", "icon_url", "icon_url_override"])
+      clearColumns(database, "session", ["share_url", "model", "permission", "agent"])
+      sanitizeJsonColumn(database, "message")
+      sanitizeJsonColumn(database, "part")
+      database.run("PRAGMA journal_mode = DELETE")
+    } finally {
+      database.close()
+    }
+    return readFileSync(snapshot)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+}
+
+function clearColumns(database: Database, table: string, columns: readonly string[]) {
+  if (!hasTable(database, table)) return
+  const present = new Set(
+    (database.query(`PRAGMA table_info(${quoteSql(table)})`).all() as { name: string }[]).map((column) => column.name),
+  )
+  const selected = columns.filter((column) => present.has(column))
+  if (selected.length > 0) {
+    database.run(
+      `UPDATE ${quoteIdentifier(table)} SET ${selected.map((column) => `${quoteIdentifier(column)} = NULL`).join(", ")}`,
+    )
+  }
+}
+
+function sanitizeJsonColumn(database: Database, table: string) {
+  if (!hasTable(database, table)) return
+  const columns = database.query(`PRAGMA table_info(${quoteSql(table)})`).all() as { name: string }[]
+  if (!columns.some((column) => column.name === "data")) return
+  const update = database.prepare(`UPDATE ${quoteIdentifier(table)} SET data = ? WHERE rowid = ?`)
+  for (const row of database.query(`SELECT rowid, data FROM ${quoteIdentifier(table)}`).all() as {
+    rowid: number
+    data: string
+  }[]) {
+    const value = sanitizeMigrationRecord({ kind: "session", value: JSON.parse(row.data) as unknown }).value
+    update.run(JSON.stringify(value), row.rowid)
+  }
+}
+
+function hasTable(database: Database, table: string) {
+  return !!database.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?").get(table)
+}
+
+function quoteIdentifier(value: string) {
+  return `"${value.replaceAll('"', '""')}"`
+}
+
+function quoteSql(value: string) {
+  return `'${value.replaceAll("'", "''")}'`
 }
 
 function fingerprint(entries: readonly CapturedEntry[]) {
@@ -173,16 +278,42 @@ function manifestBytes(contentFingerprint: string, entries: readonly CapturedEnt
 }
 
 async function snapshotMatches(directory: string, expectedDigest: string) {
+  const rootEntries = (await readdir(directory)).toSorted()
+  if (rootEntries.length !== 2 || rootEntries[0] !== "manifest.json" || rootEntries[1] !== "records") return false
   const bytes = await readFile(path.join(directory, "manifest.json"))
   if (digest(bytes) !== expectedDigest) return false
   const manifest = JSON.parse(new TextDecoder().decode(bytes)) as Manifest
   if (manifest.version !== 1 || !Array.isArray(manifest.entries)) return false
+  const expected = new Set<string>()
   for (const entry of manifest.entries) {
     if (!safeRelative(entry.relative)) return false
+    if (expected.has(entry.relative)) return false
+    expected.add(entry.relative)
     const record = await readFile(path.join(directory, "records", entry.relative))
     if (record.byteLength !== entry.size || digest(record) !== entry.digest) return false
   }
-  return true
+  const actual = await snapshotFiles(path.join(directory, "records"))
+  return actual.length === expected.size && actual.every((entry) => expected.has(entry))
+}
+
+async function snapshotFiles(root: string) {
+  const files: string[] = []
+  const visit = async (directory: string, prefix: string): Promise<void> => {
+    for (const name of (await readdir(directory)).toSorted()) {
+      const absolute = path.join(directory, name)
+      const relative = prefix ? path.posix.join(prefix, name) : name
+      const info = await lstat(absolute)
+      if (info.isSymbolicLink()) throw new MigrationCaptureError("A migration snapshot contained an unsupported link.")
+      if (info.isDirectory()) {
+        await visit(absolute, relative)
+        continue
+      }
+      if (!info.isFile()) throw new MigrationCaptureError("A migration snapshot contained an unsupported entry.")
+      files.push(relative)
+    }
+  }
+  await visit(root, "")
+  return files
 }
 
 async function writeDurable(file: string, bytes: Uint8Array) {
@@ -208,7 +339,11 @@ async function syncDirectory(directory: string) {
 }
 
 function safeRelative(value: string) {
-  return value.length > 0 && !path.posix.isAbsolute(value) && !value.split("/").some((part) => !part || part === "." || part === "..")
+  return (
+    value.length > 0 &&
+    !path.posix.isAbsolute(value) &&
+    !value.split("/").some((part) => !part || part === "." || part === "..")
+  )
 }
 
 function digest(bytes: Uint8Array) {

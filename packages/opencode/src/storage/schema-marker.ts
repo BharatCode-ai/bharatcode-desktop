@@ -9,6 +9,7 @@ import {
   openSync,
   readFileSync,
   renameSync,
+  unlinkSync,
   writeSync,
 } from "node:fs"
 import path from "node:path"
@@ -78,12 +79,15 @@ export function repairSchemaMarker(input: RepairMarkerInput): {
 } {
   if (input.confirmed !== true) return { state: "failed", diagnosis: { state: "unreadable" } }
   return withMigrationMaintenanceLockSync(path.dirname(input.databasePath), () => {
+    const identity = inspectDatabase(input.databasePath)
+    if (!identity) return { state: "failed", diagnosis: { state: "corrupt" } }
     const diagnosis = diagnoseSchemaMarker(input)
     if (diagnosis.state === "healthy") return { state: "unchanged", diagnosis }
     if (!diagnosis.inferredVersion || diagnosis.state === "corrupt") return { state: "failed", diagnosis }
-    const identity = inspectDatabase(input.databasePath)
-    if (!identity) return { state: "failed", diagnosis: { state: "corrupt" } }
+    if (!sameDatabase(identity, inspectDatabase(input.databasePath)))
+      return { state: "failed", diagnosis: { state: "corrupt" } }
     let quarantine: string | undefined
+    let published = false
     try {
       const marker = markerPath(input.databasePath)
       if (existsSync(marker)) {
@@ -93,16 +97,26 @@ export function repairSchemaMarker(input: RepairMarkerInput): {
       if (!sameDatabase(identity, inspectDatabase(input.databasePath))) {
         return { state: "failed", diagnosis: { state: "corrupt" }, ...(quarantine ? { quarantine } : {}) }
       }
-      writeMarker(marker, diagnosis.inferredVersion)
+      writeMarker(marker, diagnosis.inferredVersion, () => sameDatabase(identity, inspectDatabase(input.databasePath)))
+      published = true
       if (!sameDatabase(identity, inspectDatabase(input.databasePath))) {
-        return { state: "failed", diagnosis: { state: "corrupt" }, ...(quarantine ? { quarantine } : {}) }
+        quarantine = quarantineMarker(marker)
+        syncDirectory(path.dirname(marker))
+        return { state: "failed", diagnosis: { state: "corrupt" }, quarantine }
       }
       const verified = diagnoseSchemaMarker(input)
       if (verified.state !== "healthy") {
-        return { state: "failed", diagnosis: verified, ...(quarantine ? { quarantine } : {}) }
+        quarantine = quarantineMarker(marker)
+        syncDirectory(path.dirname(marker))
+        return { state: "failed", diagnosis: verified, quarantine }
       }
       return { state: "repaired", diagnosis: verified, ...(quarantine ? { quarantine } : {}) }
     } catch {
+      const marker = markerPath(input.databasePath)
+      if (published && existsSync(marker)) {
+        quarantine = quarantineMarker(marker)
+        syncDirectory(path.dirname(marker))
+      }
       return { state: "failed", diagnosis, ...(quarantine ? { quarantine } : {}) }
     }
   })
@@ -228,18 +242,24 @@ function quarantineMarker(marker: string) {
   return quarantine
 }
 
-function writeMarker(marker: string, version: string) {
+function writeMarker(marker: string, version: string, validate: () => boolean) {
   const temporary = `${marker}.tmp-${randomUUID()}`
-  const descriptor = openSync(temporary, "wx", 0o600)
   try {
-    writeSync(descriptor, `${version}\n`)
-    fsyncSync(descriptor)
-  } finally {
-    closeSync(descriptor)
+    const descriptor = openSync(temporary, "wx", 0o600)
+    try {
+      writeSync(descriptor, `${version}\n`)
+      fsyncSync(descriptor)
+    } finally {
+      closeSync(descriptor)
+    }
+    chmodSync(temporary, 0o600)
+    if (!validate()) throw new Error("database changed")
+    renameSync(temporary, marker)
+    syncDirectory(path.dirname(marker))
+  } catch (error) {
+    if (existsSync(temporary)) unlinkSync(temporary)
+    throw error
   }
-  chmodSync(temporary, 0o600)
-  renameSync(temporary, marker)
-  syncDirectory(path.dirname(marker))
 }
 
 function syncDirectory(directory: string) {

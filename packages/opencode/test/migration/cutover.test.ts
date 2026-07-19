@@ -1,14 +1,10 @@
+import { Database } from "bun:sqlite"
 import { describe, expect, test } from "bun:test"
 import { mkdir, readFile, symlink, writeFile } from "node:fs/promises"
 import path from "node:path"
 
 import { fingerprintMigrationSource, type MigrationDestination } from "@/migration/capture"
-import {
-  activateMigration,
-  prepareMigration,
-  startFresh,
-  validateFreshDestination,
-} from "@/migration/cutover"
+import { activateMigration, prepareMigration, startFresh, validateFreshDestination } from "@/migration/cutover"
 import type { MigrationSource } from "@/migration/source"
 import { tmpdir } from "../fixture/fixture"
 
@@ -71,6 +67,77 @@ describe("migration cutover", () => {
     expect(results.filter((item) => item.type === "retry")).toHaveLength(1)
   })
 
+  test("Retry converges after a crash between per-root activation switches", async () => {
+    await using tmp = await tmpdir()
+    const candidate = await source(tmp.path, "legacy")
+    const destination = target(tmp.path)
+    const prepared = await prepareMigration({ sources: [candidate], destination })
+    if (prepared.type !== "prepared") throw new Error("expected prepared operation")
+    const journal = JSON.parse(await Bun.file(path.join(destination.state, "lean-migration-v1.json")).text()) as {
+      snapshotDigest: string
+    }
+    await mkdir(destination.config, { recursive: true })
+    await Bun.write(
+      path.join(destination.config, "settings.json"),
+      await Bun.file(
+        path.join(
+          destination.state,
+          "migration-snapshots",
+          journal.snapshotDigest,
+          "records",
+          "config",
+          "settings.json",
+        ),
+      ).arrayBuffer(),
+    )
+
+    expect(await activateMigration({ operationID: prepared.operationID, destination })).toEqual({
+      state: "complete",
+      sourceID: candidate.id,
+    })
+  })
+
+  test("activates one sanitized canonical database from live WAL alongside retained data", async () => {
+    await using tmp = await tmpdir()
+    const data = path.join(tmp.path, "legacy-data")
+    await mkdir(path.join(data, "storage", "session"), { recursive: true })
+    await writeFile(
+      path.join(data, "storage", "session", "ses_1.json"),
+      JSON.stringify({ id: "ses_1", title: "retained", model: "opencode/coder" }),
+    )
+    const legacyDatabase = path.join(data, "opencode.db")
+    const writer = new Database(legacyDatabase, { create: true })
+    writer.run("PRAGMA journal_mode = WAL")
+    writer.run("CREATE TABLE session(id TEXT PRIMARY KEY, title TEXT, model TEXT)")
+    writer.run("CREATE TABLE account(id TEXT PRIMARY KEY, token TEXT)")
+    writer.run("INSERT INTO session VALUES ('ses_1', 'kept', 'opencode/coder')")
+    writer.run("INSERT INTO account VALUES ('acct_1', 'secret')")
+    const candidate: MigrationSource = {
+      id: "wal-source",
+      label: "Existing BharatCode data · opencode-cli · 00000000",
+      kind: "opencode-cli",
+      roots: { data },
+    }
+    const destination = target(tmp.path)
+    const prepared = await prepareMigration({ sources: [candidate], destination })
+    writer.close()
+    if (prepared.type !== "prepared") throw new Error("expected prepared operation")
+
+    expect(await activateMigration({ operationID: prepared.operationID, destination })).toEqual({
+      state: "complete",
+      sourceID: candidate.id,
+    })
+    expect(await Bun.file(path.join(destination.storage, "session", "ses_1.json")).text()).toContain("retained")
+    expect(await Bun.file(path.join(destination.data, "opencode.db")).exists()).toBe(false)
+    const activated = new Database(destination.database, { readonly: true })
+    expect(activated.query("SELECT title, model FROM session").get()).toEqual({ title: "kept", model: null })
+    expect(() => activated.query("SELECT * FROM account").all()).toThrow()
+    activated.close()
+    const preserved = new Database(legacyDatabase, { readonly: true })
+    expect(preserved.query("SELECT token FROM account").get()).toEqual({ token: "secret" })
+    preserved.close()
+  })
+
   test("Start Fresh is marker-independent, quarantines known partials, and preserves every source", async () => {
     await using tmp = await tmpdir()
     const destination = target(tmp.path)
@@ -104,6 +171,25 @@ describe("migration cutover", () => {
     await expect(startFresh({ destination: conflict, reason: "interrupted", confirmed: true })).rejects.toThrow(
       "overlap",
     )
+  })
+
+  test("Start Fresh refuses a healthy database without a journal and quarantines every active partial artifact", async () => {
+    await using tmp = await tmpdir()
+    const destination = target(tmp.path)
+    await mkdir(destination.data, { recursive: true })
+    const healthy = new Database(destination.database, { create: true })
+    healthy.run("CREATE TABLE session(id TEXT PRIMARY KEY)")
+    healthy.close()
+    await expect(startFresh({ destination, reason: "interrupted", confirmed: true })).rejects.toThrow("healthy")
+
+    await Bun.file(destination.database).write("partial")
+    await writeFile(path.join(destination.data, ".schema-version"), "legacy\n")
+    await writeFile(path.join(destination.data, "auth.json"), '{"provider":"opencode"}')
+    const result = await startFresh({ destination, reason: "invalid-marker", confirmed: true })
+    expect(result.state).toBe("fresh")
+    expect(await Bun.file(path.join(destination.data, ".schema-version")).exists()).toBe(false)
+    expect(await Bun.file(path.join(destination.data, "auth.json")).exists()).toBe(false)
+    expect(await Bun.file(path.join(result.quarantine!, "manifest.json")).text()).toContain("sha256")
   })
 })
 

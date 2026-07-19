@@ -97,6 +97,29 @@ describe("schema marker diagnosis and repair", () => {
     expect(result.state).toBe("failed")
     expect(await Bun.file(path.join(tmp.path, ".schema-version")).exists()).toBe(false)
   })
+
+  test("removes the newly written marker when final schema verification fails", async () => {
+    await using tmp = await tmpdir()
+    const databasePath = path.join(tmp.path, "bharatcode.db")
+    createDatabase(databasePath)
+    let opens = 0
+    const input = diagnoseInput(databasePath)
+    const result = repairSchemaMarker({
+      ...input,
+      confirmed: true,
+      open: (file, options) => {
+        opens++
+        if (opens === 2) {
+          const changed = new Database(file)
+          changed.run("CREATE TABLE hostile(id INTEGER PRIMARY KEY)")
+          changed.close()
+        }
+        return open(file, options)
+      },
+    })
+    expect(result.state).toBe("failed")
+    expect(await Bun.file(path.join(tmp.path, ".schema-version")).exists()).toBe(false)
+  })
 })
 
 function createDatabase(databasePath: string) {

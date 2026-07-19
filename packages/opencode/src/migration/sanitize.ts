@@ -16,7 +16,23 @@ export class MigrationSanitizeError extends Error {
 const ROOT_FIELDS: Record<RecordKind, ReadonlySet<string>> = {
   config: new Set(["theme", "language", "username", "keybinds", "snapshot", "logLevel"]),
   tui: new Set(["theme", "language", "keybinds", "scrollSpeed", "diffStyle"]),
-  session: new Set(["id", "projectID", "parentID", "title", "version", "time", "summary", "messages", "parts"]),
+  session: new Set([
+    "id",
+    "sessionID",
+    "messageID",
+    "projectID",
+    "parentID",
+    "role",
+    "type",
+    "text",
+    "content",
+    "title",
+    "version",
+    "time",
+    "summary",
+    "messages",
+    "parts",
+  ]),
   project: new Set(["id", "worktree", "vcs", "name", "icon", "time"]),
   desktop: new Set(["theme", "language", "zoom", "sidebar", "window"]),
 }
@@ -32,7 +48,8 @@ const NESTED_FIELDS: Readonly<Record<string, ReadonlySet<string>>> = {
 
 const DYNAMIC_MAPS = new Set(["keybinds", "sidebar"])
 const USER_TEXT = new Set(["title", "text", "content", "name", "worktree"])
-const ACTIVE_KEY = /(?:^|[_-])(?:provider|model|plugin|mcp|skill|share|update|command|executable|launcher|server|url|host|schema|token|secret|password|authorization)(?:$|[_-])/i
+const ACTIVE_KEY =
+  /(?:^|[_-])(?:provider|model|plugin|mcp|skill|share|update|command|executable|launcher|server|url|host|schema|token|secret|password|authorization)(?:$|[_-])/i
 
 export function sanitizeMigrationRecord(input: { kind: RecordKind; value: unknown }): SanitizedRecord {
   if (!plainRecord(input.value)) throw new MigrationSanitizeError("A migration record must be a plain record.")
@@ -61,7 +78,8 @@ function project(
 
 function sanitizeValue(value: unknown, field: string, current: string, discarded: Set<string>): unknown {
   if (typeof value === "string") {
-    if (field === "worktree" && !value.startsWith("/")) throw new MigrationSanitizeError("A retained project path must be absolute.")
+    if (field === "worktree" && !value.startsWith("/"))
+      throw new MigrationSanitizeError("A retained project path must be absolute.")
     if (!USER_TEXT.has(field) && credentialShaped(value)) {
       throw new MigrationSanitizeError("A retained migration value was credential-shaped.")
     }
