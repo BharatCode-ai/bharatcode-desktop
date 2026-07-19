@@ -5,6 +5,7 @@ import fs from "fs"
 import path from "path"
 import { fileURLToPath } from "url"
 import { createSolidTransformPlugin } from "@opentui/solid/bun-plugin"
+import { DISTRIBUTION, PLATFORM_TARGETS, createPlatformPackageManifest, platformPackageName } from "./distribution.mjs"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -80,71 +81,8 @@ const createEmbeddedWebUIBundle = async () => {
 
 const embeddedFileMap = skipEmbedWebUi ? null : await createEmbeddedWebUIBundle()
 
-const allTargets: {
-  os: string
-  arch: "arm64" | "x64"
-  abi?: "musl"
-  avx2?: false
-}[] = [
-  {
-    os: "linux",
-    arch: "arm64",
-  },
-  {
-    os: "linux",
-    arch: "x64",
-  },
-  {
-    os: "linux",
-    arch: "x64",
-    avx2: false,
-  },
-  {
-    os: "linux",
-    arch: "arm64",
-    abi: "musl",
-  },
-  {
-    os: "linux",
-    arch: "x64",
-    abi: "musl",
-  },
-  {
-    os: "linux",
-    arch: "x64",
-    abi: "musl",
-    avx2: false,
-  },
-  {
-    os: "darwin",
-    arch: "arm64",
-  },
-  {
-    os: "darwin",
-    arch: "x64",
-  },
-  {
-    os: "darwin",
-    arch: "x64",
-    avx2: false,
-  },
-  {
-    os: "win32",
-    arch: "arm64",
-  },
-  {
-    os: "win32",
-    arch: "x64",
-  },
-  {
-    os: "win32",
-    arch: "x64",
-    avx2: false,
-  },
-]
-
 const targets = singleFlag
-  ? allTargets.filter((item) => {
+  ? PLATFORM_TARGETS.filter((item) => {
       if (item.os !== process.platform || item.arch !== process.arch) {
         return false
       }
@@ -162,7 +100,7 @@ const targets = singleFlag
 
       return true
     })
-  : allTargets
+  : PLATFORM_TARGETS
 
 await $`rm -rf dist`
 
@@ -172,16 +110,7 @@ if (!skipInstall) {
   await $`bun install --os="*" --cpu="*" @parcel/watcher@${pkg.dependencies["@parcel/watcher"]}`
 }
 for (const item of targets) {
-  const name = [
-    pkg.name,
-    // changing to win32 flags npm for some reason
-    item.os === "win32" ? "windows" : item.os,
-    item.arch,
-    item.avx2 === false ? "baseline" : undefined,
-    item.abi === undefined ? undefined : item.abi,
-  ]
-    .filter(Boolean)
-    .join("-")
+  const name = platformPackageName(item)
   console.log(`building ${name}`)
   await $`mkdir -p dist/${name}/bin`
 
@@ -208,13 +137,13 @@ for (const item of targets) {
       autoloadDotenv: false,
       autoloadTsconfig: true,
       autoloadPackageJson: true,
-      target: name.replace(pkg.name, "bun") as any,
-      outfile: `dist/${name}/bin/opencode`,
-      execArgv: [`--user-agent=opencode/${Script.version}`, "--use-system-ca", "--"],
+      target: name.replace(DISTRIBUTION.packageName, "bun") as any,
+      outfile: `dist/${name}/bin/${DISTRIBUTION.commandName}`,
+      execArgv: [`--user-agent=${DISTRIBUTION.commandName}/${Script.version}`, "--use-system-ca", "--"],
       windows: {},
     },
-    files: embeddedFileMap ? { "opencode-web-ui.gen.ts": embeddedFileMap } : {},
-    entrypoints: ["./src/index.ts", parserWorker, workerPath, ...(embeddedFileMap ? ["opencode-web-ui.gen.ts"] : [])],
+    files: embeddedFileMap ? { "bharatcode-web-ui.gen.ts": embeddedFileMap } : {},
+    entrypoints: ["./src/index.ts", parserWorker, workerPath, ...(embeddedFileMap ? ["bharatcode-web-ui.gen.ts"] : [])],
     define: {
       OPENCODE_VERSION: `'${Script.version}'`,
       OPENCODE_MIGRATIONS: JSON.stringify(migrations),
@@ -228,7 +157,7 @@ for (const item of targets) {
 
   // Smoke test: only run if binary is for current platform
   if (item.os === process.platform && item.arch === process.arch && !item.abi) {
-    const binaryPath = `dist/${name}/bin/opencode`
+    const binaryPath = `dist/${name}/bin/${DISTRIBUTION.commandName}`
     console.log(`Running smoke test: ${binaryPath} --version`)
     try {
       const versionOutput = await $`${binaryPath} --version`.text()
@@ -241,17 +170,7 @@ for (const item of targets) {
 
   await $`rm -rf ./dist/${name}/bin/tui`
   await Bun.file(`dist/${name}/package.json`).write(
-    JSON.stringify(
-      {
-        name,
-        version: Script.version,
-        preferUnplugged: true,
-        os: [item.os],
-        cpu: [item.arch],
-      },
-      null,
-      2,
-    ),
+    JSON.stringify(createPlatformPackageManifest(item, Script.version), null, 2),
   )
   binaries[name] = Script.version
 }
