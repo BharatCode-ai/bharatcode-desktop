@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite"
+import { StorageSQLite } from "#storage-sqlite"
 import { createHash, randomUUID } from "node:crypto"
 import {
   chmodSync,
@@ -166,10 +166,12 @@ export function captureSchemaContract(database: SchemaDatabase): SchemaContract 
 
 export function releasedSchemaCandidatesFromMigrations(
   migrations: readonly { version: string; sql: string }[],
+  bootstrapSql?: string,
 ): readonly ReleasedSchemaCandidate[] {
-  const database = new Database(":memory:")
+  const database = new StorageSQLite(":memory:")
   try {
     database.run("PRAGMA foreign_keys = ON")
+    if (bootstrapSql) database.run(bootstrapSql)
     return migrations.map((migration) => {
       database.run(migration.sql)
       return {

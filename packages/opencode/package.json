@@ -35,6 +35,11 @@
       "node": "./src/auth/auth-lock-db.node.ts",
       "default": "./src/auth/auth-lock-db.bun.ts"
     },
+    "#storage-sqlite": {
+      "bun": "./src/storage/storage-sqlite.bun.ts",
+      "node": "./src/storage/storage-sqlite.node.ts",
+      "default": "./src/storage/storage-sqlite.bun.ts"
+    },
     "#pty": {
       "bun": "./src/pty/pty.bun.ts",
       "node": "./src/pty/pty.node.ts",

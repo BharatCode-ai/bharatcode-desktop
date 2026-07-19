@@ -1,7 +1,11 @@
 import type { DesktopMenuAction } from "@opencode-ai/app/desktop-menu"
 import type { CapabilitySnapshot } from "../main/capabilities"
 
-export type InitStep = { phase: "server_waiting" } | { phase: "sqlite_waiting" } | { phase: "done" }
+export type InitStep =
+  | { phase: "recovery_waiting" }
+  | { phase: "server_waiting" }
+  | { phase: "sqlite_waiting" }
+  | { phase: "done" }
 
 export type ServerReadyData = {
   url: string
@@ -9,6 +13,24 @@ export type ServerReadyData = {
 }
 
 export type SqliteMigrationProgress = { type: "InProgress"; value: number } | { type: "Done" }
+
+export type RecoverySource = { id: string; label: string; contentFingerprint: string }
+export type RecoveryStatus =
+  | { state: "ready" }
+  | { state: "choose-source"; sources: readonly RecoverySource[] }
+  | { state: "retry"; operationID: string }
+  | { state: "start-fresh"; reason: "no-source" | "ambiguous" | "interrupted" | "invalid-marker" }
+  | {
+      state: "marker-repair"
+      diagnosis: "missing" | "invalid" | "unreadable" | "permission-invalid" | "schema-mismatch"
+      inferredVersion?: string
+    }
+  | { state: "blocked"; reason: "corrupt" | "incompatible" | "destination-mutated" }
+export type RecoveryAction =
+  | { type: "choose-source"; id: string; contentFingerprint: string }
+  | { type: "retry"; operationID: string }
+  | { type: "start-fresh"; confirmed: true }
+  | { type: "repair-marker"; confirmed: true }
 
 export type WslConfig = { enabled: boolean }
 
@@ -64,6 +86,8 @@ export type DictationTranscription = {
 }
 
 export type ElectronAPI = {
+  inspectRecovery: () => Promise<RecoveryStatus>
+  runRecovery: (action: RecoveryAction) => Promise<RecoveryStatus>
   killSidecar: () => Promise<void>
   installCli: () => Promise<string>
   awaitInitialization: (onStep: (step: InitStep) => void) => Promise<ServerReadyData>

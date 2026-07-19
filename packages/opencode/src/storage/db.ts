@@ -13,6 +13,12 @@ import { Flag } from "@opencode-ai/core/flag/flag"
 import { EffectBridge } from "@/effect/bridge"
 import { init } from "#db"
 import { Effect, Schema } from "effect"
+import {
+  diagnoseSchemaMarker,
+  releasedSchemaCandidatesFromMigrations,
+  repairSchemaMarker,
+  type SchemaDatabase,
+} from "./schema-marker"
 
 declare const OPENCODE_MIGRATIONS: { sql: string; timestamp: number; name: string }[] | undefined
 
@@ -44,6 +50,22 @@ export type Transaction = SQLiteTransaction<"sync", void>
 type Client = ReturnType<typeof init>
 
 type Journal = { sql: string; timestamp: number; name: string }[]
+const DRIZZLE_MIGRATION_SCHEMA = `
+  CREATE TABLE "__drizzle_migrations" (
+    id INTEGER PRIMARY KEY,
+    hash text NOT NULL,
+    created_at numeric,
+    name text,
+    applied_at TEXT
+  )
+`
+
+export class DatabaseRecoveryRequiredError extends Error {
+  constructor() {
+    super("BharatCode database recovery is required. Run `bharatcode doctor` before startup.")
+    this.name = "BharatCodeDatabaseRecoveryRequiredError"
+  }
+}
 
 // Drizzle's migrate overloads trigger expensive variance checks here; narrow to the journal overload we actually use.
 const migrateFromJournal = migrate as unknown as (db: SQLiteBunDatabase, entries: Journal) => void
@@ -85,6 +107,19 @@ function migrations(dir: string): Journal {
   return sql.sort((a, b) => a.timestamp - b.timestamp)
 }
 
+function migrationJournal(): Journal {
+  return typeof OPENCODE_MIGRATIONS !== "undefined"
+    ? OPENCODE_MIGRATIONS
+    : migrations(path.join(import.meta.dirname, "../../migration"))
+}
+
+export function releasedSchemaCandidates() {
+  return releasedSchemaCandidatesFromMigrations(
+    migrationJournal().map((entry) => ({ version: entry.name, sql: entry.sql })),
+    DRIZZLE_MIGRATION_SCHEMA,
+  )
+}
+
 let client: Client | undefined
 let loaded = false
 
@@ -94,6 +129,20 @@ export const Client = Object.assign(
 
     const dbPath = getPath(flags)
     log.info("opening database", { path: dbPath })
+
+    const entries = migrationJournal()
+    const markerGate = !Flag.OPENCODE_DB && dbPath !== ":memory:"
+    const markerInput = {
+      databasePath: dbPath,
+      candidates: releasedSchemaCandidatesFromMigrations(
+        entries.map((entry) => ({ version: entry.name, sql: entry.sql })),
+        DRIZZLE_MIGRATION_SCHEMA,
+      ),
+      open: openSchemaDatabase,
+    }
+    if (markerGate && existsSync(dbPath) && diagnoseSchemaMarker(markerInput).state !== "healthy") {
+      throw new DatabaseRecoveryRequiredError()
+    }
 
     const db = init(dbPath)
 
@@ -105,10 +154,6 @@ export const Client = Object.assign(
     db.run("PRAGMA wal_checkpoint(PASSIVE)")
 
     // Apply schema migrations
-    const entries =
-      typeof OPENCODE_MIGRATIONS !== "undefined"
-        ? OPENCODE_MIGRATIONS
-        : migrations(path.join(import.meta.dirname, "../../migration"))
     if (entries.length > 0) {
       log.info("applying migrations", {
         count: entries.length,
@@ -120,6 +165,14 @@ export const Client = Object.assign(
         }
       }
       applyMigrations(db, entries)
+    }
+
+    if (markerGate) {
+      const marker = repairSchemaMarker({ ...markerInput, confirmed: true })
+      if (marker.state === "failed") {
+        db.$client.close()
+        throw new DatabaseRecoveryRequiredError()
+      }
     }
 
     client = db
@@ -139,6 +192,15 @@ export function close() {
   if (!Client.loaded()) return
   Client().$client.close()
   Client.reset()
+}
+
+function openSchemaDatabase(file: string, options: { readonly: boolean }): SchemaDatabase {
+  const database = init(file).$client
+  if (!options.readonly) throw new DatabaseRecoveryRequiredError()
+  return {
+    rows: (sql) => database.prepare(sql).all() as Record<string, unknown>[],
+    close: () => database.close(),
+  }
 }
 
 export type TxOrDb = Transaction | Client

@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite"
+import { StorageSQLite } from "#storage-sqlite"
 import { mkdir } from "node:fs/promises"
 import path from "node:path"
 
@@ -11,7 +11,7 @@ export class MigrationMaintenanceLockError extends Error {
 
 export async function withMigrationMaintenanceLock<T>(stateRoot: string, operation: () => Promise<T>): Promise<T> {
   await mkdir(stateRoot, { recursive: true, mode: 0o700 })
-  const database = new Database(path.join(stateRoot, "lean-migration-maintenance.sqlite"), { create: true })
+  const database = new StorageSQLite(path.join(stateRoot, "lean-migration-maintenance.sqlite"), { create: true })
   database.run("PRAGMA busy_timeout = 50")
   const acquired = await acquire(database)
   if (!acquired) {
@@ -33,7 +33,7 @@ export async function withMigrationMaintenanceLock<T>(stateRoot: string, operati
 }
 
 export function withMigrationMaintenanceLockSync<T>(root: string, operation: () => T): T {
-  const database = new Database(path.join(root, "lean-migration-maintenance.sqlite"), { create: true })
+  const database = new StorageSQLite(path.join(root, "lean-migration-maintenance.sqlite"), { create: true })
   database.run("PRAGMA busy_timeout = 5000")
   try {
     database.run("BEGIN IMMEDIATE")
@@ -50,7 +50,7 @@ export function withMigrationMaintenanceLockSync<T>(root: string, operation: () 
   }
 }
 
-async function acquire(database: Database) {
+async function acquire(database: StorageSQLite) {
   for (let attempt = 0; attempt < 100; attempt++) {
     try {
       database.run("BEGIN IMMEDIATE")

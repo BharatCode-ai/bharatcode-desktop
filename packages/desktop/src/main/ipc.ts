@@ -14,11 +14,14 @@ import type {
   BharatCodeAccountStatus,
   BharatCodeSignInOptions,
   DictationAudioInput,
+  RecoveryAction,
+  RecoveryStatus,
 } from "../preload/types"
 import type { CapabilitySnapshot } from "./capabilities"
 import { runDesktopMenuAction } from "./desktop-menu-actions"
 import { getStore } from "./store"
 import { getPinchZoomEnabled, setPinchZoomEnabled, setTitlebar, updateTitlebar } from "./windows"
+import { parseRecoveryAction } from "./startup-recovery"
 
 const pickerFilters = (ext?: string[]) => {
   if (!ext || ext.length === 0) return undefined
@@ -26,6 +29,8 @@ const pickerFilters = (ext?: string[]) => {
 }
 
 type Deps = {
+  inspectRecovery: () => Promise<RecoveryStatus>
+  runRecovery: (action: RecoveryAction) => Promise<RecoveryStatus>
   killSidecar: () => Promise<void> | void
   awaitInitialization: (sendStep: (step: InitStep) => void) => Promise<ServerReadyData>
   getWindowConfig: () => Promise<WindowConfig> | WindowConfig
@@ -61,6 +66,10 @@ type Deps = {
 }
 
 export function registerIpcHandlers(deps: Deps) {
+  ipcMain.handle("recovery:inspect", () => deps.inspectRecovery())
+  ipcMain.handle("recovery:run", (_event: IpcMainInvokeEvent, action: unknown) =>
+    deps.runRecovery(parseRecoveryAction(action)),
+  )
   ipcMain.handle("kill-sidecar", () => deps.killSidecar())
   ipcMain.handle("await-initialization", (event: IpcMainInvokeEvent) => {
     const send = (step: InitStep) => event.sender.send("init-step", step)

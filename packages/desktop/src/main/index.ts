@@ -51,6 +51,7 @@ import { migrate } from "./migrate"
 import { getStore } from "./store"
 import { checkUpdate, checkForUpdates, installUpdate, setupAutoUpdater } from "./updater"
 import { Deferred, Effect, Fiber } from "effect"
+import { bundledRecoveryExecutable, createStartupRecovery } from "./startup-recovery"
 
 const TEST_ONBOARDING = process.env.BHARATCODE_TEST_ONBOARDING === "1" || process.env.OPENCODE_TEST_ONBOARDING === "1"
 const jsCallStackFeature = "DocumentPolicyIncludeJSCallStacksInCrashReports"
@@ -224,6 +225,9 @@ const main = Effect.gen(function* () {
   }
 
   preferAppEnv(app.getPath("userData"))
+  const startupRecovery = createStartupRecovery({
+    executable: bundledRecoveryExecutable(desktopResourcesPath()),
+  })
 
   app.on("second-instance", (_event: Event, argv: string[]) => {
     const urls = supportedDeepLinks(argv)
@@ -276,6 +280,8 @@ const main = Effect.gen(function* () {
   const loadingComplete = Deferred.makeUnsafe<void>()
 
   registerIpcHandlers({
+    inspectRecovery: () => startupRecovery.inspect(),
+    runRecovery: (action) => startupRecovery.run(action),
     killSidecar: () => killSidecar(),
     awaitInitialization: Effect.fnUntraced(
       function* (sendStep) {
@@ -346,6 +352,15 @@ const main = Effect.gen(function* () {
 
   yield* Effect.promise(() => app.whenReady())
 
+  let overlay: BrowserWindow | null = null
+  const recoveryStatus = yield* Effect.promise(() => startupRecovery.inspect())
+  if (recoveryStatus.state !== "ready") {
+    setInitStep({ phase: "recovery_waiting" })
+    overlay = createLoadingWindow()
+    yield* Effect.promise(() => startupRecovery.waitUntilReady(recoveryStatus))
+    setInitStep({ phase: "server_waiting" })
+  }
+
   yield* Effect.promise(() => syncCapabilityRuntime()).pipe(
     Effect.catch((error) =>
       Effect.sync(() => {
@@ -374,8 +389,6 @@ const main = Effect.gen(function* () {
     const base = xdg && xdg.length > 0 ? xdg : join(homedir(), ".local", "share")
     return !existsSync(join(base, "opencode", "opencode.db"))
   })()
-  let overlay: BrowserWindow | null = null
-
   const port = yield* Effect.gen(function* () {
     const fromEnv = process.env.OPENCODE_PORT
     if (fromEnv) {

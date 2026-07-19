@@ -37,6 +37,7 @@ import { Heap } from "./cli/heap"
 import { drizzle } from "drizzle-orm/bun-sqlite"
 import { ensureProcessMetadata } from "@opencode-ai/core/util/opencode-process"
 import { isRecord } from "@/util/record"
+import { createDefaultRecoveryController, DoctorCommand, RecoveryCommand } from "./cli/cmd/doctor"
 
 const processMetadata = ensureProcessMetadata("main")
 
@@ -53,6 +54,17 @@ process.on("uncaughtException", (e) => {
 })
 
 const args = hideBin(process.argv)
+const requestedCommand = (() => {
+  for (let index = 0; index < args.length; index++) {
+    const value = args[index]!
+    if (value === "--log-level") {
+      index++
+      continue
+    }
+    if (value.startsWith("-")) continue
+    return value
+  }
+})()
 
 function show(out: string) {
   const text = out.trimStart()
@@ -114,8 +126,16 @@ const cli = yargs(args)
       run_id: processMetadata.runID,
     })
 
+    const recoveryCommand = requestedCommand === "doctor" || requestedCommand === "recovery"
+    if (!recoveryCommand) {
+      const recovery = await createDefaultRecoveryController().inspect()
+      if (recovery.state !== "ready") {
+        throw new Error("BharatCode recovery is required. Run `bharatcode doctor` before startup.")
+      }
+    }
+
     const marker = Global.Path.database
-    if (!(await Filesystem.exists(marker))) {
+    if (!recoveryCommand && !(await Filesystem.exists(marker))) {
       const tty = process.stderr.isTTY
       process.stderr.write("Performing one time database migration, may take a few minutes..." + EOL)
       const width = 36
@@ -174,6 +194,8 @@ const cli = yargs(args)
   .command(SessionCommand)
   .command(PluginCommand)
   .command(DbCommand)
+  .command(DoctorCommand)
+  .command(RecoveryCommand)
   .fail((msg, err) => {
     if (
       msg?.startsWith("Unknown argument") ||
