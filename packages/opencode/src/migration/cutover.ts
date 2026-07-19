@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto"
-import { lstat, mkdir, open, readFile, readdir, rename, rm, writeFile } from "node:fs/promises"
+import { chmod, lstat, mkdir, open, readFile, readdir, rename, rm, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { Database } from "bun:sqlite"
 
@@ -395,7 +395,22 @@ async function assertNoLinks(root: string): Promise<void> {
 async function digestArtifact(item: string) {
   const info = await lstat(item)
   if (info.isSymbolicLink()) throw new MigrationCutoverError("A destination artifact was an unsupported link.")
-  if (info.isFile()) return digestBytes(await readFile(item))
+  if (info.isFile()) {
+    const bytes = await readFile(item).catch(async (error) => {
+      if (!nodeError(error, "EACCES") && !nodeError(error, "EPERM")) throw error
+      await chmod(item, 0o600)
+      const readable = await lstat(item)
+      if (readable.dev !== info.dev || readable.ino !== info.ino || readable.size !== info.size) {
+        throw new MigrationCutoverError("The migration destination changed.")
+      }
+      return readFile(item)
+    })
+    const after = await lstat(item)
+    if (after.dev !== info.dev || after.ino !== info.ino || after.size !== info.size) {
+      throw new MigrationCutoverError("The migration destination changed.")
+    }
+    return digestBytes(bytes)
+  }
   if (!info.isDirectory()) throw new MigrationCutoverError("A destination artifact was unsupported.")
   return treeIdentity(item)
 }
