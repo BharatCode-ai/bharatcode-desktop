@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test"
-import { mkdir, unlink } from "fs/promises"
+import { mkdir } from "fs/promises"
 import path from "path"
 import { Effect, Layer } from "effect"
 import { ModelsDev } from "@opencode-ai/core/models-dev"
@@ -15,7 +15,7 @@ import { Plugin } from "../../src/plugin/index"
 import { Provider } from "@/provider/provider"
 import { ProviderID, ModelID } from "../../src/provider/schema"
 import { RuntimeFlags } from "@/effect/runtime-flags"
-import { Filesystem } from "@/util/filesystem"
+import { InstanceRef } from "@/effect/instance-ref"
 import { InstanceLayer } from "@/project/instance-layer"
 import { testEffect } from "../lib/effect"
 import { ProductPolicy } from "@/product/policy"
@@ -70,6 +70,88 @@ const providerLayer = (flags: Partial<RuntimeFlags.Info> = {}) =>
     Layer.provide(BharatCodeAccount.defaultLayer),
     Layer.provide(BharatCodeCatalog.defaultLayer),
   )
+
+const isolatedAuthLayer = (root: string) =>
+  Auth.layerWith().pipe(
+    Layer.provide(AppFileSystem.defaultLayer),
+    Layer.provide(
+      Global.layerWith({
+        data: root,
+        state: path.join(root, "state"),
+        auth: path.join(root, "auth.json"),
+      }),
+    ),
+  )
+
+const isolatedGenericProviderLayer = (auth: Layer.Layer<Auth.Service>) => {
+  const models = Layer.succeed(
+    ModelsDev.Service,
+    ModelsDev.Service.of({
+      get: () =>
+        Effect.succeed({
+          opencode: {
+            id: "opencode",
+            name: "OpenCode",
+            env: [],
+            npm: "@ai-sdk/openai-compatible",
+            api: "https://models.invalid/v1",
+            models: {
+              paid: {
+                id: "paid",
+                name: "Paid",
+                release_date: "2026-01-01",
+                attachment: false,
+                reasoning: false,
+                temperature: true,
+                tool_call: true,
+                cost: { input: 1, output: 1 },
+                limit: { context: 128_000, output: 8_000 },
+              },
+            },
+          },
+        }),
+      refresh: () => Effect.void,
+    }),
+  )
+  const config = Layer.succeed(
+    Config.Service,
+    Config.Service.of({
+      get: () => Effect.succeed({}),
+      getGlobal: () => Effect.succeed({}),
+      getConsoleState: () =>
+        Effect.succeed({ consoleManagedProviders: [], activeOrgName: undefined, switchableOrgCount: 0 }),
+      update: () => Effect.void,
+      updateGlobal: (info) => Effect.succeed({ info, changed: false }),
+      invalidate: () => Effect.void,
+      directories: () => Effect.succeed([]),
+      waitForDependencies: () => Effect.void,
+    }),
+  )
+  const plugin = Layer.succeed(
+    Plugin.Service,
+    Plugin.Service.of({
+      trigger: (_name, _input, output) => Effect.succeed(output),
+      list: () => Effect.succeed([]),
+      init: () => Effect.void,
+    }),
+  )
+  return Provider.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        AppFileSystem.defaultLayer,
+        Env.defaultLayer,
+        config,
+        auth,
+        plugin,
+        models,
+        RuntimeFlags.defaultLayer,
+        ProductPolicy.genericInternalLayer,
+        BharatCodeAccount.defaultLayer,
+        BharatCodeCatalog.defaultLayer,
+      ),
+    ),
+  )
+}
 
 const list = Provider.use.list()
 
@@ -1645,7 +1727,7 @@ const provideMultiInstance = <A, E, R>(eff: Effect.Effect<A, E, R>) =>
 it.effect("plugin config providers persist after instance dispose", () =>
   Effect.gen(function* () {
     const dir = yield* tmpdirScoped()
-    const configDir = path.join(dir, ".opencode")
+    const configDir = path.join(dir, ".bharatcode")
     const root = path.join(configDir, "plugin")
     yield* Effect.promise(() => mkdir(root, { recursive: true }))
     yield* Effect.promise(() => markPluginDependenciesReady(configDir))
@@ -1702,7 +1784,7 @@ it.instance(
   "plugin config enabled and disabled providers are honored",
   Effect.gen(function* () {
     const instance = yield* TestInstance
-    const configDir = path.join(instance.directory, ".opencode")
+    const configDir = path.join(instance.directory, ".bharatcode")
     const root = path.join(configDir, "plugin")
     yield* Effect.promise(() => mkdir(root, { recursive: true }))
     yield* Effect.promise(() => markPluginDependenciesReady(configDir))
@@ -1753,34 +1835,53 @@ it.effect("opencode loader keeps paid models when config apiKey is present", () 
   }).pipe(provideMultiInstance),
 )
 
-it.effect("opencode loader keeps paid models when auth exists", () =>
-  Effect.gen(function* () {
-    const noneDir = yield* tmpdirScoped()
-    const keyedDir = yield* tmpdirScoped()
+test("opencode loader keeps paid models when auth exists", async () => {
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const keyedDir = yield* tmpdirScoped()
 
-    const listIn = (directory: string) =>
-      Provider.use
-        .list()
-        .pipe(provideInstanceEffect(directory))
-        .pipe(Effect.provide(InstanceLayer.layer), Effect.provide(CrossSpawnSpawner.defaultLayer))
+        const credentialRoot = path.join(yield* tmpdirScoped(), "credentials")
+        yield* Effect.promise(() => mkdir(credentialRoot, { recursive: true, mode: 0o700 }))
+        const authLayer = isolatedAuthLayer(credentialRoot)
 
-    const none = paid(yield* listIn(noneDir))
+        yield* Auth.Service.use((auth) => {
+          const observed: [string, boolean][] = []
+          const sharedAuth = Layer.succeed(
+            Auth.Service,
+            Auth.Service.of({
+              ...auth,
+              get: (key) =>
+                auth.get(key).pipe(Effect.tap((value) => Effect.sync(() => observed.push([`get:${key}`, !!value])))),
+              all: () =>
+                auth
+                  .all()
+                  .pipe(
+                    Effect.tap((value) => Effect.sync(() => observed.push(["all", Object.hasOwn(value, "opencode")]))),
+                  ),
+            }),
+          )
+          const listIn = (directory: string) =>
+            Provider.use
+              .list()
+              .pipe(
+                Effect.provide(isolatedGenericProviderLayer(sharedAuth)),
+                Effect.provideService(InstanceRef, { directory, worktree: directory, project: {} as never }),
+              )
 
-    const authPath = path.join(Global.Path.data, "auth.json")
-    const original = yield* Effect.promise(() => Filesystem.readText(authPath).catch(() => undefined))
+          return Effect.gen(function* () {
+            yield* auth.set("opencode", new Auth.Api({ type: "api", key: "test-key" }))
+            expect(yield* auth.get("opencode")).toMatchObject({ type: "api", key: "test-key" })
 
-    yield* Effect.acquireRelease(
-      Effect.promise(() => Filesystem.write(authPath, JSON.stringify({ opencode: { type: "api", key: "test-key" } }))),
-      () =>
-        Effect.promise(async () => {
-          if (original !== undefined) await Filesystem.write(authPath, original)
-          else await unlink(authPath).catch(() => undefined)
-        }),
-    )
+            const providers = yield* listIn(keyedDir)
 
-    const keyedCount = paid(yield* listIn(keyedDir))
-
-    expect(none).toBe(0)
-    expect(keyedCount).toBeGreaterThan(0)
-  }).pipe(provideMultiInstance),
-)
+            expect(observed).toContainEqual(["all", true])
+            expect(observed).toContainEqual(["get:opencode", true])
+            const keyedCount = paid(providers)
+            expect(keyedCount).toBeGreaterThan(0)
+          })
+        }).pipe(Effect.provide(authLayer))
+      }).pipe(Effect.provide(CrossSpawnSpawner.defaultLayer)),
+    ),
+  )
+})
