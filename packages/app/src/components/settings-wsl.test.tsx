@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test"
-import { wslEnableUpdate, wslSelectUpdate, wslSettingsVisible, wslStatusText } from "./settings-wsl"
+import {
+  runWslStatusAction,
+  wslCanEnable,
+  wslEnableUpdate,
+  wslSelectUpdate,
+  wslSettingsVisible,
+  wslStatusText,
+} from "./settings-wsl"
 import type { WslSnapshot } from "@/context/platform"
 
 const snapshot: WslSnapshot = {
@@ -20,6 +27,8 @@ describe("Windows WSL settings", () => {
   })
 
   test("builds revision-bound enable, disable, and selection updates", () => {
+    expect(wslCanEnable(snapshot)).toBe(true)
+    expect(wslCanEnable({ ...snapshot, distributions: [] })).toBe(false)
     expect(wslEnableUpdate(snapshot, true)).toEqual({
       enabled: true,
       expectedRevision: 8,
@@ -36,5 +45,25 @@ describe("Windows WSL settings", () => {
   test("renders only safe phase and error-code text", () => {
     expect(wslStatusText({ phase: "running" })).toBe("Running")
     expect(wslStatusText({ phase: "error", code: "selection-invalid" })).toBe("Error: selection-invalid")
+  })
+
+  test("contains refresh and retry failures inside the busy and error boundary", async () => {
+    const busy: boolean[] = []
+    const errors: string[] = []
+    const results: WslSnapshot[] = []
+    const hooks = {
+      setBusy: (value: boolean) => busy.push(value),
+      onResult: (value: WslSnapshot) => results.push(value),
+      onError: (error: unknown) => errors.push(error instanceof Error ? error.message : String(error)),
+    }
+
+    await runWslStatusAction(async () => snapshot, hooks)
+    await runWslStatusAction(async () => {
+      throw new Error("refresh failed")
+    }, hooks)
+
+    expect(busy).toEqual([true, false, true, false])
+    expect(results).toEqual([snapshot])
+    expect(errors).toEqual(["refresh failed"])
   })
 })

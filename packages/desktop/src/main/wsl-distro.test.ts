@@ -20,7 +20,14 @@ HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Lxss\\${id}
     DefaultUid          REG_DWORD ${defaultUid}
 `
 
-function executor(options?: { uid?: string; registry?: () => string; quiet?: () => string }): {
+function executor(options?: {
+  uid?: string
+  user?: string
+  registry?: () => string
+  quiet?: () => string
+  running?: () => string
+  verbose?: () => string
+}): {
   execute: WslExecute
   calls: Array<{ executable: string; args: readonly string[] }>
 } {
@@ -31,10 +38,13 @@ function executor(options?: { uid?: string; registry?: () => string; quiet?: () 
       calls.push({ executable, args })
       if (executable.endsWith("reg.exe")) return { stdout: options?.registry?.() ?? registry() }
       if (args.join(" ") === "--list --quiet") return { stdout: options?.quiet?.() ?? quiet }
-      if (args.join(" ") === "--list --running --quiet") return { stdout: running }
-      if (args.join(" ") === "--list --verbose") return { stdout: verbose }
-      if (args.at(-1) === "-un") return { stdout: "private-user\n" }
-      if (args.at(-1) === "-u") return { stdout: `${options?.uid ?? "1000"}\n` }
+      if (args.join(" ") === "--list --running --quiet") return { stdout: options?.running?.() ?? running }
+      if (args.join(" ") === "--list --verbose") return { stdout: options?.verbose?.() ?? verbose }
+      if (args.join(" ").endsWith("--exec /usr/bin/env LC_ALL=C /usr/bin/id")) {
+        const uid = options?.uid ?? "1000"
+        const user = options?.user ?? "private-user"
+        return { stdout: `uid=${uid}(${user}) gid=${uid}(${user}) groups=${uid}(${user})\n` }
+      }
       throw new Error(`unexpected command: ${executable} ${args.join(" ")}`)
     },
   }
@@ -134,7 +144,9 @@ describe("main-only WSL selection service", () => {
     expect(JSON.stringify(stored)).not.toContain("private-user")
     expect(JSON.stringify(stored)).not.toContain("11111111")
     expect(
-      command.calls.some((call) => call.args.join(" ") === "--distribution Ubuntu Français --exec /usr/bin/id -u"),
+      command.calls.some(
+        (call) => call.args.join(" ") === "--distribution Ubuntu Français --exec /usr/bin/env LC_ALL=C /usr/bin/id",
+      ),
     ).toBe(true)
   })
 
@@ -176,6 +188,29 @@ describe("main-only WSL selection service", () => {
     expect(stored).toBeUndefined()
   })
 
+  test("rejects a same-name registry replacement during identity resolution", async () => {
+    let registryCalls = 0
+    const command = executor({
+      registry: () =>
+        registryCalls++ === 0 ? registry() : registry("Ubuntu Français", "{AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE}"),
+    })
+    let stored: unknown
+    const service = createWslService({
+      platform: "win32",
+      env: { SystemRoot: "C:\\Windows" },
+      execute: command.execute,
+      readState: () => stored,
+      writeState: (value) => {
+        stored = value
+      },
+    })
+
+    expect(
+      await service.configure({ enabled: true, expectedRevision: 0, selectedDisplayName: "Ubuntu Français" }),
+    ).toMatchObject({ enabled: false, revision: 0, status: { phase: "error", code: "selection-invalid" } })
+    expect(stored).toBeUndefined()
+  })
+
   test("rejects stale writes and detects a replaced or vanished selection", async () => {
     let instance = "{11111111-2222-3333-4444-555555555555}"
     let names = quiet
@@ -195,7 +230,7 @@ describe("main-only WSL selection service", () => {
     await expect(service.configure({ enabled: false, expectedRevision: 0 })).rejects.toThrow("revision")
 
     instance = "{AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE}"
-    expect(await service.retry()).toMatchObject({ status: { phase: "error", code: "selection-invalid" } })
+    expect(await service.snapshot()).toMatchObject({ status: { phase: "error", code: "selection-invalid" } })
 
     instance = "{11111111-2222-3333-4444-555555555555}"
     names = quiet.replace("Ubuntu Français\u0000\r\n", "")
@@ -223,6 +258,97 @@ describe("main-only WSL selection service", () => {
     expect(stored).toEqual({ schema: 1, enabled: true, revision: 1, selectedDisplayName: "Ubuntu Français" })
   })
 
+  test("serializes snapshot and configuration operations", async () => {
+    const command = executor()
+    let active = 0
+    let maximum = 0
+    const execute: WslExecute = async (executable, args) => {
+      active += 1
+      maximum = Math.max(maximum, active)
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      try {
+        return await command.execute(executable, args)
+      } finally {
+        active -= 1
+      }
+    }
+    const service = createWslService({
+      platform: "win32",
+      env: { SystemRoot: "C:\\Windows" },
+      execute,
+      readState: () => undefined,
+      writeState: () => undefined,
+    })
+
+    await Promise.all([service.snapshot(), service.snapshot()])
+
+    expect(maximum).toBe(3)
+  })
+
+  test("prevents a stale snapshot completion from overwriting a newer selection", async () => {
+    const command = executor({
+      registry: () => `${registry()}\n${registry("Debian Detenido", "{AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE}")}`,
+    })
+    let stored: unknown
+    let holdUbuntuIdentity = false
+    let enterSnapshot!: () => void
+    let releaseSnapshot!: () => void
+    const snapshotEntered = new Promise<void>((resolve) => {
+      enterSnapshot = resolve
+    })
+    const snapshotReleased = new Promise<void>((resolve) => {
+      releaseSnapshot = resolve
+    })
+    const execute: WslExecute = async (executable, args) => {
+      if (
+        holdUbuntuIdentity &&
+        args.join(" ") === "--distribution Ubuntu Français --exec /usr/bin/env LC_ALL=C /usr/bin/id"
+      ) {
+        enterSnapshot()
+        await snapshotReleased
+      }
+      return command.execute(executable, args)
+    }
+    const service = createWslService({
+      platform: "win32",
+      env: { SystemRoot: "C:\\Windows" },
+      execute,
+      readState: () => stored,
+      writeState: (value) => {
+        stored = value
+      },
+    })
+    await service.configure({ enabled: true, expectedRevision: 0, selectedDisplayName: "Ubuntu Français" })
+
+    holdUbuntuIdentity = true
+    const staleSnapshot = service.snapshot()
+    await snapshotEntered
+    let selectionSettled = false
+    const newerSelection = service
+      .configure({ enabled: true, expectedRevision: 1, selectedDisplayName: "Debian Detenido" })
+      .finally(() => {
+        selectionSettled = true
+      })
+    await Promise.resolve()
+    expect(selectionSettled).toBe(false)
+    releaseSnapshot()
+
+    await staleSnapshot
+    expect(await newerSelection).toMatchObject({
+      enabled: true,
+      revision: 2,
+      selectedDisplayName: "Debian Detenido",
+      status: { phase: "ready" },
+    })
+    holdUbuntuIdentity = false
+    expect(await service.snapshot()).toMatchObject({
+      enabled: true,
+      revision: 2,
+      selectedDisplayName: "Debian Detenido",
+      status: { phase: "ready" },
+    })
+  })
+
   test("fails safely when WSL is unavailable or only WSL1 is installed", async () => {
     const unavailable = createWslService({
       platform: "linux",
@@ -242,5 +368,33 @@ describe("main-only WSL selection service", () => {
       writeState: () => undefined,
     })
     expect(await wsl1.snapshot()).toMatchObject({ status: { phase: "error", code: "selection-invalid" } })
+
+    const onlyLegacy = createWslService({
+      platform: "win32",
+      env: { SystemRoot: "C:\\Windows" },
+      execute: executor({
+        quiet: () => "Legacy WSL\n",
+        running: () => "",
+        verbose: () => "NAME STATE VERSION\nLegacy WSL Stopped 1\n",
+      }).execute,
+      readState: () => undefined,
+      writeState: () => undefined,
+    })
+    expect(await onlyLegacy.snapshot()).toMatchObject({
+      enabled: false,
+      distributions: [],
+      status: { phase: "error", code: "no-wsl2-distribution" },
+    })
+    expect(
+      await onlyLegacy.configure({ enabled: true, expectedRevision: 0, selectedDisplayName: "Legacy WSL" }),
+    ).toMatchObject({
+      enabled: false,
+      revision: 0,
+      status: { phase: "error", code: "no-wsl2-distribution" },
+    })
+    expect(await onlyLegacy.retry()).toMatchObject({
+      enabled: false,
+      status: { phase: "error", code: "no-wsl2-distribution" },
+    })
   })
 })

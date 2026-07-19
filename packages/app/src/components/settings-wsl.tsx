@@ -26,6 +26,29 @@ export function wslEnableUpdate(snapshot: WslSnapshot, enabled: boolean): WslCon
   return { enabled: true, expectedRevision: snapshot.revision, selectedDisplayName }
 }
 
+export function wslCanEnable(snapshot: WslSnapshot): boolean {
+  return snapshot.enabled || snapshot.distributions.length > 0
+}
+
+export async function runWslStatusAction(
+  action: () => Promise<WslSnapshot | undefined> | WslSnapshot | null | undefined,
+  hooks: {
+    setBusy: (busy: boolean) => void
+    onResult: (snapshot: WslSnapshot) => void
+    onError: (error: unknown) => void
+  },
+): Promise<void> {
+  hooks.setBusy(true)
+  try {
+    const result = await action()
+    if (result) hooks.onResult(result)
+  } catch (error) {
+    hooks.onError(error)
+  } finally {
+    hooks.setBusy(false)
+  }
+}
+
 export function wslSelectUpdate(snapshot: WslSnapshot, selectedDisplayName: string): WslConfigurationUpdate {
   if (!snapshot.distributions.some((distribution) => distribution.displayName === selectedDisplayName)) {
     throw new Error("The selected WSL2 distribution is unavailable")
@@ -58,31 +81,33 @@ export const SettingsWsl: Component = () => {
   const [state, setState] = createStore({ busy: false })
   const [snapshot, { mutate, refetch }] = createResource(() => platform.getWslSnapshot?.())
 
+  const reportError = (title: string, error: unknown) => {
+    showToast({
+      variant: "error",
+      title,
+      description: error instanceof Error ? error.message : String(error),
+    })
+  }
+
+  const run = (title: string, action: () => Promise<WslSnapshot | undefined> | WslSnapshot | null | undefined) =>
+    runWslStatusAction(action, {
+      setBusy: (busy) => setState("busy", busy),
+      onResult: mutate,
+      onError: (error) => reportError(title, error),
+    })
+
   async function apply(update: WslConfigurationUpdate) {
     if (!platform.configureWsl) return
-    setState("busy", true)
-    try {
-      mutate(await platform.configureWsl(update))
-    } catch (error) {
-      showToast({
-        variant: "error",
-        title: "Could not update WSL",
-        description: error instanceof Error ? error.message : String(error),
-      })
-      await refetch()
-    } finally {
-      setState("busy", false)
-    }
+    await run("Could not update WSL", () => platform.configureWsl!(update))
   }
 
   async function retry() {
     if (!platform.retryWsl) return
-    setState("busy", true)
-    try {
-      mutate(await platform.retryWsl())
-    } finally {
-      setState("busy", false)
-    }
+    await run("Could not retry WSL", () => platform.retryWsl!())
+  }
+
+  async function refresh() {
+    await run("Could not refresh WSL", () => refetch())
   }
 
   return (
@@ -95,11 +120,15 @@ export const SettingsWsl: Component = () => {
         <SettingsRow title="Enable WSL" description="Run BharatCode inside the selected WSL2 distribution.">
           <Switch
             checked={snapshot()?.enabled ?? false}
-            disabled={state.busy || !snapshot()}
+            disabled={state.busy || !snapshot() || !wslCanEnable(snapshot()!)}
             onChange={(enabled) => {
               const current = snapshot()
-              if (!current) return
-              void apply(wslEnableUpdate(current, enabled))
+              if (!current || (enabled && !wslCanEnable(current))) return
+              try {
+                void apply(wslEnableUpdate(current, enabled))
+              } catch (error) {
+                reportError("Could not update WSL", error)
+              }
             }}
           />
         </SettingsRow>
@@ -125,7 +154,7 @@ export const SettingsWsl: Component = () => {
         </SettingsRow>
         <SettingsRow title="Status" description={snapshot() ? wslStatusText(snapshot()!.status) : "Checking"}>
           <div class="flex gap-2">
-            <Button size="small" variant="secondary" disabled={state.busy} onClick={() => void refetch()}>
+            <Button size="small" variant="secondary" disabled={state.busy} onClick={() => void refresh()}>
               Refresh
             </Button>
             <Show when={snapshot()?.status.phase === "error"}>

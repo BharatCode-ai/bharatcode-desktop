@@ -134,12 +134,6 @@ function parseRegistryIdentity(output: string, displayName: string): { instanceI
   return matches[0]
 }
 
-function safeUser(value: string): string {
-  const user = value.trim()
-  if (!/^[a-z_][a-z0-9_-]{0,31}$/u.test(user)) throw new WslServiceError("selection-invalid")
-  return user
-}
-
 function safeUid(value: string): number {
   const text = value.trim()
   if (!/^(?:0|[1-9]\d*)$/u.test(text)) throw new WslServiceError("selection-invalid")
@@ -147,6 +141,12 @@ function safeUid(value: string): number {
   if (!Number.isSafeInteger(uid)) throw new WslServiceError("selection-invalid")
   if (uid === 0) throw new WslServiceError("root-user")
   return uid
+}
+
+function parseIdentityObservation(value: string): { user: string; uid: number } {
+  const match = value.trim().match(/^uid=((?:0|[1-9]\d*))\(([a-z_][a-z0-9_-]{0,31})\)(?:\s|$)/u)
+  if (!match) throw new WslServiceError("selection-invalid")
+  return { uid: safeUid(match[1]), user: match[2] }
 }
 
 type WslServiceOptions = {
@@ -157,7 +157,7 @@ type WslServiceOptions = {
   writeState: (value: WslStoredState) => void
 }
 
-type PrivateIdentity = { instanceIdSha256: string; user: string; uid: number }
+type PrivateIdentity = { displayName: string; instanceIdSha256: string; user: string; uid: number }
 
 export function createWslService(options: WslServiceOptions): {
   snapshot: () => Promise<WslSnapshot>
@@ -166,6 +166,16 @@ export function createWslService(options: WslServiceOptions): {
 } {
   const execute = options.execute ?? nodeExecute
   let privateIdentity: PrivateIdentity | undefined
+  let operationTail: Promise<void> = Promise.resolve()
+
+  const serialize = <T>(operation: () => Promise<T>): Promise<T> => {
+    const result = operationTail.then(operation, operation)
+    operationTail = result.then(
+      () => undefined,
+      () => undefined,
+    )
+    return result
+  }
 
   const discover = async (): Promise<{
     executables: ReturnType<typeof trustedWindowsExecutables>
@@ -209,16 +219,36 @@ export function createWslService(options: WslServiceOptions): {
         "/s",
       ])
       const registryIdentity = parseRegistryIdentity(registry.stdout, displayName)
-      const [user, uid] = await Promise.all([
-        execute(executables.wsl, ["--distribution", displayName, "--exec", "/usr/bin/id", "-un"]),
-        execute(executables.wsl, ["--distribution", displayName, "--exec", "/usr/bin/id", "-u"]),
+      const identity = await execute(executables.wsl, [
+        "--distribution",
+        displayName,
+        "--exec",
+        "/usr/bin/env",
+        "LC_ALL=C",
+        "/usr/bin/id",
       ])
-      const resolvedUid = safeUid(uid.stdout)
-      if (registryIdentity.defaultUid !== resolvedUid) throw new WslServiceError("selection-invalid")
+      const observation = parseIdentityObservation(identity.stdout)
+      const rediscovered = await discover()
+      const selected = rediscovered.list.find((item) => item.displayName === displayName)
+      if (!selected || selected.version !== 2) throw new WslServiceError("selection-invalid")
+      const registryAfter = await execute(executables.registry, [
+        "query",
+        "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Lxss",
+        "/s",
+      ])
+      const revalidated = parseRegistryIdentity(registryAfter.stdout, displayName)
+      if (
+        registryIdentity.instanceId !== revalidated.instanceId ||
+        registryIdentity.defaultUid !== revalidated.defaultUid ||
+        revalidated.defaultUid !== observation.uid
+      ) {
+        throw new WslServiceError("selection-invalid")
+      }
       return {
+        displayName,
         instanceIdSha256: createHash("sha256").update(registryIdentity.instanceId).digest("hex"),
-        user: safeUser(user.stdout),
-        uid: resolvedUid,
+        user: observation.user,
+        uid: observation.uid,
       }
     } catch (error) {
       if (error instanceof WslServiceError) throw error
@@ -230,12 +260,22 @@ export function createWslService(options: WslServiceOptions): {
     try {
       const discovered = await discover()
       const distributions: WslMainDistribution[] = discovered.list
-      if (!state.enabled) return toWslSnapshot({ stored: state, distributions, status: { phase: "off" } })
+      if (!state.enabled) {
+        const status = distributions.some((distribution) => distribution.version === 2)
+          ? ({ phase: "off" } as const)
+          : ({ phase: "error", code: "no-wsl2-distribution" } as const)
+        return toWslSnapshot({ stored: state, distributions, status })
+      }
 
       const selected = discovered.list.find((item) => item.displayName === state.selectedDisplayName)
       if (!selected || selected.version !== 2) throw new WslServiceError("selection-invalid")
       const resolved = await resolveIdentity(discovered.executables, selected.displayName)
-      if (compareIdentity && privateIdentity && resolved.instanceIdSha256 !== privateIdentity.instanceIdSha256) {
+      if (
+        compareIdentity &&
+        privateIdentity &&
+        (resolved.displayName !== privateIdentity.displayName ||
+          resolved.instanceIdSha256 !== privateIdentity.instanceIdSha256)
+      ) {
         throw new WslServiceError("selection-invalid")
       }
       privateIdentity = resolved
@@ -247,46 +287,50 @@ export function createWslService(options: WslServiceOptions): {
   }
 
   return {
-    snapshot: () => render(parseStoredWslState(options.readState()), false),
-    configure: async (update) => {
-      const state = parseStoredWslState(options.readState())
-      if (state.revision !== update.expectedRevision) {
-        applyWslConfigurationUpdate(state, update)
-      }
-      if (!update.enabled) {
-        const next = applyWslConfigurationUpdate(parseStoredWslState(options.readState()), update)
-        options.writeState(next)
-        privateIdentity = undefined
-        return render(next, false)
-      }
-
-      try {
-        const discovered = await discover()
-        const selected = discovered.list.find((item) => item.displayName === update.selectedDisplayName)
-        if (!selected) throw new WslServiceError("selection-invalid")
-        if (selected.version !== 2) throw new WslServiceError("selection-invalid")
-        const resolved = await resolveIdentity(discovered.executables, selected.displayName)
-        const next = applyWslConfigurationUpdate(parseStoredWslState(options.readState()), update)
-        options.writeState(next)
-        privateIdentity = resolved
-        return toWslSnapshot({
-          stored: next,
-          distributions: discovered.list,
-          status: { phase: "ready" },
-          privateRuntime: resolved,
-        })
-      } catch (error) {
-        if (error instanceof WslRevisionConflict) throw error
-        const code = error instanceof WslServiceError ? error.code : "selection-invalid"
-        let distributions: WslMainDistribution[] = []
-        try {
-          distributions = (await discover()).list
-        } catch {
-          // Keep the renderer error closed when discovery is unavailable.
+    snapshot: () => serialize(() => render(parseStoredWslState(options.readState()), true)),
+    configure: (update) =>
+      serialize(async () => {
+        const state = parseStoredWslState(options.readState())
+        if (state.revision !== update.expectedRevision) {
+          applyWslConfigurationUpdate(state, update)
         }
-        return toWslSnapshot({ stored: state, distributions, status: { phase: "error", code } })
-      }
-    },
-    retry: () => render(parseStoredWslState(options.readState()), true),
+        if (!update.enabled) {
+          const next = applyWslConfigurationUpdate(parseStoredWslState(options.readState()), update)
+          options.writeState(next)
+          privateIdentity = undefined
+          return render(next, false)
+        }
+
+        try {
+          const discovered = await discover()
+          if (!discovered.list.some((item) => item.version === 2)) {
+            throw new WslServiceError("no-wsl2-distribution")
+          }
+          const selected = discovered.list.find((item) => item.displayName === update.selectedDisplayName)
+          if (!selected) throw new WslServiceError("selection-invalid")
+          if (selected.version !== 2) throw new WslServiceError("selection-invalid")
+          const resolved = await resolveIdentity(discovered.executables, selected.displayName)
+          const next = applyWslConfigurationUpdate(parseStoredWslState(options.readState()), update)
+          options.writeState(next)
+          privateIdentity = resolved
+          return toWslSnapshot({
+            stored: next,
+            distributions: discovered.list,
+            status: { phase: "ready" },
+            privateRuntime: resolved,
+          })
+        } catch (error) {
+          if (error instanceof WslRevisionConflict) throw error
+          const code = error instanceof WslServiceError ? error.code : "selection-invalid"
+          let distributions: WslMainDistribution[] = []
+          try {
+            distributions = (await discover()).list
+          } catch {
+            // Keep the renderer error closed when discovery is unavailable.
+          }
+          return toWslSnapshot({ stored: state, distributions, status: { phase: "error", code } })
+        }
+      }),
+    retry: () => serialize(() => render(parseStoredWslState(options.readState()), true)),
   }
 }
