@@ -1,5 +1,8 @@
 import type { DesktopMenuAction } from "@opencode-ai/app/desktop-menu"
 import type { CapabilitySnapshot } from "../main/capabilities"
+import type { WslConfigurationUpdate, WslSnapshot } from "../main/wsl-contract"
+
+export type { WslConfigurationUpdate, WslSnapshot } from "../main/wsl-contract"
 
 export type InitStep =
   | { phase: "recovery_waiting" }
@@ -32,7 +35,8 @@ export type RecoveryAction =
   | { type: "start-fresh"; confirmed: true }
   | { type: "repair-marker"; confirmed: true }
 
-export type WslConfig = { enabled: boolean }
+/** @deprecated The legacy boolean WSL contract has no callable preload API. */
+export type WslConfig = never
 
 export type LinuxDisplayBackend = "wayland" | "auto"
 export type TitlebarTheme = {
@@ -95,13 +99,13 @@ export type ElectronAPI = {
   consumeInitialDeepLinks: () => Promise<string[]>
   getDefaultServerUrl: () => Promise<string | null>
   setDefaultServerUrl: (url: string | null) => Promise<void>
-  getWslConfig: () => Promise<WslConfig>
-  setWslConfig: (config: WslConfig) => Promise<void>
+  getWslSnapshot: () => Promise<WslSnapshot>
+  configureWsl: (update: WslConfigurationUpdate) => Promise<WslSnapshot>
+  retryWsl: () => Promise<WslSnapshot>
   getDisplayBackend: () => Promise<LinuxDisplayBackend | null>
   setDisplayBackend: (backend: LinuxDisplayBackend | null) => Promise<void>
   parseMarkdownCommand: (markdown: string) => Promise<string>
   checkAppExists: (appName: string) => Promise<boolean>
-  wslPath: (path: string, mode: "windows" | "linux" | null) => Promise<string>
   resolveAppPath: (appName: string) => Promise<string | null>
   storeGet: (name: string, key: string) => Promise<string | null>
   storeSet: (name: string, key: string, value: string) => Promise<void>

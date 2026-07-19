@@ -80,27 +80,6 @@ const createPlatform = (): Platform => {
     return undefined
   })()
 
-  const isWslEnabled = async () => {
-    if (os !== "windows") return false
-    return window.api
-      .getWslConfig()
-      .then((config) => config.enabled)
-      .catch(() => false)
-  }
-
-  const wslHome = async () => {
-    if (!(await isWslEnabled())) return undefined
-    return window.api.wslPath("~", "windows").catch(() => undefined)
-  }
-
-  const handleWslPicker = async <T extends string | string[]>(result: T | null): Promise<T | null> => {
-    if (!result || !(await isWslEnabled())) return result
-    if (Array.isArray(result)) {
-      return Promise.all(result.map((path) => window.api.wslPath(path, "linux").catch(() => path))) as any
-    }
-    return window.api.wslPath(result, "linux").catch(() => result) as any
-  }
-
   const runDesktopMenuAction: Platform["runDesktopMenuAction"] = (action) => {
     switch (action) {
       case "view.resetZoom":
@@ -150,31 +129,26 @@ const createPlatform = (): Platform => {
     version: pkg.version,
 
     async openDirectoryPickerDialog(opts) {
-      const defaultPath = await wslHome()
-      const result = await window.api.openDirectoryPicker({
+      return window.api.openDirectoryPicker({
         multiple: opts?.multiple ?? false,
         title: opts?.title ?? t("desktop.dialog.chooseFolder"),
-        defaultPath,
       })
-      return await handleWslPicker(result)
     },
 
     async openFilePickerDialog(opts) {
-      const result = await window.api.openFilePicker({
+      return window.api.openFilePicker({
         multiple: opts?.multiple ?? false,
         title: opts?.title ?? t("desktop.dialog.chooseFile"),
         accept: opts?.accept ?? ACCEPTED_FILE_TYPES,
         extensions: opts?.extensions ?? ACCEPTED_FILE_EXTENSIONS,
       })
-      return handleWslPicker(result)
     },
 
     async saveFilePickerDialog(opts) {
-      const result = await window.api.saveFilePicker({
+      return window.api.saveFilePicker({
         title: opts?.title ?? t("desktop.dialog.saveFile"),
         defaultPath: opts?.defaultPath,
       })
-      return handleWslPicker(result)
     },
 
     openLink(url: string) {
@@ -183,14 +157,7 @@ const createPlatform = (): Platform => {
     async openPath(path: string, app?: string) {
       if (os === "windows") {
         const resolvedApp = app ? await window.api.resolveAppPath(app).catch(() => null) : null
-        const resolvedPath = await (async () => {
-          if (await isWslEnabled()) {
-            const converted = await window.api.wslPath(path, "windows").catch(() => null)
-            if (converted) return converted
-          }
-          return path
-        })()
-        return window.api.openPath(resolvedPath, resolvedApp ?? undefined)
+        return window.api.openPath(path, resolvedApp ?? undefined)
       }
       return window.api.openPath(path, app)
     },
@@ -247,11 +214,9 @@ const createPlatform = (): Platform => {
       return fetch(input, init)
     },
 
-    getWslEnabled: () => isWslEnabled(),
-
-    setWslEnabled: async (enabled) => {
-      await window.api.setWslConfig({ enabled })
-    },
+    getWslSnapshot: os === "windows" ? () => window.api.getWslSnapshot() : undefined,
+    configureWsl: os === "windows" ? (update) => window.api.configureWsl(update) : undefined,
+    retryWsl: os === "windows" ? () => window.api.retryWsl() : undefined,
 
     getDefaultServer: async () => {
       const url = await window.api.getDefaultServerUrl().catch(() => null)

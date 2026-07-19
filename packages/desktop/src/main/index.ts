@@ -22,8 +22,8 @@ import {
   setStoredCapabilityEnabled,
   uninstallStoredCapability,
 } from "./capabilities"
-import type { InitStep, ServerReadyData, SqliteMigrationProgress, WslConfig } from "../preload/types"
-import { checkAppExists, resolveAppPath, wslPath } from "./apps"
+import type { InitStep, ServerReadyData, SqliteMigrationProgress } from "../preload/types"
+import { checkAppExists, resolveAppPath } from "./apps"
 import { CHANNEL, UPDATER_ENABLED } from "./constants"
 import { transcribeDictationAudio } from "./dictation"
 import { registerIpcHandlers, sendDeepLinks, sendMenuCommand, sendSqliteMigrationProgress } from "./ipc"
@@ -32,10 +32,8 @@ import { parseMarkdown } from "./markdown"
 import { createMenu } from "./menu"
 import {
   getDefaultServerUrl,
-  getWslConfig,
   preferAppEnv,
   setDefaultServerUrl,
-  setWslConfig,
   spawnLocalServer,
   type SidecarListener,
 } from "./server"
@@ -52,6 +50,7 @@ import { getStore } from "./store"
 import { checkUpdate, checkForUpdates, installUpdate, setupAutoUpdater } from "./updater"
 import { Deferred, Effect, Fiber } from "effect"
 import { bundledRecoveryExecutable, createStartupRecovery } from "./startup-recovery"
+import { createWslService } from "./wsl-distro"
 
 const TEST_ONBOARDING = process.env.BHARATCODE_TEST_ONBOARDING === "1" || process.env.OPENCODE_TEST_ONBOARDING === "1"
 const jsCallStackFeature = "DocumentPolicyIncludeJSCallStacksInCrashReports"
@@ -67,6 +66,13 @@ const initEmitter = new EventEmitter()
 let initStep: InitStep = { phase: "server_waiting" }
 
 const pendingDeepLinks: string[] = []
+const WSL_SELECTION_KEY = "wslSelectionV1"
+const wslService = createWslService({
+  platform: process.platform,
+  env: process.env,
+  readState: () => getStore().get(WSL_SELECTION_KEY),
+  writeState: (value) => getStore().set(WSL_SELECTION_KEY, value),
+})
 
 function useEnvProxy() {
   try {
@@ -303,13 +309,13 @@ const main = Effect.gen(function* () {
     consumeInitialDeepLinks: () => pendingDeepLinks.splice(0),
     getDefaultServerUrl: () => getDefaultServerUrl(),
     setDefaultServerUrl: (url) => setDefaultServerUrl(url),
-    getWslConfig: () => Promise.resolve(getWslConfig()),
-    setWslConfig: (config: WslConfig) => setWslConfig(config),
+    getWslSnapshot: () => wslService.snapshot(),
+    configureWsl: (update) => wslService.configure(update),
+    retryWsl: () => wslService.retry(),
     getDisplayBackend: async () => null,
     setDisplayBackend: async () => undefined,
     parseMarkdown: async (markdown) => parseMarkdown(markdown),
     checkAppExists: (appName) => checkAppExists(appName),
-    wslPath: async (path, mode) => wslPath(path, mode),
     resolveAppPath: async (appName) => resolveAppPath(appName),
     loadingWindowComplete: () => Deferred.doneUnsafe(loadingComplete, Effect.void),
     runUpdater: async (alertOnFail) => checkForUpdates(alertOnFail, killSidecar),

@@ -160,6 +160,33 @@ export type FatalRendererErrorLog = {
   os?: DesktopOS
 }
 
+export type WslErrorCode =
+  | "wsl-unavailable"
+  | "no-wsl2-distribution"
+  | "selection-required"
+  | "selection-invalid"
+  | "root-user"
+  | "prerequisite-missing"
+  | "runtime-integrity"
+  | "path-translation"
+  | "start-failed"
+  | "connection-lost"
+  | "stop-failed"
+
+export type WslStatus = { phase: "off" | "ready" | "starting" | "running" } | { phase: "error"; code: WslErrorCode }
+
+export type WslSnapshot = {
+  enabled: boolean
+  revision: number
+  selectedDisplayName?: string
+  distributions: Array<{ displayName: string; version: 2; selected: boolean }>
+  status: WslStatus
+}
+
+export type WslConfigurationUpdate =
+  | { enabled: false; expectedRevision: number }
+  | { enabled: true; expectedRevision: number; selectedDisplayName: string }
+
 export type Platform = {
   /** Platform discriminator */
   platform: PlatformName
@@ -215,11 +242,14 @@ export type Platform = {
   /** Set the default server URL to use on app startup (platform-specific) */
   setDefaultServer?(url: ServerConnection.Key | null): Promise<void> | void
 
-  /** Get the configured WSL integration (desktop only) */
-  getWslEnabled?(): Promise<boolean>
+  /** Read the renderer-safe WSL integration status (Windows desktop only) */
+  getWslSnapshot?(): Promise<WslSnapshot>
 
-  /** Set the configured WSL integration (desktop only) */
-  setWslEnabled?(config: boolean): Promise<void> | void
+  /** Apply a revision-bound WSL selection update (Windows desktop only) */
+  configureWsl?(update: WslConfigurationUpdate): Promise<WslSnapshot>
+
+  /** Revalidate WSL prerequisites and selection (Windows desktop only) */
+  retryWsl?(): Promise<WslSnapshot>
 
   /** Get the preferred display backend (desktop only) */
   getDisplayBackend?(): Promise<DisplayBackend | null> | DisplayBackend | null

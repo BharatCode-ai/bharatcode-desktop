@@ -9,6 +9,7 @@ import { SettingsKeybinds } from "./settings-keybinds"
 import { SettingsMarketplace } from "./settings-marketplace"
 import { SettingsModels } from "./settings-models"
 import { SettingsAccount } from "./settings-account"
+import { SettingsWsl, wslSettingsVisible } from "./settings-wsl"
 
 export const DialogSettings: Component<{ defaultTab?: string }> = (props) => {
   const language = useLanguage()
@@ -47,6 +48,12 @@ export const DialogSettings: Component<{ defaultTab?: string }> = (props) => {
                       <Icon name="mcp" />
                       {language.t("settings.marketplace.title")}
                     </Tabs.Trigger>
+                    <Show when={wslSettingsVisible(platform)}>
+                      <Tabs.Trigger value="wsl">
+                        <Icon name="console" />
+                        {language.t("settings.desktop.section.wsl")}
+                      </Tabs.Trigger>
+                    </Show>
                   </div>
                 </div>
 
@@ -81,6 +88,11 @@ export const DialogSettings: Component<{ defaultTab?: string }> = (props) => {
         <Tabs.Content value="marketplace" class="no-scrollbar">
           <SettingsMarketplace />
         </Tabs.Content>
+        <Show when={wslSettingsVisible(platform)}>
+          <Tabs.Content value="wsl" class="no-scrollbar">
+            <SettingsWsl />
+          </Tabs.Content>
+        </Show>
         <Tabs.Content value="models" class="no-scrollbar">
           <SettingsModels />
         </Tabs.Content>

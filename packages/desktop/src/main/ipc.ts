@@ -10,7 +10,6 @@ import type {
   SqliteMigrationProgress,
   TitlebarTheme,
   WindowConfig,
-  WslConfig,
   BharatCodeAccountStatus,
   BharatCodeSignInOptions,
   DictationAudioInput,
@@ -18,6 +17,7 @@ import type {
   RecoveryStatus,
 } from "../preload/types"
 import type { CapabilitySnapshot } from "./capabilities"
+import { parseWslConfigurationUpdate, type WslConfigurationUpdate, type WslSnapshot } from "./wsl-contract"
 import { runDesktopMenuAction } from "./desktop-menu-actions"
 import { getStore } from "./store"
 import { getPinchZoomEnabled, setPinchZoomEnabled, setTitlebar, updateTitlebar } from "./windows"
@@ -37,13 +37,13 @@ type Deps = {
   consumeInitialDeepLinks: () => Promise<string[]> | string[]
   getDefaultServerUrl: () => Promise<string | null> | string | null
   setDefaultServerUrl: (url: string | null) => Promise<void> | void
-  getWslConfig: () => Promise<WslConfig>
-  setWslConfig: (config: WslConfig) => Promise<void> | void
+  getWslSnapshot: () => Promise<WslSnapshot>
+  configureWsl: (update: WslConfigurationUpdate) => Promise<WslSnapshot>
+  retryWsl: () => Promise<WslSnapshot>
   getDisplayBackend: () => Promise<string | null>
   setDisplayBackend: (backend: string | null) => Promise<void> | void
   parseMarkdown: (markdown: string) => Promise<string> | string
   checkAppExists: (appName: string) => Promise<boolean> | boolean
-  wslPath: (path: string, mode: "windows" | "linux" | null) => Promise<string>
   resolveAppPath: (appName: string) => Promise<string | null>
   loadingWindowComplete: () => void
   runUpdater: (alertOnFail: boolean) => Promise<void> | void
@@ -81,17 +81,17 @@ export function registerIpcHandlers(deps: Deps) {
   ipcMain.handle("set-default-server-url", (_event: IpcMainInvokeEvent, url: string | null) =>
     deps.setDefaultServerUrl(url),
   )
-  ipcMain.handle("get-wsl-config", () => deps.getWslConfig())
-  ipcMain.handle("set-wsl-config", (_event: IpcMainInvokeEvent, config: WslConfig) => deps.setWslConfig(config))
+  ipcMain.handle("wsl:get-snapshot", () => deps.getWslSnapshot())
+  ipcMain.handle("wsl:configure", (_event: IpcMainInvokeEvent, update: unknown) =>
+    deps.configureWsl(parseWslConfigurationUpdate(update)),
+  )
+  ipcMain.handle("wsl:retry", () => deps.retryWsl())
   ipcMain.handle("get-display-backend", () => deps.getDisplayBackend())
   ipcMain.handle("set-display-backend", (_event: IpcMainInvokeEvent, backend: string | null) =>
     deps.setDisplayBackend(backend),
   )
   ipcMain.handle("parse-markdown", (_event: IpcMainInvokeEvent, markdown: string) => deps.parseMarkdown(markdown))
   ipcMain.handle("check-app-exists", (_event: IpcMainInvokeEvent, appName: string) => deps.checkAppExists(appName))
-  ipcMain.handle("wsl-path", (_event: IpcMainInvokeEvent, path: string, mode: "windows" | "linux" | null) =>
-    deps.wslPath(path, mode),
-  )
   ipcMain.handle("resolve-app-path", (_event: IpcMainInvokeEvent, appName: string) => deps.resolveAppPath(appName))
   ipcMain.on("loading-window-complete", () => deps.loadingWindowComplete())
   ipcMain.handle("run-updater", (_event: IpcMainInvokeEvent, alertOnFail: boolean) => deps.runUpdater(alertOnFail))
