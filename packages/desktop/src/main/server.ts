@@ -12,6 +12,7 @@ import { getStore } from "./store"
 import type { SqliteMigrationProgress } from "../preload/types"
 import { parseWslRuntimeManifest, wslRuntimeFilename, type WslRuntimeArch } from "./wsl-artifact"
 import { trustedWindowsExecutables } from "./wsl-distro"
+import { createWslPathTranslator } from "./wsl-path"
 import { resolveWslLaunchIdentity, startWslRuntime } from "./wsl-runtime"
 
 export type WslConfig = { enabled: boolean }
@@ -227,15 +228,7 @@ export async function spawnWslServer(
   },
 ) {
   const wslExecutable = trustedWindowsExecutables(options.hostEnv).wsl
-  const execute = async (executable: string, args: readonly string[]) => {
-    const result = await execFileAsync(executable, [...args], {
-      encoding: "utf8",
-      windowsHide: true,
-      shell: false,
-      maxBuffer: 1024 * 1024,
-    })
-    return { stdout: result.stdout, stderr: result.stderr }
-  }
+  const execute = createWslExecute()
   const selected = await resolveWslLaunchIdentity({
     wslExecutable,
     selectedDisplayName: options.selectedDisplayName,
@@ -271,7 +264,27 @@ export async function spawnWslServer(
     health: { wait: Promise.resolve() },
     authorization: runtime.authorization,
     identity: runtime.identity,
+    owned: {
+      stop: runtime.stop,
+      closeInput: runtime.closeInput,
+      exited: runtime.exited,
+    },
   }
+}
+
+export function translateWslProjectPath(
+  path: string,
+  options: {
+    selectedDisplayName: string
+    hostEnv: Readonly<Record<string, string | undefined>>
+  },
+) {
+  const wslExecutable = trustedWindowsExecutables(options.hostEnv).wsl
+  return createWslPathTranslator({
+    wslExecutable,
+    selectedDisplayName: options.selectedDisplayName,
+    execute: createWslExecute(),
+  }).translate(path, "linux")
 }
 
 export async function checkHealth(url: string, username?: string | null, password?: string | null): Promise<boolean> {
@@ -310,6 +323,18 @@ function createSidecarEnv(password: string): Record<string, string> {
   env.BHARATCODE_SERVER_USERNAME = "bharatcode"
   env.BHARATCODE_SERVER_PASSWORD = password
   return env
+}
+
+function createWslExecute() {
+  return async (executable: string, args: readonly string[]) => {
+    const result = await execFileAsync(executable, [...args], {
+      encoding: "utf8",
+      windowsHide: true,
+      shell: false,
+      maxBuffer: 1024 * 1024,
+    })
+    return { stdout: result.stdout, stderr: result.stderr }
+  }
 }
 
 function delay(ms: number) {

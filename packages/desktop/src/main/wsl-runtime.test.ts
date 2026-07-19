@@ -61,7 +61,11 @@ function identity(overrides: Partial<WslDesktopIdentity> = {}): WslDesktopIdenti
   }
 }
 
-function childHarness(records: WslDesktopOutput[] = [identity(), { type: "ready" }], stderrText = "") {
+function childHarness(
+  records: WslDesktopOutput[] = [identity(), { type: "ready" }],
+  stderrText = "",
+  exitOnStop = true,
+) {
   const events = new EventEmitter()
   const stdout = new PassThrough()
   const stderr = new PassThrough()
@@ -83,7 +87,7 @@ function childHarness(records: WslDesktopOutput[] = [identity(), { type: "ready"
         stdout.write('{"type":"stopped"}\n')
         stdout.end()
         stderr.end()
-        events.emit("exit", 0, null)
+        if (exitOnStop) events.emit("exit", 0, null)
       })
     },
     final(callback) {
@@ -96,17 +100,19 @@ function childHarness(records: WslDesktopOutput[] = [identity(), { type: "ready"
   return {
     child: Object.assign(events, { stdin, stdout, stderr }),
     writes,
+    exit: (code = 0) => events.emit("exit", code, null),
   }
 }
 
 async function runtimeInput(options?: {
   records?: WslDesktopOutput[]
   stderr?: string
+  exitOnStop?: boolean
   spawnCalls?: Array<{ executable: string; args: readonly string[]; options: unknown }>
   healthCalls?: Array<{ url: string; username?: string | null; password?: string | null }>
 }) {
   const files = await artifact()
-  const harness = childHarness(options?.records, options?.stderr)
+  const harness = childHarness(options?.records, options?.stderr, options?.exitOnStop)
   const runtimeWindowsPath = `C:\\Program Files\\BharatCode\\resources\\wsl-runtime\\${filename}`
   const execute = async (_executable: string, args: readonly string[]) => {
     if (args.includes("/usr/bin/wslpath") && args.includes("--unix")) {
@@ -295,5 +301,31 @@ describe("selected-distro WSL runtime", () => {
     expect(index).toContain("spawnWslServer")
     expect(index).toContain("wslSnapshot.enabled")
     expect(index).not.toContain("sidecar start record")
+  })
+
+  test("closed stop is idempotent, waits for child exit, and EOF closes only stdin", async () => {
+    const target = await runtimeInput({ exitOnStop: false })
+    const runtime = await startWslRuntime(target.input)
+    let settled = false
+    const first = runtime.stop()
+    const second = runtime.stop()
+    expect(first).toBe(second)
+    void first.then(() => {
+      settled = true
+    })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(settled).toBe(false)
+    expect(
+      target.harness.writes.filter((write) => write.observed.toString("utf8") === '{"type":"stop"}\n'),
+    ).toHaveLength(1)
+    target.harness.exit()
+    await Promise.all([first, second, runtime.exited])
+
+    const eofTarget = await runtimeInput({ exitOnStop: false })
+    const eofRuntime = await startWslRuntime(eofTarget.input)
+    eofRuntime.closeInput()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(eofTarget.harness.writes).toHaveLength(1)
+    await eofRuntime.exited
   })
 })

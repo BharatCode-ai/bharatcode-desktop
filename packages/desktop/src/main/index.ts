@@ -36,6 +36,7 @@ import {
   setDefaultServerUrl,
   spawnLocalServer,
   spawnWslServer,
+  translateWslProjectPath,
   type SidecarListener,
 } from "./server"
 import {
@@ -52,6 +53,14 @@ import { checkUpdate, checkForUpdates, installUpdate, setupAutoUpdater } from ".
 import { Deferred, Effect, Fiber } from "effect"
 import { bundledRecoveryExecutable, createStartupRecovery } from "./startup-recovery"
 import { createWslService } from "./wsl-distro"
+import {
+  configureWslForControlledRelaunch,
+  WslLifecycleFailure,
+  classifyWslLaunchFailure,
+  createWslLifecycle,
+  retainWslAuthorizationWhileRunning,
+  rewriteWslProjectDeepLinks,
+} from "./wsl-lifecycle"
 
 const TEST_ONBOARDING = process.env.BHARATCODE_TEST_ONBOARDING === "1" || process.env.OPENCODE_TEST_ONBOARDING === "1"
 const jsCallStackFeature = "DocumentPolicyIncludeJSCallStacksInCrashReports"
@@ -61,6 +70,8 @@ let mainWindow: BrowserWindow | null = null
 let server: SidecarListener | null = null
 let sidecarAuthorization: SidecarAuthorizationPolicy | undefined
 let accountClient: ReturnType<typeof createBharatCodeAccountClient> | undefined
+let wslLifecycle: ReturnType<typeof createWslLifecycle> | undefined
+let selectedWslDisplayName: string | undefined
 const pendingAccountCallbacks: string[] = []
 
 const initEmitter = new EventEmitter()
@@ -84,16 +95,42 @@ function useEnvProxy() {
   }
 }
 
-function emitDeepLinks(urls: string[]) {
+async function revalidateWslSelection() {
+  const snapshot = await wslService.snapshot()
+  if (!snapshot.enabled) throw new WslLifecycleFailure("selection-required")
+  if (snapshot.status.phase === "error") throw new WslLifecycleFailure(snapshot.status.code)
+  if (snapshot.status.phase !== "ready" || !snapshot.selectedDisplayName) {
+    throw new WslLifecycleFailure("selection-invalid")
+  }
+  selectedWslDisplayName = snapshot.selectedDisplayName
+}
+
+async function rendererWslSnapshot() {
+  const snapshot = await wslService.snapshot()
+  return wslLifecycle?.projectSnapshot(snapshot) ?? snapshot
+}
+
+async function translateProjectPaths(paths: readonly string[]) {
+  const snapshot = await wslService.snapshot()
+  if (!snapshot.enabled) return [...paths]
+  if (!wslLifecycle) throw new WslLifecycleFailure("path-translation")
+  return wslLifecycle.translateProjectPaths(paths, (path) => {
+    if (!selectedWslDisplayName) throw new WslLifecycleFailure("selection-invalid")
+    return translateWslProjectPath(path, { selectedDisplayName: selectedWslDisplayName, hostEnv: process.env })
+  })
+}
+
+async function emitDeepLinks(urls: string[]) {
   if (urls.length === 0) return
-  pendingDeepLinks.push(...urls)
-  if (mainWindow) sendDeepLinks(mainWindow, urls)
+  const translated = await rewriteWslProjectDeepLinks(urls, translateProjectPaths)
+  pendingDeepLinks.push(...translated)
+  if (mainWindow) sendDeepLinks(mainWindow, translated)
 }
 
 function handleIncomingDeepLinks(urls: string[]) {
   for (const url of urls) {
     if (!isBharatCodeAuthCallback(url)) {
-      emitDeepLinks([url])
+      void emitDeepLinks([url]).catch((error) => logger.warn("failed to translate WSL project deep link", error))
       continue
     }
     if (!accountClient) {
@@ -124,6 +161,15 @@ async function killSidecar() {
   const current = server
   server = null
   await current.stop()
+}
+
+async function relaunchDesktop() {
+  try {
+    await killSidecar()
+  } finally {
+    app.relaunch()
+    app.exit(0)
+  }
 }
 
 function requireAccountClient() {
@@ -271,10 +317,7 @@ const main = Effect.gen(function* () {
   })
 
   setRelaunchHandler(() => {
-    void killSidecar().finally(() => {
-      app.relaunch()
-      app.exit(0)
-    })
+    void relaunchDesktop()
   })
 
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
@@ -282,6 +325,7 @@ const main = Effect.gen(function* () {
       void killSidecar().finally(() => app.exit(0))
     })
   }
+  process.on("exit", () => wslLifecycle?.closeInput())
 
   const serverReady = Deferred.makeUnsafe<ServerReadyData>()
   const loadingComplete = Deferred.makeUnsafe<void>()
@@ -310,9 +354,21 @@ const main = Effect.gen(function* () {
     consumeInitialDeepLinks: () => pendingDeepLinks.splice(0),
     getDefaultServerUrl: () => getDefaultServerUrl(),
     setDefaultServerUrl: (url) => setDefaultServerUrl(url),
-    getWslSnapshot: () => wslService.snapshot(),
-    configureWsl: (update) => wslService.configure(update),
-    retryWsl: () => wslService.retry(),
+    getWslSnapshot: () => rendererWslSnapshot(),
+    configureWsl: (update) =>
+      configureWslForControlledRelaunch(update, {
+        snapshot: rendererWslSnapshot,
+        configure: wslService.configure,
+        relaunch: relaunchDesktop,
+      }),
+    retryWsl: async () => {
+      const snapshot = await wslService.retry()
+      if (snapshot.enabled && snapshot.status.phase === "ready" && wslLifecycle?.status().phase === "error") {
+        await wslLifecycle.retry()
+      }
+      return wslLifecycle?.projectSnapshot(snapshot) ?? snapshot
+    },
+    translateProjectPaths,
     getDisplayBackend: async () => null,
     setDisplayBackend: async () => undefined,
     parseMarkdown: async (markdown) => parseMarkdown(markdown),
@@ -426,6 +482,35 @@ const main = Effect.gen(function* () {
   accountClient = createBharatCodeAccountClient({
     getConnection: async () => ({ url, username: "bharatcode", password }),
   })
+  wslLifecycle = createWslLifecycle({
+    revalidate: revalidateWslSelection,
+    startOwned: async () => {
+      if (!selectedWslDisplayName) throw new WslLifecycleFailure("selection-invalid")
+      if (process.arch !== "x64" && process.arch !== "arm64") {
+        throw new WslLifecycleFailure("prerequisite-missing")
+      }
+      try {
+        const result = await spawnWslServer(hostname, port, password, {
+          selectedDisplayName: selectedWslDisplayName,
+          resourcesPath: process.resourcesPath,
+          version: app.getVersion(),
+          arch: process.arch,
+          channel: CHANNEL,
+          hostEnv: process.env,
+          onSqliteProgress: (progress) => initEmitter.emit("sqlite", progress),
+          onStderr: (message) => writeLog("server", "stderr", { message }, "warn"),
+        })
+        sidecarAuthorization?.invalidate()
+        sidecarAuthorization = result.authorization
+        return result.owned
+      } catch (error) {
+        throw classifyWslLaunchFailure(error)
+      }
+    },
+    onStatus: (status) => {
+      sidecarAuthorization = retainWslAuthorizationWhileRunning(status, sidecarAuthorization)
+    },
+  })
 
   const loadingTask = yield* Effect.gen(function* () {
     logger.log("sidecar connection started", { url })
@@ -443,24 +528,11 @@ const main = Effect.gen(function* () {
     const wslSnapshot = yield* Effect.promise(() => wslService.snapshot())
     const spawned = yield* Effect.promise(async () => {
       if (wslSnapshot.enabled) {
-        if (wslSnapshot.status.phase !== "ready" || !wslSnapshot.selectedDisplayName) {
-          throw new Error("Enabled WSL selection is not ready")
+        await wslLifecycle!.start()
+        return {
+          listener: { stop: () => wslLifecycle!.stop() },
+          health: { wait: Promise.resolve() },
         }
-        if (process.arch !== "x64" && process.arch !== "arm64") {
-          throw new Error("WSL runtime supports only x64 or arm64")
-        }
-        const result = await spawnWslServer(hostname, port, password, {
-          selectedDisplayName: wslSnapshot.selectedDisplayName,
-          resourcesPath: process.resourcesPath,
-          version: app.getVersion(),
-          arch: process.arch,
-          channel: CHANNEL,
-          hostEnv: process.env,
-          onSqliteProgress: (progress) => initEmitter.emit("sqlite", progress),
-          onStderr: (message) => writeLog("server", "stderr", { message }, "warn"),
-        })
-        sidecarAuthorization = result.authorization
-        return result
       }
       sidecarAuthorization = createSidecarAuthorizationPolicy({ origin: url, username: "bharatcode", password })
       return spawnLocalServer(hostname, port, password, {
@@ -515,7 +587,7 @@ const main = Effect.gen(function* () {
       .catch((error) => logger.warn("failed to complete BharatCode sign-in", error))
   }
 
-  mainWindow = createMainWindow(sidecarAuthorization)
+  mainWindow = createMainWindow(() => sidecarAuthorization)
   if (mainWindow) {
     createMenu({
       trigger: (id) => {
@@ -526,10 +598,7 @@ const main = Effect.gen(function* () {
         void checkForUpdates(true, killSidecar)
       },
       relaunch: () => {
-        void killSidecar().finally(() => {
-          app.relaunch()
-          app.exit(0)
-        })
+        void relaunchDesktop()
       },
     })
   }

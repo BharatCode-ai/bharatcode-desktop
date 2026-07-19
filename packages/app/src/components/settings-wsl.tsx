@@ -61,6 +61,11 @@ export function wslStatusText(status: WslStatus): string {
   return `${status.phase.slice(0, 1).toUpperCase()}${status.phase.slice(1)}`
 }
 
+export function wslRecoveryActions(status: WslStatus): Array<"choose" | "retry" | "disable"> {
+  if (status.phase !== "error") return []
+  return ["choose", "retry", "disable"]
+}
+
 function SettingsRow(props: { title: string; description?: string; children: JSX.Element }) {
   return (
     <div class="flex flex-wrap items-center justify-between gap-4 min-h-16 py-3 border-b border-border-weak-base last:border-none">
@@ -158,8 +163,29 @@ export const SettingsWsl: Component = () => {
               Refresh
             </Button>
             <Show when={snapshot()?.status.phase === "error"}>
+              <Button
+                size="small"
+                variant="secondary"
+                disabled={state.busy}
+                onClick={() =>
+                  document.querySelector<HTMLSelectElement>('[data-action="settings-wsl-distribution"]')?.focus()
+                }
+              >
+                Choose
+              </Button>
               <Button size="small" variant="secondary" disabled={state.busy} onClick={() => void retry()}>
                 Retry
+              </Button>
+              <Button
+                size="small"
+                variant="secondary"
+                disabled={state.busy}
+                onClick={() => {
+                  const current = snapshot()
+                  if (current) void apply(wslEnableUpdate(current, false))
+                }}
+              >
+                Disable
               </Button>
             </Show>
           </div>

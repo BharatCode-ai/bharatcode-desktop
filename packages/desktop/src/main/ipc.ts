@@ -40,6 +40,7 @@ type Deps = {
   getWslSnapshot: () => Promise<WslSnapshot>
   configureWsl: (update: WslConfigurationUpdate) => Promise<WslSnapshot>
   retryWsl: () => Promise<WslSnapshot>
+  translateProjectPaths: (paths: readonly string[]) => Promise<readonly string[]>
   getDisplayBackend: () => Promise<string | null>
   setDisplayBackend: (backend: string | null) => Promise<void> | void
   parseMarkdown: (markdown: string) => Promise<string> | string
@@ -156,7 +157,8 @@ export function registerIpcHandlers(deps: Deps) {
         defaultPath: opts?.defaultPath,
       })
       if (result.canceled) return null
-      return opts?.multiple ? result.filePaths : result.filePaths[0]
+      const translated = await deps.translateProjectPaths(result.filePaths)
+      return opts?.multiple ? translated : translated[0]
     },
   )
 
@@ -173,7 +175,8 @@ export function registerIpcHandlers(deps: Deps) {
         filters: pickerFilters(opts?.extensions),
       })
       if (result.canceled) return null
-      return opts?.multiple ? result.filePaths : result.filePaths[0]
+      const translated = await deps.translateProjectPaths(result.filePaths)
+      return opts?.multiple ? translated : translated[0]
     },
   )
 

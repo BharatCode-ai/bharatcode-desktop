@@ -3,6 +3,7 @@ import {
   runWslStatusAction,
   wslCanEnable,
   wslEnableUpdate,
+  wslRecoveryActions,
   wslSelectUpdate,
   wslSettingsVisible,
   wslStatusText,
@@ -65,5 +66,26 @@ describe("Windows WSL settings", () => {
     expect(busy).toEqual([true, false, true, false])
     expect(results).toEqual([snapshot])
     expect(errors).toEqual(["refresh failed"])
+  })
+
+  test("offers Choose, Retry, and Disable for every actionable runtime failure", async () => {
+    for (const code of [
+      "selection-invalid",
+      "root-user",
+      "prerequisite-missing",
+      "runtime-integrity",
+      "path-translation",
+      "start-failed",
+      "connection-lost",
+      "stop-failed",
+    ] as const) {
+      expect(wslRecoveryActions({ phase: "error", code })).toEqual(["choose", "retry", "disable"])
+    }
+    expect(wslRecoveryActions({ phase: "running" })).toEqual([])
+
+    const source = await Bun.file(new URL("./settings-wsl.tsx", import.meta.url)).text()
+    expect(source).toContain("Choose")
+    expect(source).toContain("Retry")
+    expect(source).toContain("Disable")
   })
 })

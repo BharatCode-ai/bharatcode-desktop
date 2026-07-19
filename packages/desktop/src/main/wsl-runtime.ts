@@ -161,11 +161,17 @@ export async function startWslRuntime(input: {
   })
   const ready = deferred<WslDesktopIdentity>()
   const stopped = deferred<void>()
+  const exited = deferred<void>()
   void stopped.promise.catch(() => undefined)
   let acceptedIdentity: WslDesktopIdentity | undefined
   let credentialError: Error | undefined
   let protocolFailure: Error | undefined
   let stderrPending = ""
+
+  child.once("exit", () => {
+    exited.resolve()
+    if (!gate.state().ready) ready.reject(new Error("WSL runtime exited before ready"))
+  })
 
   child.stderr.on("data", (chunk) => {
     stderrPending += chunk?.toString("utf8") ?? ""
@@ -250,10 +256,16 @@ export async function startWslRuntime(input: {
       origin,
       identity,
       authorization,
+      exited: exited.promise,
       stop() {
         if (stopping) return stopping
-        stopping = writeRecord(child.stdin, encodeWslDesktopRecord({ type: "stop" })).then(() => stopped.promise)
+        stopping = writeRecord(child.stdin, encodeWslDesktopRecord({ type: "stop" }))
+          .then(() => Promise.all([stopped.promise, exited.promise]))
+          .then(() => undefined)
         return stopping
+      },
+      closeInput() {
+        child.stdin.end()
       },
     }
   } catch (error) {
