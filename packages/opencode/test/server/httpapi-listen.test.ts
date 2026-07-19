@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import net from "node:net"
-import { Flag } from "@opencode-ai/core/flag/flag"
 import * as Log from "@opencode-ai/core/util/log"
 import { Server } from "../../src/server/server"
 import { PtyPaths } from "../../src/server/routes/instance/httpapi/groups/pty"
@@ -11,38 +10,40 @@ import { disposeAllInstances, tmpdir } from "../fixture/fixture"
 void Log.init({ print: false })
 
 const original = {
-  OPENCODE_SERVER_PASSWORD: Flag.OPENCODE_SERVER_PASSWORD,
-  OPENCODE_SERVER_USERNAME: Flag.OPENCODE_SERVER_USERNAME,
-  envPassword: process.env.OPENCODE_SERVER_PASSWORD,
-  envUsername: process.env.OPENCODE_SERVER_USERNAME,
+  envPassword: process.env.BHARATCODE_SERVER_PASSWORD,
+  envUsername: process.env.BHARATCODE_SERVER_USERNAME,
+  legacyPassword: process.env.OPENCODE_SERVER_PASSWORD,
+  legacyUsername: process.env.OPENCODE_SERVER_USERNAME,
 }
-const auth = { username: "opencode", password: "listen-secret" }
+const auth = { username: "bharatcode", password: "listen-secret" }
 const testPty = process.platform === "win32" ? test.skip : test
 
 afterEach(async () => {
-  Flag.OPENCODE_SERVER_PASSWORD = original.OPENCODE_SERVER_PASSWORD
-  Flag.OPENCODE_SERVER_USERNAME = original.OPENCODE_SERVER_USERNAME
-  if (original.envPassword === undefined) delete process.env.OPENCODE_SERVER_PASSWORD
-  else process.env.OPENCODE_SERVER_PASSWORD = original.envPassword
-  if (original.envUsername === undefined) delete process.env.OPENCODE_SERVER_USERNAME
-  else process.env.OPENCODE_SERVER_USERNAME = original.envUsername
+  if (original.envPassword === undefined) delete process.env.BHARATCODE_SERVER_PASSWORD
+  else process.env.BHARATCODE_SERVER_PASSWORD = original.envPassword
+  if (original.envUsername === undefined) delete process.env.BHARATCODE_SERVER_USERNAME
+  else process.env.BHARATCODE_SERVER_USERNAME = original.envUsername
+  if (original.legacyPassword === undefined) delete process.env.OPENCODE_SERVER_PASSWORD
+  else process.env.OPENCODE_SERVER_PASSWORD = original.legacyPassword
+  if (original.legacyUsername === undefined) delete process.env.OPENCODE_SERVER_USERNAME
+  else process.env.OPENCODE_SERVER_USERNAME = original.legacyUsername
   await disposeAllInstances()
   await resetDatabase()
 })
 
 async function startListener() {
-  Flag.OPENCODE_SERVER_PASSWORD = auth.password
-  Flag.OPENCODE_SERVER_USERNAME = auth.username
-  process.env.OPENCODE_SERVER_PASSWORD = auth.password
-  process.env.OPENCODE_SERVER_USERNAME = auth.username
+  delete process.env.OPENCODE_SERVER_PASSWORD
+  delete process.env.OPENCODE_SERVER_USERNAME
+  process.env.BHARATCODE_SERVER_PASSWORD = auth.password
+  process.env.BHARATCODE_SERVER_USERNAME = auth.username
   return Server.listen({ hostname: "127.0.0.1", port: 0 })
 }
 
 async function startNoAuthListener() {
-  Flag.OPENCODE_SERVER_PASSWORD = undefined
-  Flag.OPENCODE_SERVER_USERNAME = auth.username
   delete process.env.OPENCODE_SERVER_PASSWORD
-  process.env.OPENCODE_SERVER_USERNAME = auth.username
+  delete process.env.OPENCODE_SERVER_USERNAME
+  delete process.env.BHARATCODE_SERVER_PASSWORD
+  process.env.BHARATCODE_SERVER_USERNAME = auth.username
   return Server.listen({ hostname: "127.0.0.1", port: 0 })
 }
 
@@ -168,6 +169,59 @@ async function openPtySocket(listener: Awaited<ReturnType<typeof startListener>>
 }
 
 describe("HttpApi Server.listen", () => {
+  test("rejects every defined legacy server-auth variable before bind without exposing values", async () => {
+    delete process.env.BHARATCODE_SERVER_USERNAME
+    delete process.env.BHARATCODE_SERVER_PASSWORD
+    const variants = [
+      { OPENCODE_SERVER_USERNAME: "" },
+      { OPENCODE_SERVER_PASSWORD: "legacy-password-value" },
+      {
+        BHARATCODE_SERVER_USERNAME: "bharatcode",
+        BHARATCODE_SERVER_PASSWORD: "branded-password-value",
+        OPENCODE_SERVER_USERNAME: "legacy-user-value",
+      },
+    ]
+
+    for (const environment of variants) {
+      for (const key of [
+        "BHARATCODE_SERVER_USERNAME",
+        "BHARATCODE_SERVER_PASSWORD",
+        "OPENCODE_SERVER_USERNAME",
+        "OPENCODE_SERVER_PASSWORD",
+      ]) {
+        delete process.env[key]
+      }
+      Object.assign(process.env, environment)
+      const error = await Server.listen({ hostname: "127.0.0.1", port: 0 }).catch((cause: unknown) => cause)
+      expect(error).toBeInstanceOf(Error)
+      expect((error as Error).message).toBe(
+        "Legacy server authentication variables are not supported; use BharatCode server credentials.",
+      )
+      expect((error as Error).message).not.toMatch(/legacy-password-value|branded-password-value|legacy-user-value/)
+    }
+  })
+
+  test("accepts branded environment and explicit listener credentials", async () => {
+    delete process.env.OPENCODE_SERVER_USERNAME
+    delete process.env.OPENCODE_SERVER_PASSWORD
+    process.env.BHARATCODE_SERVER_USERNAME = auth.username
+    process.env.BHARATCODE_SERVER_PASSWORD = auth.password
+    const branded = await Server.listen({ hostname: "127.0.0.1", port: 0 })
+    await branded.stop(true)
+
+    delete process.env.BHARATCODE_SERVER_USERNAME
+    delete process.env.BHARATCODE_SERVER_PASSWORD
+    const explicit = await Server.listen({ hostname: "127.0.0.1", port: 0, ...auth })
+    try {
+      const response = await fetch(new URL("/global/health", explicit.url), {
+        headers: { authorization: authorization() },
+      })
+      expect(response.status).toBe(200)
+    } finally {
+      await explicit.stop(true)
+    }
+  })
+
   testPty("serves HTTP routes and upgrades PTY websocket through Server.listen", async () => {
     await using tmp = await tmpdir({ config: { formatter: false, lsp: false } })
     const listener = await startListener()

@@ -79,7 +79,7 @@ export async function spawnLocalServer(
   const sidecar = join(dirname(fileURLToPath(import.meta.url)), "sidecar.js")
   const child = utilityProcess.fork(sidecar, [], {
     cwd: process.cwd(),
-    env: createSidecarEnv(),
+    env: createSidecarEnv(password),
     serviceName: SIDECAR_SERVICE_NAME,
     stdio: "pipe",
   })
@@ -154,7 +154,6 @@ export async function spawnLocalServer(
       type: "start",
       hostname,
       port,
-      password,
       userDataPath: options.userDataPath,
       needsMigration: options.needsMigration,
     })
@@ -174,7 +173,7 @@ export async function spawnLocalServer(
     const ready = async () => {
       while (true) {
         await new Promise((resolve) => setTimeout(resolve, 100))
-        if (await checkHealth(url, password)) {
+        if (await checkHealth(url, "bharatcode", password)) {
           healthy = true
           return
         }
@@ -205,7 +204,7 @@ export async function spawnLocalServer(
   }
 }
 
-export async function checkHealth(url: string, password?: string | null): Promise<boolean> {
+export async function checkHealth(url: string, username?: string | null, password?: string | null): Promise<boolean> {
   let healthUrl: URL
   try {
     healthUrl = new URL("/global/health", url)
@@ -215,7 +214,7 @@ export async function checkHealth(url: string, password?: string | null): Promis
 
   const headers = new Headers()
   if (password) {
-    const auth = Buffer.from(`opencode:${password}`).toString("base64")
+    const auth = Buffer.from(`${username ?? "bharatcode"}:${password}`).toString("base64")
     headers.set("authorization", `Basic ${auth}`)
   }
 
@@ -231,12 +230,14 @@ export async function checkHealth(url: string, password?: string | null): Promis
   }
 }
 
-function createSidecarEnv(): Record<string, string> {
+function createSidecarEnv(password: string): Record<string, string> {
   const env = Object.fromEntries(
     Object.entries(process.env).flatMap(([key, value]) => (value === undefined ? [] : [[key, String(value)]])),
   )
   delete env.DEBUG
   if (process.platform === "linux") delete env.LD_PRELOAD
+  env.BHARATCODE_SERVER_USERNAME = "bharatcode"
+  env.BHARATCODE_SERVER_PASSWORD = password
   return env
 }
 

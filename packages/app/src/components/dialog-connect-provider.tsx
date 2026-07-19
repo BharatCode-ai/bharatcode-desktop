@@ -466,10 +466,10 @@ export function DialogConnectProvider(props: { provider: string }) {
   }
 
   async function signInWithDesktopBharatCode() {
-    if (!platform.signInToBharatCode) return
+    if (!platform.beginSignIn) return
     setStore("desktopAuthPending", true)
     try {
-      await platform.signInToBharatCode()
+      await platform.beginSignIn()
       await complete()
     } catch (err) {
       showToast({

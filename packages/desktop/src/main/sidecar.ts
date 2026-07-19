@@ -15,7 +15,6 @@ type StartCommand = {
   type: "start"
   hostname: string
   port: number
-  password: string
   userDataPath: string
   needsMigration: boolean
 }
@@ -53,7 +52,10 @@ parentPort.on("message", (event) => {
 
 async function start(command: StartCommand) {
   try {
-    prepareSidecarEnv(command.password, command.userDataPath)
+    const username = process.env.BHARATCODE_SERVER_USERNAME
+    const password = process.env.BHARATCODE_SERVER_PASSWORD
+    if (!username || !password) throw new Error("BharatCode sidecar authentication is unavailable.")
+    prepareSidecarEnv(command.userDataPath)
     ensureLoopbackNoProxy()
     useSystemCertificates()
     useEnvProxy()
@@ -78,10 +80,12 @@ async function start(command: StartCommand) {
     listener = await Server.listen({
       port: command.port,
       hostname: command.hostname,
-      username: "opencode",
-      password: command.password,
+      username,
+      password,
       cors: ["oc://renderer"],
     })
+    delete process.env.BHARATCODE_SERVER_USERNAME
+    delete process.env.BHARATCODE_SERVER_PASSWORD
     parentPort.postMessage({ type: "ready" })
   } catch (error) {
     parentPort.postMessage({ type: "error", error: serializeError(error) })
@@ -99,10 +103,8 @@ async function stop() {
   }
 }
 
-function prepareSidecarEnv(password: string, userDataPath: string) {
+function prepareSidecarEnv(userDataPath: string) {
   Object.assign(process.env, {
-    OPENCODE_SERVER_USERNAME: "opencode",
-    OPENCODE_SERVER_PASSWORD: password,
     BHARATCODE_SHARE_BASE_URL: process.env.BHARATCODE_SHARE_BASE_URL ?? "https://bharatcode.ai",
     XDG_STATE_HOME: process.env.XDG_STATE_HOME ?? userDataPath,
   })
@@ -154,14 +156,12 @@ function parseCommand(value: unknown): SidecarCommand | undefined {
   if (command.type !== "start") return
   if (typeof command.hostname !== "string") return
   if (typeof command.port !== "number") return
-  if (typeof command.password !== "string") return
   if (typeof command.userDataPath !== "string") return
   if (typeof command.needsMigration !== "boolean") return
   return {
     type: "start",
     hostname: command.hostname,
     port: command.port,
-    password: command.password,
     userDataPath: command.userDataPath,
     needsMigration: command.needsMigration,
   }

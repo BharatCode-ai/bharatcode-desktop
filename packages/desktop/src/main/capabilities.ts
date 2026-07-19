@@ -2,17 +2,21 @@ import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 
-import { opencodeConfigPath } from "./bharatcode-auth"
+const opencodeConfigPath = (home = process.env.BHARATCODE_HOME || homedir()) =>
+  join(home, ".config", "opencode", "opencode.jsonc")
 
 export type CapabilityTrust = "bundled" | "curated" | "local"
-export type CapabilityStatus =
-  | "available"
-  | "installed"
-  | "enabled"
-  | "needs_setup"
-  | "unhealthy"
-  | "update_available"
-export type CapabilityCategory = "workflow" | "code-hosting" | "browser" | "design" | "planning" | "monitoring" | "database" | "billing" | "docs"
+export type CapabilityStatus = "available" | "installed" | "enabled" | "needs_setup" | "unhealthy" | "update_available"
+export type CapabilityCategory =
+  | "workflow"
+  | "code-hosting"
+  | "browser"
+  | "design"
+  | "planning"
+  | "monitoring"
+  | "database"
+  | "billing"
+  | "docs"
 
 export type CapabilityPermission =
   | "workspace_files"
@@ -33,7 +37,9 @@ export type CapabilityMcpConfig =
       url: string
       enabled?: boolean
       headers?: Record<string, string>
-      oauth?: false | { clientId?: string; clientSecret?: string; scope?: string; callbackPort?: number; redirectUri?: string }
+      oauth?:
+        | false
+        | { clientId?: string; clientSecret?: string; scope?: string; callbackPort?: number; redirectUri?: string }
       timeout?: number
     }
   | {
@@ -292,7 +298,10 @@ function requireCatalogItem(id: string) {
   return item
 }
 
-function installRecord(item: CapabilityCatalogItem, input: { now?: string; enabled?: boolean }): CapabilityInstallRecord {
+function installRecord(
+  item: CapabilityCatalogItem,
+  input: { now?: string; enabled?: boolean },
+): CapabilityInstallRecord {
   const time = now(input.now)
   const enabled = input.enabled ?? Boolean(item.defaultEnabled)
   return {
@@ -321,11 +330,7 @@ export function createDefaultCapabilityState(options: { now?: string } = {}): Ca
   return { version: 1, installed }
 }
 
-export function installCapability(
-  state: CapabilityState,
-  id: string,
-  options: { now?: string } = {},
-): CapabilityState {
+export function installCapability(state: CapabilityState, id: string, options: { now?: string } = {}): CapabilityState {
   const item = requireCatalogItem(id)
   const existing = state.installed[id]
   if (existing) return state
@@ -547,7 +552,12 @@ export async function applyCapabilityRuntimeToConfig({
   const managed = new Set([...managedSkillPaths, ...runtime.skills.paths])
   target.skills = {
     ...currentSkills,
-    paths: [...new Set([...currentPaths.filter((item: string) => !isManagedSkillPath(item, managed)), ...runtime.skills.paths])],
+    paths: [
+      ...new Set([
+        ...currentPaths.filter((item: string) => !isManagedSkillPath(item, managed)),
+        ...runtime.skills.paths,
+      ]),
+    ],
   }
 
   const currentMcp = target.mcp && typeof target.mcp === "object" && !Array.isArray(target.mcp) ? target.mcp : {}

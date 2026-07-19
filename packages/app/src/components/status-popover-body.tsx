@@ -210,10 +210,10 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
     () => installedCapabilities().filter((item) => item.status === "needs_setup" || item.status === "unhealthy").length,
   )
   const [accountStatus, { mutate: mutateAccountStatus, refetch: refetchAccountStatus }] = createResource(
-    () => props.shown() && !!platform.getBharatCodeAccountStatus,
+    () => props.shown() && !!platform.getAccountStatus,
     async (enabled) => {
-      if (!enabled || !platform.getBharatCodeAccountStatus) return undefined
-      return platform.getBharatCodeAccountStatus()
+      if (!enabled || !platform.getAccountStatus) return undefined
+      return platform.getAccountStatus()
     },
   )
 
@@ -234,7 +234,7 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
   }
 
   const refreshAccountStatus = async () => {
-    const action = platform.refreshBharatCodeAccountStatus ?? platform.getBharatCodeAccountStatus
+    const action = platform.refreshAccountStatus ?? platform.getAccountStatus
     if (!action) return
     try {
       mutateAccountStatus(await action())
@@ -248,9 +248,9 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
   }
 
   const signInToBharatCode = async () => {
-    if (!platform.signInToBharatCode) return
+    if (!platform.beginSignIn) return
     try {
-      await platform.signInToBharatCode()
+      await platform.beginSignIn()
       await refetchAccountStatus()
       showToast({
         variant: "success",
@@ -282,7 +282,7 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
             {sortedServers().length > 0 ? `${sortedServers().length} ` : ""}
             {language.t("status.popover.tab.servers")}
           </Tabs.Trigger>
-          <Show when={platform.getBharatCodeAccountStatus}>
+          <Show when={platform.getAccountStatus}>
             <Tabs.Trigger value="account" data-slot="tab" class="text-12-regular">
               {language.t("status.popover.tab.account")}
             </Tabs.Trigger>
@@ -366,7 +366,7 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
           </div>
         </Tabs.Content>
 
-        <Show when={platform.getBharatCodeAccountStatus}>
+        <Show when={platform.getAccountStatus}>
           <Tabs.Content value="account">
             <div class="flex flex-col px-2 pb-2">
               <div class="flex flex-col gap-3 p-3 bg-background-base rounded-sm min-h-14">
@@ -379,9 +379,9 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
                     <span class="text-12-regular text-text-weak">
                       {accountStatus()?.email ?? language.t(accountStatusViewModel(accountStatus()).descriptionKey)}
                     </span>
-                    <Show when={accountStatus()?.connection && !accountStatus()?.connection?.ok}>
+                    <Show when={accountStatus()?.state === "connection_issue" && accountStatus()?.message}>
                       <span class="text-11-regular text-icon-warning-base">
-                        {accountStatus()?.connection?.message ?? language.t("settings.account.value.connectionIssue")}
+                        {accountStatus()?.message ?? language.t("settings.account.value.connectionIssue")}
                       </span>
                     </Show>
                   </div>
@@ -389,7 +389,7 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
                 <div class="flex flex-wrap gap-2">
                   <Show
                     when={
-                      platform.signInToBharatCode &&
+                      platform.beginSignIn &&
                       (accountStatus()?.state === "signed_out" || accountStatus()?.state === "needs_sign_in")
                     }
                   >

@@ -82,7 +82,7 @@ export function accountPrimaryActionLabelKey(action: AccountPrimaryAction): Acco
 }
 
 export function accountSignInOptions(intent: AccountSignInIntent): BharatCodeSignInOptions {
-  return intent === "switch_account" ? { forceAccountSelection: true } : {}
+  return intent === "switch_account" ? { selectAccount: true } : {}
 }
 
 function toneClass(tone: AccountTone) {
@@ -124,15 +124,14 @@ export const SettingsAccount: Component = () => {
     signingIn: false,
     refreshing: false,
     exporting: false,
-    pendingSignInUrl: undefined as string | undefined,
-    copiedSignInUrl: false,
+    loggingOut: false,
   })
 
-  const [status, { mutate, refetch }] = createResource(() => platform.getBharatCodeAccountStatus?.())
+  const [status, { mutate }] = createResource(() => platform.getAccountStatus?.())
   const view = () => accountStatusViewModel(status())
 
   async function refresh() {
-    const action = platform.refreshBharatCodeAccountStatus ?? platform.getBharatCodeAccountStatus
+    const action = platform.refreshAccountStatus ?? platform.getAccountStatus
     if (!action) return
     setStore("refreshing", true)
     try {
@@ -149,19 +148,22 @@ export const SettingsAccount: Component = () => {
   }
 
   async function signIn(intent: AccountSignInIntent = "default") {
-    if (!platform.signInToBharatCode) return
-    setStore("pendingSignInUrl", undefined)
-    setStore("copiedSignInUrl", false)
+    if (!platform.beginSignIn) return
     setStore("signingIn", true)
     try {
-      await platform.signInToBharatCode({
-        ...accountSignInOptions(intent),
-        onBrowserUrl: (url) => setStore("pendingSignInUrl", url),
-      })
-      if (platform.refreshBharatCodeAccountStatus) mutate(await platform.refreshBharatCodeAccountStatus())
-      else await refetch()
-      setStore("pendingSignInUrl", undefined)
-      setStore("copiedSignInUrl", false)
+      mutate(await platform.beginSignIn(accountSignInOptions(intent)))
+      const complete = platform.completeSignIn ?? platform.getAccountStatus
+      if (complete) {
+        for (let attempt = 0; attempt < 180; attempt++) {
+          await new Promise((resolve) => setTimeout(resolve, 1_000))
+          const next = await complete()
+          mutate(next)
+          if (!["authorizing", "switching"].includes(next.state)) break
+        }
+      }
+      if (["authorizing", "switching"].includes(status()?.state ?? "")) {
+        throw new Error("Timed out waiting for BharatCode sign-in. Try again.")
+      }
       showToast({
         variant: "success",
         icon: "circle-check",
@@ -179,17 +181,19 @@ export const SettingsAccount: Component = () => {
     }
   }
 
-  async function copyPendingSignInUrl() {
-    if (!store.pendingSignInUrl) return
+  async function logout() {
+    if (!platform.logout) return
+    setStore("loggingOut", true)
     try {
-      await navigator.clipboard.writeText(store.pendingSignInUrl)
-      setStore("copiedSignInUrl", true)
+      mutate(await platform.logout())
     } catch (error) {
       showToast({
         variant: "error",
-        title: language.t("settings.account.toast.copyFailed.title"),
+        title: language.t("settings.account.toast.refreshFailed.title"),
         description: error instanceof Error ? error.message : String(error),
       })
+    } finally {
+      setStore("loggingOut", false)
     }
   }
 
@@ -210,12 +214,6 @@ export const SettingsAccount: Component = () => {
   }
 
   const checkedAt = () => formatTime(status()?.checkedAt)
-  const connection = () => status()?.connection
-  const localFiles = () => {
-    const paths = [status()?.credentialsPath, status()?.configPath].filter(Boolean)
-    if (!paths.length) return language.t("settings.account.value.notAvailable")
-    return paths.join("\n")
-  }
 
   return (
     <div class="flex flex-col h-full overflow-y-auto no-scrollbar px-4 pb-10 sm:px-10 sm:pb-10">
@@ -241,15 +239,25 @@ export const SettingsAccount: Component = () => {
           <div class="flex flex-wrap gap-2">
             <Switch>
               <Match when={view().primaryAction === "sign_in" || view().primaryAction === "reconnect"}>
-                <Button size="large" variant="primary" disabled={store.signingIn} onClick={() => void signIn("default")}>
+                <Button
+                  size="large"
+                  variant="primary"
+                  disabled={store.signingIn}
+                  onClick={() => void signIn("default")}
+                >
                   {store.signingIn
                     ? language.t("settings.account.action.signingIn")
                     : language.t(accountPrimaryActionLabelKey(view().primaryAction!))}
                 </Button>
               </Match>
             </Switch>
-            <Show when={view().tone === "success" && platform.signInToBharatCode}>
-              <Button size="large" variant="secondary" disabled={store.signingIn} onClick={() => void signIn("switch_account")}>
+            <Show when={view().tone === "success" && platform.beginSignIn}>
+              <Button
+                size="large"
+                variant="secondary"
+                disabled={store.signingIn}
+                onClick={() => void signIn("switch_account")}
+              >
                 {store.signingIn
                   ? language.t("settings.account.action.signingIn")
                   : language.t("settings.account.action.useAnother")}
@@ -260,6 +268,11 @@ export const SettingsAccount: Component = () => {
                 ? language.t("settings.account.action.refreshing")
                 : language.t("settings.account.action.refresh")}
             </Button>
+            <Show when={status()?.authenticated && platform.logout}>
+              <Button size="large" variant="secondary" disabled={store.loggingOut} onClick={() => void logout()}>
+                {store.loggingOut ? "Signing out..." : "Sign out"}
+              </Button>
+            </Show>
             <Show when={platform.exportDebugLogs}>
               <Button size="large" variant="ghost" disabled={store.exporting} onClick={() => void exportLogs()}>
                 {store.exporting
@@ -268,31 +281,6 @@ export const SettingsAccount: Component = () => {
               </Button>
             </Show>
           </div>
-
-          <Show when={store.pendingSignInUrl}>
-            {(url) => (
-              <div class="flex flex-col gap-2 rounded-md border border-border-weak-base bg-background-muted p-3">
-                <div class="flex flex-col gap-1">
-                  <span class="text-13-medium text-text-strong">
-                    {language.t("settings.account.signInFallback.title")}
-                  </span>
-                  <span class="text-12-regular text-text-base">
-                    {language.t("settings.account.signInFallback.description")}
-                  </span>
-                </div>
-                <div class="flex min-w-0 flex-wrap items-center gap-2">
-                  <code class="min-w-0 flex-1 truncate rounded-sm bg-background-base px-2 py-1 text-11-regular text-text-weak">
-                    {url()}
-                  </code>
-                  <Button size="large" variant="secondary" onClick={() => void copyPendingSignInUrl()}>
-                    {store.copiedSignInUrl
-                      ? language.t("settings.account.action.copied")
-                      : language.t("settings.account.action.copySignInUrl")}
-                  </Button>
-                </div>
-              </div>
-            )}
-          </Show>
         </div>
 
         <div class="flex flex-col gap-1">
@@ -301,16 +289,6 @@ export const SettingsAccount: Component = () => {
             <AccountRow
               title={language.t("settings.account.row.account")}
               description={status()?.email ?? language.t("settings.account.value.notAvailable")}
-            />
-            <AccountRow
-              title={language.t("settings.account.row.connection")}
-              description={
-                connection()
-                  ? connection()!.ok
-                    ? language.t("settings.account.value.connected")
-                    : connection()!.message || language.t("settings.account.value.connectionIssue")
-                  : language.t("settings.account.value.notChecked")
-              }
             />
             <AccountRow
               title={language.t("settings.account.row.lastChecked")}
@@ -325,10 +303,6 @@ export const SettingsAccount: Component = () => {
             <AccountRow
               title={language.t("settings.account.row.diagnostics")}
               description={language.t("settings.account.row.diagnostics.description")}
-            />
-            <AccountRow
-              title={language.t("settings.account.row.localFiles")}
-              description={localFiles()}
             />
           </SettingsList>
         </div>

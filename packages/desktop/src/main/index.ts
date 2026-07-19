@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, rmSync } from "node:fs"
 import * as http from "node:http"
 import { createServer } from "node:net"
 import { homedir, tmpdir } from "node:os"
-import { dirname, join } from "node:path"
+import { dirname, join, resolve } from "node:path"
 import { getCACertificates, setDefaultCACertificates } from "node:tls"
 import { fileURLToPath } from "node:url"
 import type { Event } from "electron"
@@ -12,15 +12,8 @@ import { app, BrowserWindow, shell } from "electron"
 
 import contextMenu from "electron-context-menu"
 
-import {
-  ensureBharatCodePlugin,
-  getBharatCodeAccountStatus,
-  getBharatCodeAuthState,
-  handleBharatCodeAuthCallback,
-  resolveBundledBharatCodePluginPath,
-  resolveDesktopResourcesPath,
-  signInToBharatCode,
-} from "./bharatcode-auth"
+import { createBharatCodeAccountClient, isBharatCodeAuthCallback } from "./bharatcode-auth"
+import { createSidecarAuthorizationPolicy, type SidecarAuthorizationPolicy } from "./sidecar-auth"
 import { BRANDING, appIdForChannel, productNameForChannel } from "./branding"
 import {
   ensureCapabilityRuntime,
@@ -34,7 +27,6 @@ import { checkAppExists, resolveAppPath, wslPath } from "./apps"
 import { CHANNEL, UPDATER_ENABLED } from "./constants"
 import { transcribeDictationAudio } from "./dictation"
 import { registerIpcHandlers, sendDeepLinks, sendMenuCommand, sendSqliteMigrationProgress } from "./ipc"
-import { openExternalUrl } from "./external-browser"
 import { exportDebugLogs, initCrashReporter, initLogging, startNetLog, write as writeLog } from "./logging"
 import { parseMarkdown } from "./markdown"
 import { createMenu } from "./menu"
@@ -66,6 +58,9 @@ const jsCallStackFeature = "DocumentPolicyIncludeJSCallStacksInCrashReports"
 let logger: ReturnType<typeof initLogging>
 let mainWindow: BrowserWindow | null = null
 let server: SidecarListener | null = null
+let sidecarAuthorization: SidecarAuthorizationPolicy | undefined
+let accountClient: ReturnType<typeof createBharatCodeAccountClient> | undefined
+const pendingAccountCallbacks: string[] = []
 
 const initEmitter = new EventEmitter()
 let initStep: InitStep = { phase: "server_waiting" }
@@ -89,13 +84,17 @@ function emitDeepLinks(urls: string[]) {
 
 function handleIncomingDeepLinks(urls: string[]) {
   for (const url of urls) {
-    void handleBharatCodeAuthCallback(url)
-      .then((handled) => {
-        if (!handled) emitDeepLinks([url])
-      })
-      .catch((error) => {
-        logger.warn("failed to handle BharatCode auth callback", error)
-      })
+    if (!isBharatCodeAuthCallback(url)) {
+      emitDeepLinks([url])
+      continue
+    }
+    if (!accountClient) {
+      pendingAccountCallbacks.push(url)
+      continue
+    }
+    void accountClient.completeSignIn(url).catch((error) => {
+      logger.warn("failed to handle BharatCode auth callback", error)
+    })
   }
 }
 
@@ -110,10 +109,18 @@ function setInitStep(step: InitStep) {
 }
 
 async function killSidecar() {
+  sidecarAuthorization?.invalidate()
+  sidecarAuthorization = undefined
+  accountClient = undefined
   if (!server) return
   const current = server
   server = null
   await current.stop()
+}
+
+function requireAccountClient() {
+  if (!accountClient) throw new Error("The BharatCode account runtime is unavailable.")
+  return accountClient
 }
 
 function ensureLoopbackNoProxy() {
@@ -139,15 +146,8 @@ function ensureLoopbackNoProxy() {
 const mainBundleDir = dirname(fileURLToPath(import.meta.url))
 
 function desktopResourcesPath() {
-  return resolveDesktopResourcesPath({
-    packaged: app.isPackaged,
-    processResourcesPath: process.resourcesPath,
-    mainBundleDir,
-  })
-}
-
-function desktopBharatCodePluginPath() {
-  return resolveBundledBharatCodePluginPath(desktopResourcesPath())
+  if (app.isPackaged) return process.resourcesPath
+  return resolve(mainBundleDir, "..", "..", "resources")
 }
 
 function syncCapabilityRuntime() {
@@ -312,15 +312,21 @@ const main = Effect.gen(function* () {
     setBackgroundColor: (color) => setBackgroundColor(color),
     exportDebugLogs: () => exportDebugLogs(),
     recordFatalRendererError: (error) => writeLog("renderer", "fatal renderer error", { ...error }, "error"),
-    getBharatCodeAuthState: () => getBharatCodeAuthState(),
-    getBharatCodeAccountStatus: () => getBharatCodeAccountStatus(),
-    refreshBharatCodeAccountStatus: () => getBharatCodeAccountStatus({ refresh: true, checkConnection: true }),
-    signInToBharatCode: (options) =>
-      signInToBharatCode({
-        ...options,
-        openExternal: (url) => openExternalUrl(url, { openExternal: (target) => shell.openExternal(target) }),
-        pluginSpec: desktopBharatCodePluginPath(),
-      }),
+    getAccountStatus: () => requireAccountClient().getAccountStatus(),
+    beginSignIn: async (options) => {
+      const authorization = await requireAccountClient().beginSignIn({
+        selectAccount: options?.selectAccount === true,
+      })
+      await shell.openExternal(authorization.url)
+      return {
+        state: options?.selectAccount ? ("switching" as const) : ("authorizing" as const),
+        authenticated: false,
+        checkedAt: new Date().toISOString(),
+      }
+    },
+    completeSignIn: () => requireAccountClient().getAccountStatus(),
+    logout: () => requireAccountClient().logout(),
+    refreshAccountStatus: () => requireAccountClient().refreshAccountStatus(),
     transcribeDictation: (audio) => transcribeDictationAudio(audio),
     getCapabilitySnapshot: () => capabilitySnapshot(),
     installCapability: async (id) => {
@@ -339,14 +345,6 @@ const main = Effect.gen(function* () {
   })
 
   yield* Effect.promise(() => app.whenReady())
-
-  yield* Effect.promise(() => ensureBharatCodePlugin({ pluginSpec: desktopBharatCodePluginPath() })).pipe(
-    Effect.catch((error) =>
-      Effect.sync(() => {
-        logger.warn("failed to configure BharatCode provider plugin", error)
-      }),
-    ),
-  )
 
   yield* Effect.promise(() => syncCapabilityRuntime()).pipe(
     Effect.catch((error) =>
@@ -404,6 +402,11 @@ const main = Effect.gen(function* () {
   const hostname = "127.0.0.1"
   const url = `http://${hostname}:${port}`
   const password = randomUUID()
+  const sidecarID = randomUUID()
+  sidecarAuthorization = createSidecarAuthorizationPolicy({ origin: url, username: "bharatcode", password })
+  accountClient = createBharatCodeAccountClient({
+    getConnection: async () => ({ url, username: "bharatcode", password }),
+  })
 
   const loadingTask = yield* Effect.gen(function* () {
     logger.log("sidecar connection started", { url })
@@ -431,8 +434,7 @@ const main = Effect.gen(function* () {
     server = listener
     yield* Deferred.succeed(serverReady, {
       url,
-      username: "opencode",
-      password,
+      sidecarID,
     })
 
     yield* Effect.promise(() => health.wait).pipe(
@@ -465,7 +467,13 @@ const main = Effect.gen(function* () {
 
   if (overlay) yield* Deferred.await(loadingComplete)
 
-  mainWindow = createMainWindow()
+  for (const callback of pendingAccountCallbacks.splice(0)) {
+    void requireAccountClient()
+      .completeSignIn(callback)
+      .catch((error) => logger.warn("failed to complete BharatCode sign-in", error))
+  }
+
+  mainWindow = createMainWindow(sidecarAuthorization)
   if (mainWindow) {
     createMenu({
       trigger: (id) => {

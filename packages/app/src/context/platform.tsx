@@ -25,41 +25,30 @@ export type DictationTranscription = {
 }
 
 export type BharatCodeSignInOptions = {
-  forceAccountSelection?: boolean
-  onBrowserUrl?: (url: string) => void
+  selectAccount?: boolean
 }
 
-export type BharatCodeAccountState = "signed_out" | "signed_in" | "needs_sign_in" | "connection_issue"
-
-export type BharatCodeConnectionStatus = {
-  ok: boolean
-  endpoint: string
-  kind?: "auth" | "http" | "network" | "service" | "unknown"
-  status?: number
-  message?: string
-}
+export type BharatCodeAccountState =
+  | "signed_out"
+  | "signed_in"
+  | "needs_sign_in"
+  | "connection_issue"
+  | "authorizing"
+  | "refreshing"
+  | "switching"
 
 export type BharatCodeAccountStatus = {
   authenticated: boolean
-  configured: boolean
-  credentialsPath: string
-  configPath: string
   state: BharatCodeAccountState
   checkedAt: string
   email?: string
+  name?: string
   expiresAt?: number
   message?: string
-  connection?: BharatCodeConnectionStatus
 }
 
 export type CapabilityTrust = "bundled" | "curated" | "local"
-export type CapabilityStatus =
-  | "available"
-  | "installed"
-  | "enabled"
-  | "needs_setup"
-  | "unhealthy"
-  | "update_available"
+export type CapabilityStatus = "available" | "installed" | "enabled" | "needs_setup" | "unhealthy" | "update_available"
 export type CapabilityCategory =
   | "workflow"
   | "code-hosting"
@@ -89,13 +78,15 @@ export type CapabilityMcpConfig =
       url: string
       enabled?: boolean
       headers?: Record<string, string>
-      oauth?: false | {
-        clientId?: string
-        clientSecret?: string
-        scope?: string
-        callbackPort?: number
-        redirectUri?: string
-      }
+      oauth?:
+        | false
+        | {
+            clientId?: string
+            clientSecret?: string
+            scope?: string
+            callbackPort?: number
+            redirectUri?: string
+          }
       timeout?: number
     }
   | {
@@ -261,13 +252,17 @@ export type Platform = {
   transcribeAudio?(audio: DictationAudioInput): Promise<DictationTranscription>
 
   /** Read safe BharatCode account/auth status without exposing tokens (desktop only) */
-  getBharatCodeAccountStatus?(): Promise<BharatCodeAccountStatus>
+  getAccountStatus?(): Promise<BharatCodeAccountStatus>
 
   /** Refresh credentials if possible and check BharatCode connectivity (desktop only) */
-  refreshBharatCodeAccountStatus?(): Promise<BharatCodeAccountStatus>
+  refreshAccountStatus?(): Promise<BharatCodeAccountStatus>
 
   /** Start BharatCode browser sign-in (desktop only) */
-  signInToBharatCode?(options?: BharatCodeSignInOptions): Promise<unknown>
+  beginSignIn?(options?: BharatCodeSignInOptions): Promise<BharatCodeAccountStatus>
+
+  completeSignIn?(): Promise<BharatCodeAccountStatus>
+
+  logout?(): Promise<BharatCodeAccountStatus>
 
   /** Read installed and available BharatCode capabilities (desktop only) */
   getCapabilitySnapshot?(): Promise<CapabilitySnapshot>

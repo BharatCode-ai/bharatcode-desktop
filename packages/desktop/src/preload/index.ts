@@ -46,11 +46,6 @@ const api: ElectronAPI = {
     ipcRenderer.on("deep-link", handler)
     return () => ipcRenderer.removeListener("deep-link", handler)
   },
-  onBharatCodeSignInUrl: (cb) => {
-    const handler = (_: unknown, url: string) => cb(url)
-    ipcRenderer.on("bharatcode-sign-in-url", handler)
-    return () => ipcRenderer.removeListener("bharatcode-sign-in-url", handler)
-  },
 
   openDirectoryPicker: (opts) => ipcRenderer.invoke("open-directory-picker", opts),
   openFilePicker: (opts) => ipcRenderer.invoke("open-file-picker", opts),
@@ -86,10 +81,11 @@ const api: ElectronAPI = {
   setBackgroundColor: (color: string) => ipcRenderer.invoke("set-background-color", color),
   exportDebugLogs: () => ipcRenderer.invoke("export-debug-logs"),
   recordFatalRendererError: (error) => ipcRenderer.invoke("record-fatal-renderer-error", error),
-  getBharatCodeAuthState: () => ipcRenderer.invoke("get-bharatcode-auth-state"),
-  getBharatCodeAccountStatus: () => ipcRenderer.invoke("get-bharatcode-account-status"),
-  refreshBharatCodeAccountStatus: () => ipcRenderer.invoke("refresh-bharatcode-account-status"),
-  signInToBharatCode: (options) => ipcRenderer.invoke("sign-in-to-bharatcode", options),
+  getAccountStatus: () => ipcRenderer.invoke("get-account-status"),
+  beginSignIn: (options) => ipcRenderer.invoke("begin-sign-in", options),
+  completeSignIn: () => ipcRenderer.invoke("complete-sign-in"),
+  logout: () => ipcRenderer.invoke("logout"),
+  refreshAccountStatus: () => ipcRenderer.invoke("refresh-account-status"),
   transcribeDictation: (audio) => ipcRenderer.invoke("transcribe-dictation", audio),
   getCapabilitySnapshot: () => ipcRenderer.invoke("capabilities:get-snapshot"),
   installCapability: (id) => ipcRenderer.invoke("capabilities:install", id),

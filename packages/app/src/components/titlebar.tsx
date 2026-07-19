@@ -26,6 +26,7 @@ import { displayName, getProjectAvatarSource, projectForSession } from "@/pages/
 import { makeEventListener } from "@solid-primitives/event-listener"
 import { StatusPopover } from "./status-popover"
 import { SDKProvider } from "@/context/sdk"
+import { TitlebarAccountButton } from "./titlebar-account-button"
 
 type TauriDesktopWindow = {
   startDragging?: () => Promise<void>
@@ -95,6 +96,19 @@ export function Titlebar(props: { update?: TitlebarUpdate }) {
       dialog.show(() => <x.DialogSettings defaultTab="account" />)
     })
   }
+
+  const accountButton = (variant: "legacy" | "v2") => (
+    <Show when={platform.getAccountStatus && platform.refreshAccountStatus && platform.beginSignIn}>
+      <TitlebarAccountButton
+        variant={variant}
+        label={language.t("settings.account.title")}
+        getStatus={platform.getAccountStatus!}
+        refresh={platform.refreshAccountStatus!}
+        signIn={platform.beginSignIn!}
+        onOpen={openAccountSettings}
+      />
+    </Show>
+  )
 
   const [history, setHistory] = createStore({
     stack: [] as string[],
@@ -420,28 +434,7 @@ export function Titlebar(props: { update?: TitlebarUpdate }) {
                 <Show when={windows() || linux()}>
                   <WindowsAppMenu command={command} platform={platform} variant="v2" />
                 </Show>
-                <Show when={platform.getBharatCodeAccountStatus}>
-                  <Tooltip placement="bottom" value={language.t("settings.account.title")}>
-                    <Button
-                      variant="ghost"
-                      class="titlebar-icon size-6 rounded-full p-0 box-border shrink-0"
-                      onClick={openAccountSettings}
-                      aria-label={language.t("settings.account.title")}
-                    >
-                      <span class="flex size-5 items-center justify-center rounded-full bg-background-muted text-icon-base">
-                        <svg viewBox="0 0 16 16" class="size-4" aria-hidden="true" fill="none">
-                          <circle cx="8" cy="5.25" r="2.25" stroke="currentColor" stroke-width="1.25" />
-                          <path
-                            d="M3.75 13.25C4.25 10.8 5.8 9.5 8 9.5C10.2 9.5 11.75 10.8 12.25 13.25"
-                            stroke="currentColor"
-                            stroke-width="1.25"
-                            stroke-linecap="round"
-                          />
-                        </svg>
-                      </span>
-                    </Button>
-                  </Tooltip>
-                </Show>
+                {accountButton("v2")}
                 <IconButtonV2
                   variant="ghost-muted"
                   size="large"
@@ -526,6 +519,7 @@ export function Titlebar(props: { update?: TitlebarUpdate }) {
               <Show when={windows() || linux()}>
                 <WindowsAppMenu command={command} platform={platform} />
               </Show>
+              {accountButton("legacy")}
               <Show when={mac()}>
                 {/*<div class="h-full shrink-0" style={{ width: `${72 / zoom()}px` }} />*/}
                 <div class="xl:hidden w-10 shrink-0 flex items-center justify-center">

@@ -12,7 +12,6 @@ import type {
   WindowConfig,
   WslConfig,
   BharatCodeAccountStatus,
-  BharatCodeAuthState,
   BharatCodeSignInOptions,
   DictationAudioInput,
 } from "../preload/types"
@@ -48,10 +47,11 @@ type Deps = {
   setBackgroundColor: (color: string) => void
   exportDebugLogs: () => Promise<string>
   recordFatalRendererError: (error: FatalRendererError) => Promise<void> | void
-  getBharatCodeAuthState: () => Promise<BharatCodeAuthState>
-  getBharatCodeAccountStatus: () => Promise<BharatCodeAccountStatus>
-  refreshBharatCodeAccountStatus: () => Promise<BharatCodeAccountStatus>
-  signInToBharatCode: (options?: BharatCodeSignInOptions & { onBrowserUrl?: (url: string) => void }) => Promise<BharatCodeAuthState>
+  getAccountStatus: () => Promise<BharatCodeAccountStatus>
+  beginSignIn: (options?: BharatCodeSignInOptions) => Promise<BharatCodeAccountStatus>
+  completeSignIn: () => Promise<BharatCodeAccountStatus>
+  logout: () => Promise<BharatCodeAccountStatus>
+  refreshAccountStatus: () => Promise<BharatCodeAccountStatus>
   transcribeDictation: (audio: DictationAudioInput) => Promise<unknown>
   getCapabilitySnapshot: () => Promise<CapabilitySnapshot> | CapabilitySnapshot
   installCapability: (id: string) => Promise<CapabilitySnapshot> | CapabilitySnapshot
@@ -93,15 +93,13 @@ export function registerIpcHandlers(deps: Deps) {
   ipcMain.handle("record-fatal-renderer-error", (_event: IpcMainInvokeEvent, error: FatalRendererError) =>
     deps.recordFatalRendererError(error),
   )
-  ipcMain.handle("get-bharatcode-auth-state", () => deps.getBharatCodeAuthState())
-  ipcMain.handle("get-bharatcode-account-status", () => deps.getBharatCodeAccountStatus())
-  ipcMain.handle("refresh-bharatcode-account-status", () => deps.refreshBharatCodeAccountStatus())
-  ipcMain.handle("sign-in-to-bharatcode", (event: IpcMainInvokeEvent, options?: BharatCodeSignInOptions) =>
-    deps.signInToBharatCode({
-      ...options,
-      onBrowserUrl: (url) => event.sender.send("bharatcode-sign-in-url", url),
-    }),
+  ipcMain.handle("get-account-status", () => deps.getAccountStatus())
+  ipcMain.handle("begin-sign-in", (_event: IpcMainInvokeEvent, options?: BharatCodeSignInOptions) =>
+    deps.beginSignIn(options),
   )
+  ipcMain.handle("complete-sign-in", () => deps.completeSignIn())
+  ipcMain.handle("logout", () => deps.logout())
+  ipcMain.handle("refresh-account-status", () => deps.refreshAccountStatus())
   ipcMain.handle("transcribe-dictation", (_event: IpcMainInvokeEvent, audio: DictationAudioInput) =>
     deps.transcribeDictation(audio),
   )

@@ -11,6 +11,7 @@ import { BRANDING } from "./branding"
 import { exportDebugLogs, write as writeLog } from "./logging"
 import { getStore } from "./store"
 import { createUnresponsiveSampler } from "./unresponsive"
+import type { SidecarAuthorizationPolicy } from "./sidecar-auth"
 
 const root = dirname(fileURLToPath(import.meta.url))
 const rendererRoot = join(root, "../renderer")
@@ -119,7 +120,7 @@ export function setDockIcon() {
   if (!icon.isEmpty()) app.dock?.setIcon(icon)
 }
 
-export function createMainWindow() {
+export function createMainWindow(sidecarAuthorization?: SidecarAuthorizationPolicy) {
   const state = windowState({
     defaultWidth: 1280,
     defaultHeight: 800,
@@ -160,11 +161,24 @@ export function createMainWindow() {
   allowRendererPermissions(win)
   wireWindowRecovery(win, "main")
 
-  win.webContents.session.webRequest.onBeforeSendHeaders((details, callback) => {
+  const filter = { urls: ["<all_urls>"] }
+  win.webContents.session.webRequest.onBeforeRequest(filter, (details, callback) =>
+    callback(sidecarAuthorization?.beforeRequest(details, win.webContents.id) ?? { cancel: false }),
+  )
+  win.webContents.session.webRequest.onBeforeSendHeaders(filter, (details, callback) => {
     const { requestHeaders } = details
     upsertKeyValue(requestHeaders, "Access-Control-Allow-Origin", ["*"])
-    callback({ requestHeaders })
+    callback(
+      sidecarAuthorization?.beforeSendHeaders({ ...details, requestHeaders }, win.webContents.id) ?? {
+        requestHeaders,
+      },
+    )
   })
+  win.webContents.session.webRequest.onBeforeRedirect(filter, (details) =>
+    sidecarAuthorization?.beforeRedirect(details),
+  )
+  win.webContents.session.webRequest.onCompleted(filter, (details) => sidecarAuthorization?.complete(details.id))
+  win.webContents.session.webRequest.onErrorOccurred(filter, (details) => sidecarAuthorization?.complete(details.id))
 
   win.webContents.session.webRequest.onHeadersReceived((details, callback) => {
     const { responseHeaders = {} } = details

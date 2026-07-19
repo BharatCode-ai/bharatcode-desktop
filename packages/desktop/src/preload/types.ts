@@ -5,8 +5,7 @@ export type InitStep = { phase: "server_waiting" } | { phase: "sqlite_waiting" }
 
 export type ServerReadyData = {
   url: string
-  username: string | null
-  password: string | null
+  sidecarID: string
 }
 
 export type SqliteMigrationProgress = { type: "InProgress"; value: number } | { type: "Done" }
@@ -21,34 +20,27 @@ export type WindowConfig = {
   updaterEnabled: boolean
 }
 
-export type BharatCodeAuthState = {
-  authenticated: boolean
-  configured: boolean
-  credentialsPath: string
-  configPath: string
-}
-
 export type BharatCodeSignInOptions = {
-  forceAccountSelection?: boolean
+  selectAccount?: boolean
 }
 
-export type BharatCodeAccountState = "signed_out" | "signed_in" | "needs_sign_in" | "connection_issue"
+export type BharatCodeAccountState =
+  | "signed_out"
+  | "signed_in"
+  | "needs_sign_in"
+  | "connection_issue"
+  | "authorizing"
+  | "refreshing"
+  | "switching"
 
-export type BharatCodeConnectionStatus = {
-  ok: boolean
-  endpoint: string
-  kind?: "auth" | "http" | "network" | "service" | "unknown"
-  status?: number
-  message?: string
-}
-
-export type BharatCodeAccountStatus = BharatCodeAuthState & {
+export type BharatCodeAccountStatus = {
   state: BharatCodeAccountState
+  authenticated: boolean
   checkedAt: string
   email?: string
+  name?: string
   expiresAt?: number
   message?: string
-  connection?: BharatCodeConnectionStatus
 }
 
 export type FatalRendererError = {
@@ -98,7 +90,6 @@ export type ElectronAPI = {
   onSqliteMigrationProgress: (cb: (progress: SqliteMigrationProgress) => void) => () => void
   onMenuCommand: (cb: (id: string) => void) => () => void
   onDeepLink: (cb: (urls: string[]) => void) => () => void
-  onBharatCodeSignInUrl: (cb: (url: string) => void) => () => void
 
   openDirectoryPicker: (opts?: {
     multiple?: boolean
@@ -136,10 +127,11 @@ export type ElectronAPI = {
   setBackgroundColor: (color: string) => Promise<void>
   exportDebugLogs: () => Promise<string>
   recordFatalRendererError: (error: FatalRendererError) => Promise<void>
-  getBharatCodeAuthState: () => Promise<BharatCodeAuthState>
-  getBharatCodeAccountStatus: () => Promise<BharatCodeAccountStatus>
-  refreshBharatCodeAccountStatus: () => Promise<BharatCodeAccountStatus>
-  signInToBharatCode: (options?: BharatCodeSignInOptions) => Promise<BharatCodeAuthState>
+  getAccountStatus: () => Promise<BharatCodeAccountStatus>
+  beginSignIn: (options?: BharatCodeSignInOptions) => Promise<BharatCodeAccountStatus>
+  completeSignIn: () => Promise<BharatCodeAccountStatus>
+  logout: () => Promise<BharatCodeAccountStatus>
+  refreshAccountStatus: () => Promise<BharatCodeAccountStatus>
   transcribeDictation: (audio: DictationAudioInput) => Promise<DictationTranscription>
   getCapabilitySnapshot: () => Promise<CapabilitySnapshot>
   installCapability: (id: string) => Promise<CapabilitySnapshot>

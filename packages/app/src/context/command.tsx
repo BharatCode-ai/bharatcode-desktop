@@ -14,6 +14,7 @@ const PALETTE_ID = "command.palette"
 const DEFAULT_PALETTE_KEYBIND = "mod+shift+p"
 const SUGGESTED_PREFIX = "suggested."
 const EDITABLE_KEYBIND_IDS = new Set(["terminal.toggle", "terminal.new", "file.attach", "prompt.dictate"])
+const DISABLED_PRODUCT_COMMANDS = new Set(["provider.connect", "session.share", "session.unshare"])
 
 type KeyLabel =
   | "common.key.ctrl"
@@ -105,6 +106,10 @@ export type CommandRegistration = {
 export function upsertCommandRegistration(registrations: CommandRegistration[], entry: CommandRegistration) {
   if (entry.key === undefined) return [entry, ...registrations]
   return [entry, ...registrations.filter((x) => x.key !== entry.key)]
+}
+
+export function productCommandOptions(options: CommandOption[]) {
+  return options.filter((option) => !DISABLED_PRODUCT_COMMANDS.has(actionId(option.id)))
 }
 
 export function parseKeybind(config: string): Keybind[] {
@@ -272,7 +277,7 @@ export const { use: useCommand, provider: CommandProvider } = createSimpleContex
         }
       }
 
-      return all
+      return productCommandOptions(all)
     })
 
     createEffect(() => {
