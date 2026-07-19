@@ -39,8 +39,6 @@ import { ensureProcessMetadata } from "@opencode-ai/core/util/opencode-process"
 import { isRecord } from "@/util/record"
 import { createDefaultRecoveryController, DoctorCommand, RecoveryCommand } from "./cli/cmd/doctor"
 
-const processMetadata = ensureProcessMetadata("main")
-
 process.on("unhandledRejection", (e) => {
   Log.Default.error("rejection", {
     e: errorMessage(e),
@@ -105,6 +103,17 @@ const cli = yargs(args)
     type: "boolean",
   })
   .middleware(async (opts) => {
+    const recoveryCommand = requestedCommand === "doctor" || requestedCommand === "recovery"
+    const bypassRecoveryGate = recoveryCommand || informationalInvocation
+    if (!bypassRecoveryGate) {
+      const recovery = await createDefaultRecoveryController().inspect()
+      if (recovery.state !== "ready") {
+        throw new Error("BharatCode recovery is required. Run `bharatcode doctor` before startup.")
+      }
+    }
+    if (bypassRecoveryGate) return
+
+    const processMetadata = ensureProcessMetadata("main")
     await Global.ensure()
     if (opts.pure) {
       process.env.OPENCODE_PURE = "1"
@@ -132,15 +141,6 @@ const cli = yargs(args)
       process_role: processMetadata.processRole,
       run_id: processMetadata.runID,
     })
-
-    const recoveryCommand = requestedCommand === "doctor" || requestedCommand === "recovery"
-    const bypassRecoveryGate = recoveryCommand || informationalInvocation
-    if (!bypassRecoveryGate) {
-      const recovery = await createDefaultRecoveryController().inspect()
-      if (recovery.state !== "ready") {
-        throw new Error("BharatCode recovery is required. Run `bharatcode doctor` before startup.")
-      }
-    }
 
     const marker = Global.Path.database
     if (!bypassRecoveryGate && !(await Filesystem.exists(marker))) {

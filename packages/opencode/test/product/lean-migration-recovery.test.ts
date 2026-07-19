@@ -1,6 +1,6 @@
 import { Database as BunDatabase } from "bun:sqlite"
 import { afterAll, afterEach, describe, expect, test } from "bun:test"
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises"
+import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 
@@ -41,8 +41,12 @@ describe("lean next-beta migration and recovery scenarios 6-7", () => {
     const fixture = await databaseFixture()
     const sourceDatabase = path.join(fixture.home, ".local", "share", "opencode", "opencode.db")
     const sourceConfig = path.join(fixture.home, ".config", "opencode", "opencode.json")
+    const sourceLog = path.join(fixture.home, ".local", "share", "opencode", "log", "beta.log")
+    const sourceRecord = path.join(fixture.home, ".local", "share", "opencode", "legacy-record.txt")
     const sourceDatabaseBytes = await readFile(sourceDatabase)
     const sourceConfigBytes = await readFile(sourceConfig)
+    const sourceLogBytes = await readFile(sourceLog)
+    const sourceRecordBytes = await readFile(sourceRecord)
     expect(sourceConfigBytes.toString()).toContain("https://opencode.ai")
 
     const controller = createRecoveryController(fixture.input)
@@ -62,6 +66,10 @@ describe("lean next-beta migration and recovery scenarios 6-7", () => {
 
     expect(await readFile(sourceDatabase)).toEqual(sourceDatabaseBytes)
     expect(await readFile(sourceConfig)).toEqual(sourceConfigBytes)
+    expect(await readFile(sourceLog)).toEqual(sourceLogBytes)
+    expect(await readFile(sourceRecord)).toEqual(sourceRecordBytes)
+    expect(await readFile(path.join(fixture.destination.data, "log", "beta.log"))).toEqual(sourceLogBytes)
+    expect(await readFile(path.join(fixture.destination.data, "legacy-record.txt"))).toEqual(sourceRecordBytes)
     expect(JSON.parse(await readFile(path.join(fixture.destination.config, "bharatcode.json"), "utf8"))).toEqual({
       theme: "dark",
       snapshot: false,
@@ -78,6 +86,92 @@ describe("lean next-beta migration and recovery scenarios 6-7", () => {
     expect(await createRecoveryController(fixture.input).inspect()).toEqual({ state: "ready" })
     receipts.push({ scenario: 6, proof: "explicit-sanitized-preserved-restart", assertions: 13 })
   }, 20_000)
+
+  test("real CLI metadata and recovery commands cannot poison a later legacy log cutover", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "bharatcode-recovery-bootstrap-"))
+    roots.push(root)
+    const home = path.join(root, "home")
+    const sourceData = path.join(home, ".local", "share", "opencode")
+    const sourceConfig = path.join(home, ".config", "opencode")
+    const sourceLog = path.join(sourceData, "log", "beta.log")
+    const sourceRecord = path.join(sourceData, "legacy-record.txt")
+    const sourceConfiguration = path.join(sourceConfig, "opencode.json")
+    await Promise.all([
+      mkdir(path.dirname(sourceLog), { recursive: true, mode: 0o700 }),
+      mkdir(sourceConfig, { recursive: true, mode: 0o700 }),
+    ])
+    await Promise.all([
+      writeFile(sourceLog, "legacy beta log\n", { mode: 0o600 }),
+      writeFile(sourceRecord, "retained legacy data\n", { mode: 0o600 }),
+      writeFile(sourceConfiguration, '{"theme":"dark","snapshot":false}', { mode: 0o600 }),
+    ])
+    const sourceBytes = await Promise.all([sourceLog, sourceRecord, sourceConfiguration].map((file) => readFile(file)))
+    const env = childEnvironment(home)
+    const destinationData = path.join(home, ".local", "share", "bharatcode-test")
+    const destinationConfig = path.join(home, ".config", "bharatcode-test")
+    const destinationState = path.join(home, ".local", "state", "bharatcode-test")
+    const ordinaryArtifacts = [
+      destinationData,
+      destinationConfig,
+      path.join(destinationState, "log"),
+      path.join(home, ".cache", "bharatcode-test", "bin"),
+    ]
+
+    const blocked = await runCliProcess(env, ["db", "path"])
+    expect(blocked.exit).toBe(1)
+    expect(blocked.stderr).toContain("BharatCode recovery is required")
+    expect(await Promise.all(ordinaryArtifacts.map(entryExists))).toEqual([false, false, false, false])
+
+    await runCliRaw(env, ["--help"])
+    await runCliRaw(env, ["--version"])
+    await runCliRaw(env, ["db", "--help"])
+    expect(await Promise.all(ordinaryArtifacts.map(entryExists))).toEqual([false, false, false, false])
+
+    const first = parseRecoveryCommandResult(await runCliRaw(env, ["recovery", "status", "--json"]))
+    const repeated = parseRecoveryCommandResult(await runCliRaw(env, ["recovery", "status", "--json"]))
+    expect(parseRecoveryCommandResult(await runCliRaw(env, ["doctor"]))).toEqual(first)
+    expect(repeated).toEqual(first)
+    if (first.state !== "choose-source") throw new Error("expected explicit source choice")
+    expect(await Promise.all(ordinaryArtifacts.map(entryExists))).toEqual([false, false, false, false])
+
+    const selected = first.sources[0]!
+    expect(
+      await runCli(env, [
+        "recovery",
+        "choose-source",
+        "--id",
+        selected.id,
+        "--content-fingerprint",
+        selected.contentFingerprint,
+        "--json",
+      ]),
+    ).toEqual({ state: "ready" })
+    expect(await Promise.all([sourceLog, sourceRecord, sourceConfiguration].map((file) => readFile(file)))).toEqual(
+      sourceBytes,
+    )
+    expect(await readFile(path.join(destinationData, "log", "beta.log"))).toEqual(sourceBytes[0]!)
+    expect(await readFile(path.join(destinationData, "legacy-record.txt"))).toEqual(sourceBytes[1]!)
+    expect(await readFile(path.join(destinationConfig, "bharatcode.json"))).toEqual(sourceBytes[2]!)
+    expect(await entryExists(path.join(destinationState, "log"))).toBe(false)
+    expect(await entryExists(path.join(destinationData, "repos"))).toBe(false)
+    expect(parseRecoveryCommandResult(await runCliRaw(env, ["recovery", "status", "--json"]))).toEqual({
+      state: "ready",
+    })
+    const journal = JSON.parse(await readFile(path.join(destinationState, "lean-migration-v1.json"), "utf8")) as {
+      operationID: string
+    }
+    expect(await runCli(env, ["recovery", "retry", "--operation-id", journal.operationID, "--json"])).toEqual({
+      state: "ready",
+    })
+    expect(await entryExists(path.join(destinationState, "log"))).toBe(false)
+
+    expect((await runCliRaw(env, ["--pure", "db", "path"])).trim()).toBe(path.join(destinationData, "bharatcode.db"))
+    expect(await entryExists(path.join(destinationState, "log"))).toBe(true)
+    expect(await entryExists(path.join(destinationData, "repos"))).toBe(true)
+    expect(await Promise.all([sourceLog, sourceRecord, sourceConfiguration].map((file) => readFile(file)))).toEqual(
+      sourceBytes,
+    )
+  }, 60_000)
 
   test("rejects stale choices and exposes deterministic ambiguity without destination effects", async () => {
     const fixture = await configFixture()
@@ -257,9 +351,17 @@ describe("lean next-beta migration and recovery scenarios 6-7", () => {
 
 async function databaseFixture() {
   const fixture = await emptyFixture("database")
+  await rm(fixture.destination.storage, { recursive: true })
   const data = path.join(fixture.home, ".local", "share", "opencode")
   const config = path.join(fixture.home, ".config", "opencode")
-  await Promise.all([mkdir(data, { recursive: true, mode: 0o700 }), mkdir(config, { recursive: true, mode: 0o700 })])
+  await Promise.all([
+    mkdir(path.join(data, "log"), { recursive: true, mode: 0o700 }),
+    mkdir(config, { recursive: true, mode: 0o700 }),
+  ])
+  await Promise.all([
+    writeFile(path.join(data, "log", "beta.log"), "legacy beta log\n", { mode: 0o600 }),
+    writeFile(path.join(data, "legacy-record.txt"), "retained legacy data\n", { mode: 0o600 }),
+  ])
   await writeFile(
     path.join(config, "opencode.json"),
     JSON.stringify({ theme: "dark", snapshot: false, provider: "opencode", server: { url: "https://opencode.ai" } }),
@@ -416,11 +518,29 @@ function childEnvironment(home: string) {
   return env
 }
 
+async function entryExists(entry: string) {
+  return lstat(entry).then(
+    () => true,
+    (error) => {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") return false
+      throw error
+    },
+  )
+}
+
 async function runCli(env: Record<string, string | undefined>, args: readonly string[]) {
   return parseRecoveryCommandResult(await runCliRaw(env, args))
 }
 
 async function runCliRaw(env: Record<string, string | undefined>, args: readonly string[], cwd?: string) {
+  const result = await runCliProcess(env, args, cwd)
+  if (result.exit !== 0) {
+    throw new Error(`closed CLI recovery failed (${result.exit}): ${result.stderr.slice(-2000)}`)
+  }
+  return result.stdout
+}
+
+async function runCliProcess(env: Record<string, string | undefined>, args: readonly string[], cwd?: string) {
   const packageRoot = path.join(import.meta.dir, "../..")
   const child = Bun.spawn(
     [process.execPath, "run", "--conditions=browser", path.join(packageRoot, "src", "index.ts"), ...args],
@@ -436,8 +556,7 @@ async function runCliRaw(env: Record<string, string | undefined>, args: readonly
     new Response(child.stderr).text(),
     child.exited,
   ])
-  if (exit !== 0) throw new Error(`closed CLI recovery failed (${exit}): ${stderr.split("\n")[0] ?? ""}`)
-  return stdout
+  return { stdout, stderr, exit }
 }
 
 async function runVerticalRuntime(env: Record<string, string | undefined>, project: string): Promise<RuntimeReceipt> {
