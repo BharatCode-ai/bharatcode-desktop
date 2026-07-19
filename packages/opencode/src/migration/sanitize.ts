@@ -49,7 +49,7 @@ const NESTED_FIELDS: Readonly<Record<string, ReadonlySet<string>>> = {
 const DYNAMIC_MAPS = new Set(["keybinds", "sidebar"])
 const USER_TEXT = new Set(["title", "text", "content", "name", "worktree"])
 const ACTIVE_KEY =
-  /(?:^|[_-])(?:provider|model|plugin|mcp|skill|share|update|command|executable|launcher|server|url|host|schema|token|secret|password|authorization)(?:$|[_-])/i
+  /(?:^|[_-])(?:provider|model|plugin|mcp|skill|share|update|command|exec|executable|argv|binary|launcher|server|url|baseurl|host|origin|endpoint|schema|runtime|fallback|token|secret|password|authorization)(?:$|[_-])/i
 
 export function sanitizeMigrationRecord(input: { kind: RecordKind; value: unknown }): SanitizedRecord {
   if (!plainRecord(input.value)) throw new MigrationSanitizeError("A migration record must be a plain record.")

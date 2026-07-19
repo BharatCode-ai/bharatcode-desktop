@@ -211,8 +211,19 @@ async function activateSnapshot(journal: MigrationJournal, destination: Migratio
     await writeFile(target, await readFile(path.join(records, entry.relative)), { mode: 0o600, flag: "wx" })
   }
   await moveRole(path.join(staging, "config"), destination.config)
-  await moveRole(path.join(staging, "data"), destination.data)
-  await moveFile(path.join(staging, "database", "main.sqlite"), destination.database)
+  const databaseName = path.basename(destination.database)
+  await moveRole(
+    path.join(staging, "data"),
+    destination.data,
+    (name) =>
+      maintenanceEntry(name) ||
+      name === databaseName ||
+      name === `${databaseName}-wal` ||
+      name === `${databaseName}-shm` ||
+      name === `${databaseName}-journal` ||
+      name === "desktop",
+  )
+  await moveDatabase(path.join(staging, "database", "main.sqlite"), destination.database)
   await moveRole(path.join(staging, "desktop"), path.join(destination.data, "desktop"))
   await Promise.all([
     mkdir(destination.config, { recursive: true, mode: 0o700 }),
@@ -220,20 +231,23 @@ async function activateSnapshot(journal: MigrationJournal, destination: Migratio
   ])
 }
 
-async function moveRole(source: string, destination: string) {
+async function moveRole(source: string, destination: string, ignoreDestination = maintenanceEntry) {
   if (!(await exists(source))) return
+  const sourceEntries = await readdir(source)
+  if (sourceEntries.some(ignoreDestination)) throw new MigrationCutoverError("The migration destination changed.")
   if (await exists(destination)) {
     const existing = await readdir(destination)
-    if (await sameTree(source, destination)) {
+    if (await sameTree(source, destination, ignoreDestination)) {
       await rm(source, { recursive: true })
       return
     }
-    if (existing.filter((name) => !name.startsWith("lean-migration-maintenance.sqlite")).length === 0) {
-      for (const name of await readdir(source)) {
+    if (existing.filter((name) => !ignoreDestination(name)).length === 0) {
+      for (const name of sourceEntries) {
         const target = path.join(destination, name)
         if (await exists(target)) throw new MigrationCutoverError("The migration destination changed.")
         await rename(path.join(source, name), target)
       }
+      await syncDirectory(destination)
       await rm(source, { recursive: true })
       return
     }
@@ -242,18 +256,22 @@ async function moveRole(source: string, destination: string) {
   }
   await mkdir(path.dirname(destination), { recursive: true, mode: 0o700 })
   await rename(source, destination)
+  await syncDirectory(path.dirname(destination))
 }
 
-async function moveFile(source: string, destination: string) {
+async function moveDatabase(source: string, destination: string) {
   if (!(await exists(source))) return
+  for (const suffix of ["-wal", "-shm", "-journal"]) {
+    if (await exists(`${destination}${suffix}`)) throw new MigrationCutoverError("The migration destination changed.")
+  }
   if (await exists(destination)) {
-    if (digestBytes(await readFile(source)) !== digestBytes(await readFile(destination)))
-      throw new MigrationCutoverError("The migration destination changed.")
+    if (!(await sameFile(source, destination))) throw new MigrationCutoverError("The migration destination changed.")
     await rm(source)
     return
   }
   await mkdir(path.dirname(destination), { recursive: true, mode: 0o700 })
   await rename(source, destination)
+  await syncDirectory(path.dirname(destination))
 }
 
 async function validateKnownDestinations(destination: MigrationDestination) {
@@ -331,15 +349,24 @@ async function freshDestinationIsEmpty(destination: MigrationDestination) {
   )
 }
 
-async function sameTree(source: string, destination: string) {
-  return (await treeIdentity(source, false)) === (await treeIdentity(destination, true))
+async function sameFile(source: string, destination: string) {
+  const [sourceInfo, destinationInfo] = await Promise.all([lstat(source), lstat(destination)])
+  return (
+    sourceInfo.isFile() &&
+    destinationInfo.isFile() &&
+    digestBytes(await readFile(source)) === digestBytes(await readFile(destination))
+  )
 }
 
-async function treeIdentity(root: string, ignoreMaintenance: boolean) {
+async function sameTree(source: string, destination: string, ignoreDestination: (name: string) => boolean) {
+  return (await treeIdentity(source)) === (await treeIdentity(destination, ignoreDestination))
+}
+
+async function treeIdentity(root: string, ignoreRootEntry: (name: string) => boolean = () => false) {
   const entries: string[] = []
   const visit = async (directory: string, prefix: string): Promise<void> => {
     for (const name of (await readdir(directory)).toSorted()) {
-      if (ignoreMaintenance && !prefix && name.startsWith("lean-migration-maintenance.sqlite")) continue
+      if (!prefix && ignoreRootEntry(name)) continue
       const absolute = path.join(directory, name)
       const relative = prefix ? path.posix.join(prefix, name) : name
       const info = await lstat(absolute)
@@ -370,11 +397,15 @@ async function digestArtifact(item: string) {
   if (info.isSymbolicLink()) throw new MigrationCutoverError("A destination artifact was an unsupported link.")
   if (info.isFile()) return digestBytes(await readFile(item))
   if (!info.isDirectory()) throw new MigrationCutoverError("A destination artifact was unsupported.")
-  return treeIdentity(item, false)
+  return treeIdentity(item)
 }
 
 function digestBytes(bytes: Uint8Array) {
   return createHash("sha256").update(bytes).digest("hex")
+}
+
+function maintenanceEntry(name: string) {
+  return name.startsWith("lean-migration-maintenance.sqlite")
 }
 
 async function syncDirectory(directory: string) {

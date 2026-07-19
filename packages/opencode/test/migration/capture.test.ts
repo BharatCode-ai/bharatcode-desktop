@@ -89,8 +89,20 @@ describe("migration capture", () => {
     const writer = new Database(legacyDatabase, { create: true })
     writer.run("PRAGMA journal_mode = WAL")
     writer.run("CREATE TABLE session(id TEXT PRIMARY KEY, title TEXT, model TEXT)")
+    writer.run("CREATE TABLE message(id TEXT PRIMARY KEY, data TEXT NOT NULL)")
+    writer.run("CREATE TABLE part(id TEXT PRIMARY KEY, data TEXT NOT NULL)")
+    writer.run("CREATE TABLE permission(project_id TEXT PRIMARY KEY, data TEXT NOT NULL)")
     writer.run("CREATE TABLE account(id TEXT PRIMARY KEY, token TEXT)")
     writer.run("INSERT INTO session VALUES ('ses_1', 'kept', 'opencode/coder')")
+    writer.run(
+      'INSERT INTO message VALUES (\'msg_1\', \'{"role":"assistant","text":"Harmless discussion: opencode serve uses https://opencode.ai"}\')',
+    )
+    writer.run(
+      'INSERT INTO part VALUES (\'prt_1\', \'{"type":"text","text":"Transcript mentions opencode serve and https://opencode.ai"}\')',
+    )
+    writer.run(
+      'INSERT INTO permission VALUES (\'project_1\', \'{"command":"opencode serve","url":"https://opencode.ai"}\')',
+    )
     writer.run("INSERT INTO account VALUES ('acct_1', 'secret')")
     const source: MigrationSource = {
       id: "wal-source",
@@ -118,8 +130,61 @@ describe("migration capture", () => {
       readonly: true,
     })
     expect(sealed.query("SELECT title, model FROM session").get()).toEqual({ title: "kept", model: null })
+    expect(sealed.query("SELECT data FROM message").get()).toEqual({
+      data: '{"role":"assistant","text":"Harmless discussion: opencode serve uses https://opencode.ai"}',
+    })
+    expect(sealed.query("SELECT data FROM part").get()).toEqual({
+      data: '{"type":"text","text":"Transcript mentions opencode serve and https://opencode.ai"}',
+    })
+    expect(sealed.query("SELECT count(*) AS count FROM permission").get()).toEqual({ count: 0 })
     expect(() => sealed.query("SELECT * FROM account").all()).toThrow()
     sealed.close()
+  })
+
+  test("fails closed for an unknown SQLite capability location", async () => {
+    await using tmp = await tmpdir()
+    const data = path.join(tmp.path, "legacy-data")
+    await mkdir(data, { recursive: true })
+    const database = new Database(path.join(data, "opencode.db"), { create: true })
+    database.run("CREATE TABLE runtime_capability(id TEXT PRIMARY KEY, data TEXT NOT NULL)")
+    database.run(
+      'INSERT INTO runtime_capability VALUES (\'runtime_1\', \'{"command":"opencode serve","url":"https://opencode.ai"}\')',
+    )
+    database.close()
+
+    await expect(
+      captureMigrationSource(
+        {
+          id: "unknown-capability",
+          label: "Existing BharatCode data · opencode-cli · 00000000",
+          kind: "opencode-cli",
+          roots: { data },
+        },
+        target(tmp.path),
+      ),
+    ).rejects.toThrow("unsupported SQLite capability")
+  })
+
+  test("fails closed for an unknown capability column on a recognized SQLite table", async () => {
+    await using tmp = await tmpdir()
+    const data = path.join(tmp.path, "legacy-data")
+    await mkdir(data, { recursive: true })
+    const database = new Database(path.join(data, "opencode.db"), { create: true })
+    database.run("CREATE TABLE session(id TEXT PRIMARY KEY, title TEXT, runtime_fallback TEXT)")
+    database.run("INSERT INTO session VALUES ('ses_1', 'kept', 'opencode serve https://opencode.ai')")
+    database.close()
+
+    await expect(
+      captureMigrationSource(
+        {
+          id: "unknown-column",
+          label: "Existing BharatCode data · opencode-cli · 00000000",
+          kind: "opencode-cli",
+          roots: { data },
+        },
+        target(tmp.path),
+      ),
+    ).rejects.toThrow("unsupported SQLite capability")
   })
 
   test("rejects every unmanifested snapshot entry", async () => {

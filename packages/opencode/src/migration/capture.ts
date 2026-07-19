@@ -35,6 +35,90 @@ type Manifest = {
 const MAX_FILE_BYTES = 16 * 1024 * 1024
 const MAX_TOTAL_BYTES = 256 * 1024 * 1024
 const MAX_FILES = 50_000
+const DROPPED_SQLITE_TABLES = new Set(["session_share", "account_state", "account", "control_account"])
+const SQLITE_COLUMNS: Readonly<Record<string, ReadonlySet<string>>> = Object.fromEntries(
+  Object.entries({
+    __drizzle_migrations: ["id", "hash", "created_at"],
+    account: [
+      "id",
+      "email",
+      "url",
+      "access_token",
+      "refresh_token",
+      "token_expiry",
+      "selected_org_id",
+      "time_created",
+      "time_updated",
+    ],
+    account_state: ["id", "active_account_id", "active_org_id"],
+    control_account: [
+      "email",
+      "url",
+      "access_token",
+      "refresh_token",
+      "token_expiry",
+      "active",
+      "time_created",
+      "time_updated",
+    ],
+    data_migration: ["name", "time_completed"],
+    event: ["id", "aggregate_id", "seq", "type", "data"],
+    event_sequence: ["aggregate_id", "seq", "owner_id"],
+    message: ["id", "session_id", "time_created", "time_updated", "data"],
+    part: ["id", "message_id", "session_id", "time_created", "time_updated", "data"],
+    permission: ["project_id", "time_created", "time_updated", "data"],
+    project: [
+      "id",
+      "worktree",
+      "vcs",
+      "name",
+      "icon_url",
+      "icon_url_override",
+      "icon_color",
+      "time_created",
+      "time_updated",
+      "time_initialized",
+      "sandboxes",
+      "commands",
+    ],
+    session: [
+      "id",
+      "project_id",
+      "workspace_id",
+      "parent_id",
+      "slug",
+      "directory",
+      "path",
+      "title",
+      "version",
+      "share_url",
+      "summary_additions",
+      "summary_deletions",
+      "summary_files",
+      "summary_diffs",
+      "cost",
+      "tokens_input",
+      "tokens_output",
+      "tokens_reasoning",
+      "tokens_cache_read",
+      "tokens_cache_write",
+      "revert",
+      "permission",
+      "goal",
+      "agent",
+      "model",
+      "time_created",
+      "time_updated",
+      "time_compacting",
+      "time_archived",
+    ],
+    session_entry: ["id", "session_id", "type", "time_created", "time_updated", "data"],
+    session_message: ["id", "session_id", "type", "time_created", "time_updated", "data"],
+    session_share: ["session_id", "id", "secret", "url", "time_created", "time_updated"],
+    todo: ["session_id", "content", "status", "priority", "position", "time_created", "time_updated"],
+    workspace: ["id", "type", "name", "branch", "directory", "extra", "project_id", "time_used", "config"],
+  }).map(([table, columns]) => [table, new Set(columns)]),
+)
 
 export class MigrationCaptureError extends Error {
   constructor(message: string) {
@@ -206,13 +290,21 @@ function snapshotDatabase(file: string) {
   try {
     try {
       database.run("PRAGMA foreign_keys = OFF")
-      for (const table of ["session_share", "account_state", "account", "control_account"]) {
+      assertKnownSQLiteSchema(database)
+      for (const table of DROPPED_SQLITE_TABLES) {
         if (hasTable(database, table)) database.run(`DROP TABLE ${quoteIdentifier(table)}`)
       }
+      deleteRows(database, ["permission", "event", "event_sequence", "data_migration"])
       clearColumns(database, "project", ["commands", "icon_url", "icon_url_override"])
+      setColumn(database, "project", "sandboxes", "[]")
       clearColumns(database, "session", ["share_url", "model", "permission", "agent"])
+      clearColumns(database, "workspace", ["extra"])
+      setColumn(database, "workspace", "config", "{}")
       sanitizeJsonColumn(database, "message")
       sanitizeJsonColumn(database, "part")
+      sanitizeJsonColumn(database, "session_entry")
+      sanitizeJsonColumn(database, "session_message")
+      assertSanitizedSQLite(database)
       database.run("PRAGMA journal_mode = DELETE")
     } finally {
       database.close()
@@ -221,6 +313,29 @@ function snapshotDatabase(file: string) {
   } finally {
     rmSync(directory, { recursive: true, force: true })
   }
+}
+
+function assertKnownSQLiteSchema(database: Database) {
+  const objects = database
+    .query(
+      "SELECT type, name FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' AND type IN ('table', 'trigger', 'view') ORDER BY name",
+    )
+    .all() as { type: string; name: string }[]
+  for (const object of objects) {
+    const allowed = SQLITE_COLUMNS[object.name]
+    if (object.type !== "table" || !allowed) {
+      throw new MigrationCaptureError("The migration database contained an unsupported SQLite capability location.")
+    }
+    if (DROPPED_SQLITE_TABLES.has(object.name)) continue
+    const columns = database.query(`PRAGMA table_info(${quoteSql(object.name)})`).all() as { name: string }[]
+    if (columns.some((column) => !allowed.has(column.name))) {
+      throw new MigrationCaptureError("The migration database contained an unsupported SQLite capability location.")
+    }
+  }
+}
+
+function deleteRows(database: Database, tables: readonly string[]) {
+  for (const table of tables) if (hasTable(database, table)) database.run(`DELETE FROM ${quoteIdentifier(table)}`)
 }
 
 function clearColumns(database: Database, table: string, columns: readonly string[]) {
@@ -236,10 +351,13 @@ function clearColumns(database: Database, table: string, columns: readonly strin
   }
 }
 
+function setColumn(database: Database, table: string, column: string, value: string) {
+  if (!hasColumn(database, table, column)) return
+  database.run(`UPDATE ${quoteIdentifier(table)} SET ${quoteIdentifier(column)} = ?`, [value])
+}
+
 function sanitizeJsonColumn(database: Database, table: string) {
-  if (!hasTable(database, table)) return
-  const columns = database.query(`PRAGMA table_info(${quoteSql(table)})`).all() as { name: string }[]
-  if (!columns.some((column) => column.name === "data")) return
+  if (!hasColumn(database, table, "data")) return
   const update = database.prepare(`UPDATE ${quoteIdentifier(table)} SET data = ? WHERE rowid = ?`)
   for (const row of database.query(`SELECT rowid, data FROM ${quoteIdentifier(table)}`).all() as {
     rowid: number
@@ -250,8 +368,51 @@ function sanitizeJsonColumn(database: Database, table: string) {
   }
 }
 
+function assertSanitizedSQLite(database: Database) {
+  assertKnownSQLiteSchema(database)
+  for (const table of ["permission", "event", "event_sequence", "data_migration"]) {
+    if (hasTable(database, table) && database.query(`SELECT 1 FROM ${quoteIdentifier(table)} LIMIT 1`).get()) {
+      throw new MigrationCaptureError("The migration database retained an active SQLite capability.")
+    }
+  }
+  for (const [table, columns] of [
+    ["project", ["commands", "icon_url", "icon_url_override"]],
+    ["session", ["share_url", "model", "permission", "agent"]],
+    ["workspace", ["extra"]],
+  ] as const) {
+    for (const column of columns) {
+      if (
+        hasColumn(database, table, column) &&
+        database
+          .query(`SELECT 1 FROM ${quoteIdentifier(table)} WHERE ${quoteIdentifier(column)} IS NOT NULL LIMIT 1`)
+          .get()
+      ) {
+        throw new MigrationCaptureError("The migration database retained an active SQLite capability.")
+      }
+    }
+  }
+  for (const table of ["message", "part", "session_entry", "session_message"]) {
+    if (!hasColumn(database, table, "data")) continue
+    for (const row of database.query(`SELECT data FROM ${quoteIdentifier(table)}`).all() as { data: string }[]) {
+      const parsed = JSON.parse(row.data) as unknown
+      if (
+        JSON.stringify(sanitizeMigrationRecord({ kind: "session", value: parsed }).value) !== JSON.stringify(parsed)
+      ) {
+        throw new MigrationCaptureError("The migration database retained an active SQLite capability.")
+      }
+    }
+  }
+}
+
 function hasTable(database: Database, table: string) {
   return !!database.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?").get(table)
+}
+
+function hasColumn(database: Database, table: string, column: string) {
+  if (!hasTable(database, table)) return false
+  return (database.query(`PRAGMA table_info(${quoteSql(table)})`).all() as { name: string }[]).some(
+    (item) => item.name === column,
+  )
 }
 
 function quoteIdentifier(value: string) {

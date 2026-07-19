@@ -8,7 +8,11 @@ import { activateMigration, prepareMigration, startFresh, validateFreshDestinati
 import type { MigrationSource } from "@/migration/source"
 import { tmpdir } from "../fixture/fixture"
 
+type SwitchEdge = "config" | "data" | "database" | "desktop"
+
 describe("migration cutover", () => {
+  const switchEdges: SwitchEdge[] = ["config", "data", "database", "desktop"]
+
   test("returns closed actions for zero and ambiguous sources", async () => {
     await using tmp = await tmpdir()
     const destination = target(tmp.path)
@@ -97,6 +101,46 @@ describe("migration cutover", () => {
     })
   })
 
+  test.each(switchEdges)("Retry converges after the %s durable switch edge", async (edge) => {
+    await using tmp = await tmpdir()
+    const fixture = await durableSwitchFixture(tmp.path)
+    const before = await Promise.all(fixture.sourceFiles.map((file) => readFile(file)))
+    const prepared = await prepareMigration({ sources: [fixture.source], destination: fixture.destination })
+    if (prepared.type !== "prepared") throw new Error("expected prepared operation")
+    await installDurableSwitches(fixture.destination, edge)
+
+    expect(await activateMigration({ operationID: prepared.operationID, destination: fixture.destination })).toEqual({
+      state: "complete",
+      sourceID: fixture.source.id,
+    })
+    expect(await validateFreshDestination(fixture.destination)).toBe(true)
+    expect(await Promise.all(fixture.sourceFiles.map((file) => readFile(file)))).toEqual(before)
+    expect(await Bun.file(path.join(fixture.destination.config, "settings.json")).text()).toBe('{"theme":"dark"}')
+    expect(await Bun.file(path.join(fixture.destination.storage, "session", "ses_1.json")).text()).toContain("retained")
+    expect(await Bun.file(path.join(fixture.destination.data, "desktop", "preferences.json")).text()).toBe(
+      '{"theme":"dark"}',
+    )
+    const activated = new Database(fixture.destination.database, { readonly: true })
+    expect(activated.query("SELECT title FROM session").get()).toEqual({ title: "retained" })
+    activated.close()
+    expect(
+      JSON.parse(await Bun.file(path.join(fixture.destination.state, "lean-migration-v1.json")).text()),
+    ).toMatchObject({ phase: "complete", operationID: prepared.operationID })
+  })
+
+  test.each(switchEdges)("Retry rejects mutation of the already-switched %s unit", async (edge) => {
+    await using tmp = await tmpdir()
+    const fixture = await durableSwitchFixture(tmp.path)
+    const prepared = await prepareMigration({ sources: [fixture.source], destination: fixture.destination })
+    if (prepared.type !== "prepared") throw new Error("expected prepared operation")
+    await installDurableSwitches(fixture.destination, edge)
+    await mutateDurableSwitch(fixture.destination, edge)
+
+    await expect(
+      activateMigration({ operationID: prepared.operationID, destination: fixture.destination }),
+    ).rejects.toThrow("The migration destination changed.")
+  })
+
   test("activates one sanitized canonical database from live WAL alongside retained data", async () => {
     await using tmp = await tmpdir()
     const data = path.join(tmp.path, "legacy-data")
@@ -109,8 +153,20 @@ describe("migration cutover", () => {
     const writer = new Database(legacyDatabase, { create: true })
     writer.run("PRAGMA journal_mode = WAL")
     writer.run("CREATE TABLE session(id TEXT PRIMARY KEY, title TEXT, model TEXT)")
+    writer.run("CREATE TABLE message(id TEXT PRIMARY KEY, data TEXT NOT NULL)")
+    writer.run("CREATE TABLE part(id TEXT PRIMARY KEY, data TEXT NOT NULL)")
+    writer.run("CREATE TABLE permission(project_id TEXT PRIMARY KEY, data TEXT NOT NULL)")
     writer.run("CREATE TABLE account(id TEXT PRIMARY KEY, token TEXT)")
     writer.run("INSERT INTO session VALUES ('ses_1', 'kept', 'opencode/coder')")
+    writer.run(
+      'INSERT INTO message VALUES (\'msg_1\', \'{"role":"assistant","text":"Harmless discussion: opencode serve uses https://opencode.ai"}\')',
+    )
+    writer.run(
+      'INSERT INTO part VALUES (\'prt_1\', \'{"type":"text","text":"Transcript mentions opencode serve and https://opencode.ai"}\')',
+    )
+    writer.run(
+      'INSERT INTO permission VALUES (\'project_1\', \'{"command":"opencode serve","url":"https://opencode.ai"}\')',
+    )
     writer.run("INSERT INTO account VALUES ('acct_1', 'secret')")
     const candidate: MigrationSource = {
       id: "wal-source",
@@ -131,6 +187,13 @@ describe("migration cutover", () => {
     expect(await Bun.file(path.join(destination.data, "opencode.db")).exists()).toBe(false)
     const activated = new Database(destination.database, { readonly: true })
     expect(activated.query("SELECT title, model FROM session").get()).toEqual({ title: "kept", model: null })
+    expect(activated.query("SELECT data FROM message").get()).toEqual({
+      data: '{"role":"assistant","text":"Harmless discussion: opencode serve uses https://opencode.ai"}',
+    })
+    expect(activated.query("SELECT data FROM part").get()).toEqual({
+      data: '{"type":"text","text":"Transcript mentions opencode serve and https://opencode.ai"}',
+    })
+    expect(activated.query("SELECT count(*) AS count FROM permission").get()).toEqual({ count: 0 })
     expect(() => activated.query("SELECT * FROM account").all()).toThrow()
     activated.close()
     const preserved = new Database(legacyDatabase, { readonly: true })
@@ -216,4 +279,76 @@ function target(root: string): MigrationDestination {
     database: path.join(root, "destination", "data", "bharatcode.db"),
     storage: path.join(root, "destination", "data", "storage"),
   }
+}
+
+async function durableSwitchFixture(root: string) {
+  const config = path.join(root, "legacy-config")
+  const data = path.join(root, "legacy-data")
+  const desktop = path.join(root, "legacy-desktop")
+  const session = path.join(data, "storage", "session", "ses_1.json")
+  const preferences = path.join(desktop, "preferences.json")
+  await Promise.all([
+    mkdir(config, { recursive: true }),
+    mkdir(path.dirname(session), { recursive: true }),
+    mkdir(desktop, { recursive: true }),
+  ])
+  await Promise.all([
+    writeFile(path.join(config, "settings.json"), '{"theme":"dark"}'),
+    writeFile(session, '{"id":"ses_1","title":"retained"}'),
+    writeFile(preferences, '{"theme":"dark"}'),
+  ])
+  const database = path.join(data, "opencode.db")
+  const sourceDatabase = new Database(database, { create: true })
+  sourceDatabase.run("CREATE TABLE session(id TEXT PRIMARY KEY, title TEXT, model TEXT)")
+  sourceDatabase.run("INSERT INTO session VALUES ('ses_1', 'retained', NULL)")
+  sourceDatabase.close()
+  return {
+    source: {
+      id: "durable-switch-source",
+      label: "Existing BharatCode data · opencode-cli · 00000000",
+      kind: "opencode-cli",
+      roots: { config, data, desktop },
+    } satisfies MigrationSource,
+    destination: target(root),
+    sourceFiles: [path.join(config, "settings.json"), session, preferences, database],
+  }
+}
+
+async function installDurableSwitches(destination: MigrationDestination, through: SwitchEdge) {
+  const journal = JSON.parse(await Bun.file(path.join(destination.state, "lean-migration-v1.json")).text()) as {
+    snapshotDigest: string
+  }
+  const snapshot = path.join(destination.state, "migration-snapshots", journal.snapshotDigest)
+  const manifest = JSON.parse(await Bun.file(path.join(snapshot, "manifest.json")).text()) as {
+    entries: readonly { relative: string }[]
+  }
+  const edges = ["config", "data", "database", "desktop"] as const
+  for (const entry of manifest.entries) {
+    const edge = edges.find((candidate) => entry.relative === candidate || entry.relative.startsWith(`${candidate}/`))
+    if (!edge || edges.indexOf(edge) > edges.indexOf(through)) continue
+    const relative = entry.relative.slice(edge.length + 1)
+    const destinationRoot =
+      edge === "config"
+        ? destination.config
+        : edge === "data"
+          ? destination.data
+          : edge === "database"
+            ? path.dirname(destination.database)
+            : path.join(destination.data, "desktop")
+    const target = edge === "database" ? destination.database : path.join(destinationRoot, relative)
+    await mkdir(path.dirname(target), { recursive: true })
+    await writeFile(target, await readFile(path.join(snapshot, "records", entry.relative)))
+  }
+}
+
+async function mutateDurableSwitch(destination: MigrationDestination, edge: SwitchEdge) {
+  const target =
+    edge === "config"
+      ? path.join(destination.config, "settings.json")
+      : edge === "data"
+        ? path.join(destination.storage, "session", "ses_1.json")
+        : edge === "database"
+          ? destination.database
+          : path.join(destination.data, "desktop", "preferences.json")
+  await writeFile(target, "mutated")
 }
