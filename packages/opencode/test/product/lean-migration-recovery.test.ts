@@ -122,9 +122,22 @@ describe("lean next-beta migration and recovery scenarios 6-7", () => {
     expect(blocked.stderr).toContain("BharatCode recovery is required")
     expect(await Promise.all(ordinaryArtifacts.map(entryExists))).toEqual([false, false, false, false])
 
-    await runCliRaw(env, ["--help"])
-    await runCliRaw(env, ["--version"])
-    await runCliRaw(env, ["db", "--help"])
+    for (const invocation of [
+      ["--model", "doctor"],
+      ["-m", "recovery"],
+      ["--", "doctor"],
+      ["run", "--model=--help", "safe"],
+      ["run", "--", "--version"],
+    ]) {
+      const result = await runCliProcess(env, invocation)
+      expect(result.exit).toBe(1)
+      expect(result.stderr).toContain("BharatCode recovery is required")
+      expect(await Promise.all(ordinaryArtifacts.map(entryExists))).toEqual([false, false, false, false])
+    }
+
+    for (const invocation of [["--help"], ["-h"], ["--version"], ["-v"], ["db", "--help"], ["db", "-h"]]) {
+      await runCliRaw(env, invocation)
+    }
     expect(await Promise.all(ordinaryArtifacts.map(entryExists))).toEqual([false, false, false, false])
 
     const first = parseRecoveryCommandResult(await runCliRaw(env, ["recovery", "status", "--json"]))
@@ -543,7 +556,7 @@ async function runCliRaw(env: Record<string, string | undefined>, args: readonly
 async function runCliProcess(env: Record<string, string | undefined>, args: readonly string[], cwd?: string) {
   const packageRoot = path.join(import.meta.dir, "../..")
   const child = Bun.spawn(
-    [process.execPath, "run", "--conditions=browser", path.join(packageRoot, "src", "index.ts"), ...args],
+    [process.execPath, "run", "--conditions=browser", path.join(packageRoot, "src", "index.ts"), "--", ...args],
     {
       cwd: cwd ?? packageRoot,
       env,

@@ -39,6 +39,10 @@ import { ensureProcessMetadata } from "@opencode-ai/core/util/opencode-process"
 import { isRecord } from "@/util/record"
 import { createDefaultRecoveryController, DoctorCommand, RecoveryCommand } from "./cli/cmd/doctor"
 
+type ParsedCommandContext = {
+  getInternalMethods(): { getContext(): { commands: readonly string[] } }
+}
+
 process.on("unhandledRejection", (e) => {
   Log.Default.error("rejection", {
     e: errorMessage(e),
@@ -52,24 +56,6 @@ process.on("uncaughtException", (e) => {
 })
 
 const args = hideBin(process.argv)
-const requestedCommand = (() => {
-  for (let index = 0; index < args.length; index++) {
-    const value = args[index]!
-    if (value === "--log-level") {
-      index++
-      continue
-    }
-    if (value.startsWith("-")) continue
-    return value
-  }
-})()
-function isInformationalInvocation(args: readonly string[]) {
-  const separator = args.indexOf("--")
-  const prefix = separator === -1 ? args : args.slice(0, separator)
-  return prefix.some((value) => value === "-h" || value === "--help" || value === "-v" || value === "--version")
-}
-
-const informationalInvocation = isInformationalInvocation(args)
 
 function show(out: string) {
   const text = out.trimStart()
@@ -103,7 +89,10 @@ const cli = yargs(args)
     type: "boolean",
   })
   .middleware(async (opts) => {
-    const recoveryCommand = requestedCommand === "doctor" || requestedCommand === "recovery"
+    // argv._ also contains post-separator values; the command context contains only selected handlers.
+    const command = (cli as typeof cli & ParsedCommandContext).getInternalMethods().getContext().commands[0]
+    const recoveryCommand = command === "doctor" || command === "recovery"
+    const informationalInvocation = opts.help === true || opts.version === true
     const bypassRecoveryGate = recoveryCommand || informationalInvocation
     if (!bypassRecoveryGate) {
       const recovery = await createDefaultRecoveryController().inspect()
