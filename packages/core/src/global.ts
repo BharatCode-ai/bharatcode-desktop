@@ -1,45 +1,37 @@
-import path from "path"
 import fs from "fs/promises"
-import { xdgData, xdgCache, xdgConfig, xdgState } from "xdg-basedir"
 import os from "os"
 import { Context, Effect, Layer } from "effect"
 import { Flock } from "./util/flock"
 import { Flag } from "./flag/flag"
+import { InstallationChannel } from "./installation/version"
+import { StoragePaths } from "./storage-paths"
 
-const app = "opencode"
-const data = path.join(xdgData!, app)
-const cache = path.join(xdgCache!, app)
-const config = path.join(xdgConfig!, app)
-const state = path.join(xdgState!, app)
-const tmp = path.join(os.tmpdir(), app)
+const resolved = StoragePaths.resolve({
+  channel: process.env.BHARATCODE_CHANNEL ?? InstallationChannel,
+  platform: process.platform,
+  home: process.env.OPENCODE_TEST_HOME ?? os.homedir(),
+  temp: os.tmpdir(),
+  env: process.env,
+})
 
 const paths = {
   get home() {
     return process.env.OPENCODE_TEST_HOME ?? os.homedir()
   },
-  data,
-  bin: path.join(cache, "bin"),
-  log: path.join(data, "log"),
-  repos: path.join(data, "repos"),
-  cache,
-  config,
-  state,
-  tmp,
+  ...resolved,
 }
 
 export const Path = paths
 
-Flock.setGlobal({ state })
+Flock.setGlobal({ state: Path.state })
 
-await Promise.all([
-  fs.mkdir(Path.data, { recursive: true }),
-  fs.mkdir(Path.config, { recursive: true }),
-  fs.mkdir(Path.state, { recursive: true }),
-  fs.mkdir(Path.tmp, { recursive: true }),
-  fs.mkdir(Path.log, { recursive: true }),
-  fs.mkdir(Path.bin, { recursive: true }),
-  fs.mkdir(Path.repos, { recursive: true }),
-])
+export async function ensure() {
+  await Promise.all(
+    [Path.data, Path.config, Path.state, Path.tmp, Path.log, Path.bin, Path.repos, Path.storage].map((directory) =>
+      fs.mkdir(directory, { recursive: true }),
+    ),
+  )
+}
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Global") {}
 
@@ -53,6 +45,10 @@ export interface Interface {
   readonly bin: string
   readonly log: string
   readonly repos: string
+  readonly channel: StoragePaths.Channel
+  readonly storage: string
+  readonly auth: string
+  readonly database: string
 }
 
 export function make(input: Partial<Interface> = {}): Interface {
@@ -60,12 +56,16 @@ export function make(input: Partial<Interface> = {}): Interface {
     home: Path.home,
     data: Path.data,
     cache: Path.cache,
-    config: Flag.OPENCODE_CONFIG_DIR ?? Path.config,
+    config: Flag.BHARATCODE_CONFIG_DIR ?? Path.config,
     state: Path.state,
     tmp: Path.tmp,
     bin: Path.bin,
     log: Path.log,
     repos: Path.repos,
+    channel: Path.channel,
+    storage: Path.storage,
+    auth: Path.auth,
+    database: Path.database,
     ...input,
   }
 }

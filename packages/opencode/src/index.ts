@@ -89,6 +89,7 @@ const cli = yargs(args)
     type: "boolean",
   })
   .middleware(async (opts) => {
+    await Global.ensure()
     if (opts.pure) {
       process.env.OPENCODE_PURE = "1"
     }
