@@ -651,7 +651,7 @@ jobs:
         shell: pwsh
         run: |
           bun packages/desktop/scripts/lean-upgrade-acceptance.mjs `
-            --fixture packages/desktop/test/fixtures/lean-current-beta.json `
+            --fixture packages/desktop/test/fixtures/current-beta-windows-x64.json `
             --candidate candidate-input/bharatcode-desktop-next-beta-win-x64.exe `
             --source-sha '${{ inputs.source_sha }}' `
             --acceptance-dir "$env:RUNNER_TEMP\bharatcode-upgrade-acceptance"
@@ -742,11 +742,46 @@ jobs:
 
       - name: Verify every artifact attestation against exact source and signer
         env:
+          CLI_VERSION: ${{ needs.admit-source.outputs.cli_version }}
           GH_TOKEN: ${{ github.token }}
           SOURCE_SHA: ${{ inputs.source_sha }}
         run: |
           set -euo pipefail
-          while IFS= read -r -d '' subject; do
+          cohort_subjects=(
+            "bharatcode-${CLI_VERSION}.tgz"
+            "bharatcode-darwin-arm64-${CLI_VERSION}.tgz"
+            "bharatcode-darwin-x64-${CLI_VERSION}.tgz"
+            "bharatcode-darwin-x64-baseline-${CLI_VERSION}.tgz"
+            "bharatcode-linux-arm64-${CLI_VERSION}.tgz"
+            "bharatcode-linux-arm64-musl-${CLI_VERSION}.tgz"
+            "bharatcode-linux-x64-${CLI_VERSION}.tgz"
+            "bharatcode-linux-x64-baseline-${CLI_VERSION}.tgz"
+            "bharatcode-linux-x64-baseline-musl-${CLI_VERSION}.tgz"
+            "bharatcode-linux-x64-musl-${CLI_VERSION}.tgz"
+            "bharatcode-windows-arm64-${CLI_VERSION}.tgz"
+            "bharatcode-windows-x64-${CLI_VERSION}.tgz"
+            "bharatcode-windows-x64-baseline-${CLI_VERSION}.tgz"
+            "bharatcode-desktop-next-beta-linux-x64.AppImage"
+            "bharatcode-desktop-next-beta-linux-x64.deb"
+            "bharatcode-desktop-next-beta-mac-arm64.zip"
+            "bharatcode-desktop-next-beta-mac-x64.zip"
+            "bharatcode-desktop-next-beta-win-x64.exe"
+            "bharatcode-upgrade-rollback-windows-x64.json"
+            "bharatcode-wsl-scenarios-9-10.json"
+          )
+          mapfile -d '' actual_subjects < <(
+            find cohort-input -type f \
+              ! -name '*.intoto.jsonl' \
+              ! -name 'manifest.json' \
+              ! -name 'bharatcode-runtime-linux-x64-glibc' \
+              ! -name 'bharatcode-wsl-runtime-manifest.json' \
+              -print0
+          )
+          [[ "${#actual_subjects[@]}" -eq "${#cohort_subjects[@]}" ]]
+          for filename in "${cohort_subjects[@]}"; do
+            mapfile -d '' matches < <(find cohort-input -type f -name "$filename" -print0)
+            [[ "${#matches[@]}" -eq 1 ]]
+            subject="${matches[0]}"
             bundle="$subject.intoto.jsonl"
             [[ -f "$bundle" ]]
             gh attestation verify "$subject" \
@@ -756,7 +791,7 @@ jobs:
               --source-digest "$SOURCE_SHA" \
               --predicate-type https://slsa.dev/provenance/v1 \
               --format json > /dev/null
-          done < <(find cohort-input -type f ! -name '*.intoto.jsonl' ! -name 'manifest.json' ! -name 'bharatcode-runtime-linux-x64-glibc' -print0)
+          done
 
       - name: Rehash, close, and validate final manifest
         env:
@@ -769,6 +804,7 @@ jobs:
             import { stat } from "node:fs/promises"
             import { basename } from "node:path"
             import { Glob } from "bun"
+            import { parseCurrentBetaFixtureBytes, parseLeanUpgradeReceiptBytes } from "./packages/desktop/scripts/lean-upgrade-receipt.mjs"
             import { PLATFORM_PACKAGE_NAMES, REQUIRED_COHORT_KEYS, canonicalLeanJson, validateLeanCohort, validateLeanWslReceipt } from "./packages/opencode/script/lean-cohort.mjs"
             const expectedKeys = ["cli-bharatcode", "cli-bharatcode-darwin-arm64", "cli-bharatcode-darwin-x64", "cli-bharatcode-darwin-x64-baseline", "cli-bharatcode-linux-arm64", "cli-bharatcode-linux-arm64-musl", "cli-bharatcode-linux-x64", "cli-bharatcode-linux-x64-baseline", "cli-bharatcode-linux-x64-baseline-musl", "cli-bharatcode-linux-x64-musl", "cli-bharatcode-windows-arm64", "cli-bharatcode-windows-x64", "cli-bharatcode-windows-x64-baseline", "desktop-linux-x64-appimage", "desktop-linux-x64-deb", "desktop-macos-arm64", "desktop-macos-x64", "desktop-windows-x64", "upgrade-rollback-windows-x64", "wsl-scenarios-9-10"]
             if (JSON.stringify(expectedKeys) !== JSON.stringify(REQUIRED_COHORT_KEYS)) throw new Error("Workflow cohort key contract drift")
@@ -790,6 +826,10 @@ jobs:
             const wslPath = one("bharatcode-wsl-scenarios-9-10.json")
             const runtimeManifestPath = one("bharatcode-wsl-runtime-manifest.json")
             validateLeanWslReceipt(await Bun.file(wslPath).json(), { source_sha: process.env.SOURCE_SHA, run_id: process.env.GITHUB_RUN_ID, run_attempt: process.env.GITHUB_RUN_ATTEMPT, desktop_sha256: windows.sha256, runtime_manifest_sha256: await digest(runtimeManifestPath) })
+            const currentBetaFixturePath = "packages/desktop/test/fixtures/current-beta-windows-x64.json"
+            const currentBeta = parseCurrentBetaFixtureBytes(new Uint8Array(await Bun.file(currentBetaFixturePath).arrayBuffer()))
+            const upgradePath = one("bharatcode-upgrade-rollback-windows-x64.json")
+            parseLeanUpgradeReceiptBytes(new Uint8Array(await Bun.file(upgradePath).arrayBuffer()), { source_sha: process.env.SOURCE_SHA, run_id: process.env.GITHUB_RUN_ID, run_attempt: process.env.GITHUB_RUN_ATTEMPT, current_beta: currentBeta, candidate: { key: expectedKeys[17], filename: windows.filename, bytes: windows.bytes, sha256: windows.sha256 } })
             const artifacts = [...cli, await artifact("desktop-linux-x64-appimage", "linux", "x64", "not-applicable", "bharatcode-desktop-next-beta-linux-x64.AppImage"), await artifact("desktop-linux-x64-deb", "linux", "x64", "not-applicable", "bharatcode-desktop-next-beta-linux-x64.deb"), await artifact("desktop-macos-arm64", "macos", "arm64", "apple-notarized-stapled", "bharatcode-desktop-next-beta-mac-arm64.zip"), await artifact("desktop-macos-x64", "macos", "x64", "apple-notarized-stapled", "bharatcode-desktop-next-beta-mac-x64.zip"), windows, await artifact("upgrade-rollback-windows-x64", "windows", "x64", "acceptance-receipt", "bharatcode-upgrade-rollback-windows-x64.json"), await artifact("wsl-scenarios-9-10", "windows-wsl2", "x64", "acceptance-receipt", "bharatcode-wsl-scenarios-9-10.json")].sort((left, right) => left.key.localeCompare(right.key))
             if (JSON.stringify(artifacts.map((item) => item.key)) !== JSON.stringify(expectedKeys)) throw new Error("Assembled cohort key set drift")
             const manifest = { schema: "bharatcode-next-beta-cohort-v1", repository: "BharatCode-ai/bharatcode-desktop", source_sha: process.env.SOURCE_SHA, candidate_tag: `next-beta-${process.env.SOURCE_SHA.slice(0, 12)}`, desktop_version: process.env.DESKTOP_VERSION, cli_version: process.env.CLI_VERSION, wsl_runtime_version: process.env.DESKTOP_VERSION, channel: "beta", workflow: process.env.WORKFLOW_PATH, run_id: process.env.GITHUB_RUN_ID, run_attempt: process.env.GITHUB_RUN_ATTEMPT, wsl_receipt_sha256: artifacts.find((item) => item.key === "wsl-scenarios-9-10").sha256, artifacts, completed_at }

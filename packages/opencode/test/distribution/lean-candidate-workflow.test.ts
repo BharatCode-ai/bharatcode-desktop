@@ -10,8 +10,39 @@ const upload = "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
 const download = "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
 const attest = "actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6"
 const acceptedWslSha = "a30c6923f2f532258de58d84b65445198be1b351"
+const currentBetaFixture = "packages/desktop/test/fixtures/current-beta-windows-x64.json"
+const cohortSubjectNames = [
+  "bharatcode-${CLI_VERSION}.tgz",
+  "bharatcode-darwin-arm64-${CLI_VERSION}.tgz",
+  "bharatcode-darwin-x64-${CLI_VERSION}.tgz",
+  "bharatcode-darwin-x64-baseline-${CLI_VERSION}.tgz",
+  "bharatcode-linux-arm64-${CLI_VERSION}.tgz",
+  "bharatcode-linux-arm64-musl-${CLI_VERSION}.tgz",
+  "bharatcode-linux-x64-${CLI_VERSION}.tgz",
+  "bharatcode-linux-x64-baseline-${CLI_VERSION}.tgz",
+  "bharatcode-linux-x64-baseline-musl-${CLI_VERSION}.tgz",
+  "bharatcode-linux-x64-musl-${CLI_VERSION}.tgz",
+  "bharatcode-windows-arm64-${CLI_VERSION}.tgz",
+  "bharatcode-windows-x64-${CLI_VERSION}.tgz",
+  "bharatcode-windows-x64-baseline-${CLI_VERSION}.tgz",
+  "bharatcode-desktop-next-beta-linux-x64.AppImage",
+  "bharatcode-desktop-next-beta-linux-x64.deb",
+  "bharatcode-desktop-next-beta-mac-arm64.zip",
+  "bharatcode-desktop-next-beta-mac-x64.zip",
+  "bharatcode-desktop-next-beta-win-x64.exe",
+  "bharatcode-upgrade-rollback-windows-x64.json",
+  "bharatcode-wsl-scenarios-9-10.json",
+]
+const internalWslInputs = [
+  "manifest.json",
+  "bharatcode-runtime-linux-x64-glibc",
+  "bharatcode-wsl-runtime-manifest.json",
+]
 
 async function source() {
+  if (Bun.env.BHARATCODE_CANDIDATE_WORKFLOW_SOURCE) {
+    return Buffer.from(Bun.env.BHARATCODE_CANDIDATE_WORKFLOW_SOURCE, "base64").toString("utf8")
+  }
   expect(await Bun.file(workflowPath).exists()).toBeTrue()
   return Bun.file(workflowPath).text()
 }
@@ -20,8 +51,51 @@ function parse(value: string) {
   return Bun.YAML.parse(value) as {
     on: { workflow_dispatch: { inputs: Record<string, unknown> } }
     permissions: Record<string, string>
-    jobs: Record<string, { needs?: string[]; permissions?: Record<string, string>; steps?: { uses?: string }[] }>
+    jobs: Record<
+      string,
+      {
+        needs?: string[]
+        permissions?: Record<string, string>
+        steps?: { name?: string; run?: string; uses?: string }[]
+      }
+    >
   }
+}
+
+function runStep(value: string, job: string, name: string) {
+  return parse(value).jobs[job].steps?.find((step) => step.name === name)?.run ?? ""
+}
+
+function bashArray(run: string, name: string) {
+  return (
+    new RegExp(`(?:^|\\n)\\s*${name}=\\(\\n([\\s\\S]*?)\\n\\s*\\)`, "u")
+      .exec(run)?.[1]
+      ?.split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => line.replace(/^"|"$/gu, "")) ?? []
+  )
+}
+
+function upgradeValidationViolations(value: string) {
+  const run = runStep(value, "assemble-cohort", "Rehash, close, and validate final manifest")
+  const required = [
+    'from "./packages/desktop/scripts/lean-upgrade-receipt.mjs"',
+    "parseCurrentBetaFixtureBytes",
+    "parseLeanUpgradeReceiptBytes(new Uint8Array",
+    `const currentBetaFixturePath = "${currentBetaFixture}"`,
+    "const currentBeta = parseCurrentBetaFixtureBytes",
+    'const upgradePath = one("bharatcode-upgrade-rollback-windows-x64.json")',
+    "source_sha: process.env.SOURCE_SHA",
+    "run_id: process.env.GITHUB_RUN_ID",
+    "run_attempt: process.env.GITHUB_RUN_ATTEMPT",
+    "current_beta: currentBeta",
+    "candidate: { key: expectedKeys[17], filename: windows.filename, bytes: windows.bytes, sha256: windows.sha256 }",
+  ]
+  return [
+    ...required.filter((fragment) => !run.includes(fragment)),
+    ...(run.indexOf("parseLeanUpgradeReceiptBytes(") < run.indexOf("const manifest =") ? [] : ["validation order"]),
+  ]
 }
 
 function authorityViolations(value: string) {
@@ -147,6 +221,54 @@ describe("lean next-beta candidate workflow", () => {
     expect(value).toContain("macos-15-intel")
     expect(value).toContain("windows-2025")
     expect(value).toContain("ubuntu-24.04")
+  })
+
+  test("uses the exact checked-in current-beta fixture for packaged upgrade acceptance", async () => {
+    const value = await source()
+    expect(await Bun.file(resolve(import.meta.dir, `../../../../${currentBetaFixture}`)).exists()).toBeTrue()
+    expect(value).toContain(`--fixture ${currentBetaFixture}`)
+    expect(value).not.toContain("packages/desktop/test/fixtures/lean-current-beta.json")
+  })
+
+  test("attests exactly every cohort subject while excluding closed internal WSL inputs", async () => {
+    const value = await source()
+    const run = runStep(value, "assemble-cohort", "Verify every artifact attestation against exact source and signer")
+    expect(bashArray(run, "cohort_subjects")).toEqual(cohortSubjectNames)
+    expect(cohortSubjectNames).toHaveLength(REQUIRED_COHORT_KEYS.length)
+    expect(cohortSubjectNames).not.toContain("bharatcode-wsl-runtime-manifest.json")
+    for (const internal of internalWslInputs) expect(run).toContain(`! -name '${internal}'`)
+    expect(run).toContain('[[ "${#actual_subjects[@]}" -eq "${#cohort_subjects[@]}" ]]')
+    expect(bashArray(run.replace('"bharatcode-wsl-scenarios-9-10.json"\n', ""), "cohort_subjects")).not.toEqual(
+      cohortSubjectNames,
+    )
+    expect(run.replace("! -name 'bharatcode-wsl-runtime-manifest.json'", "")).not.toContain(
+      "! -name 'bharatcode-wsl-runtime-manifest.json'",
+    )
+  })
+
+  test("canonically validates the upgrade receipt against fixture and assembled candidate identity", async () => {
+    const value = await source()
+    expect(upgradeValidationViolations(value)).toEqual([])
+    expect(
+      upgradeValidationViolations(value.replace("parseLeanUpgradeReceiptBytes(", "removedUpgradeReceiptParser(")),
+    ).not.toEqual([])
+    expect(
+      upgradeValidationViolations(
+        value.replace(
+          `const currentBetaFixturePath = "${currentBetaFixture}"`,
+          'const currentBetaFixturePath = "packages/desktop/test/fixtures/drift.json"',
+        ),
+      ),
+    ).not.toEqual([])
+    expect(
+      upgradeValidationViolations(value.replace("filename: windows.filename", 'filename: "substituted.exe"')),
+    ).not.toEqual([])
+    expect(upgradeValidationViolations(value.replace("bytes: windows.bytes", "bytes: 1"))).not.toEqual([])
+    expect(
+      upgradeValidationViolations(
+        value.replace("bytes: windows.bytes, sha256: windows.sha256", 'bytes: windows.bytes, sha256: "0".repeat(64)'),
+      ),
+    ).not.toEqual([])
   })
 
   test("hostile authority, identity, mutability, and cohort regressions are observable", async () => {
