@@ -65,9 +65,13 @@ const requestedCommand = (() => {
     return value
   }
 })()
-const informationalInvocation = args.some(
-  (value) => value === "-h" || value === "--help" || value === "-v" || value === "--version",
-)
+function isInformationalInvocation(args: readonly string[]) {
+  const separator = args.indexOf("--")
+  const prefix = separator === -1 ? args : args.slice(0, separator)
+  return prefix.some((value) => value === "-h" || value === "--help" || value === "-v" || value === "--version")
+}
+
+const informationalInvocation = isInformationalInvocation(args)
 
 function show(out: string) {
   const text = out.trimStart()

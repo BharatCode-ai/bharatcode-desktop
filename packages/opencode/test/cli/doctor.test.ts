@@ -129,47 +129,35 @@ describe("bharatcode doctor and recovery adapter", () => {
     for (const name of ["OPENCODE_DB", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME"]) {
       delete env[name]
     }
-    const help = Bun.spawn([process.execPath, "run", "--conditions=browser", "./src/index.ts", "--help"], {
-      cwd: path.join(import.meta.dir, "../.."),
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-    })
-    const [helpOut, helpError, helpExit] = await Promise.all([
-      new Response(help.stdout).text(),
-      new Response(help.stderr).text(),
-      help.exited,
-    ])
-    expect(helpExit).toBe(0)
-    expect(helpOut).toContain("bharatcode")
-    expect(helpError).not.toContain("recovery is required")
-    expect(await Bun.file(path.join(root, ".local", "share", "bharatcode-test", "bharatcode.db")).exists()).toBe(false)
-    expect(await Bun.file(path.join(root, ".local", "share", "bharatcode-test", ".schema-version")).exists()).toBe(
-      false,
-    )
-
-    const versionRoot = await mkdtemp(path.join(tmpdir(), "bharatcode-version-cli-"))
-    roots.push(versionRoot)
-    const version = Bun.spawn([process.execPath, "run", "--conditions=browser", "./src/index.ts", "--version"], {
-      cwd: path.join(import.meta.dir, "../.."),
-      env: { ...env, OPENCODE_TEST_HOME: versionRoot },
-      stdout: "pipe",
-      stderr: "pipe",
-    })
-    const [versionOut, versionError, versionExit] = await Promise.all([
-      new Response(version.stdout).text(),
-      new Response(version.stderr).text(),
-      version.exited,
-    ])
-    expect(versionExit).toBe(0)
-    expect(versionOut.trim()).not.toBe("")
-    expect(versionError).not.toContain("recovery is required")
-    expect(await Bun.file(path.join(versionRoot, ".local", "share", "bharatcode-test", "bharatcode.db")).exists()).toBe(
-      false,
-    )
-    expect(
-      await Bun.file(path.join(versionRoot, ".local", "share", "bharatcode-test", ".schema-version")).exists(),
-    ).toBe(false)
+    const cases = [
+      { args: ["--help"], exit: 0, recovery: false },
+      { args: ["--version"], exit: 0, recovery: false },
+      { args: ["db", "--help"], exit: 0, recovery: false },
+      { args: ["db", "path"], exit: 1, recovery: true },
+      { args: ["db", "path", "--", "--help"], exit: 1, recovery: true },
+      { args: ["run", "--", "--version"], exit: 1, recovery: true },
+    ] as const
+    for (const item of cases) {
+      const child = Bun.spawn([process.execPath, "run", "--conditions=browser", "./src/index.ts", ...item.args], {
+        cwd: path.join(import.meta.dir, "../.."),
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      })
+      const [, error, exit] = await Promise.all([
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+        child.exited,
+      ])
+      expect(exit).toBe(item.exit)
+      expect(error.includes("BharatCode recovery is required")).toBe(item.recovery)
+      expect(await Bun.file(path.join(root, ".local", "share", "bharatcode-test", "bharatcode.db")).exists()).toBe(
+        false,
+      )
+      expect(await Bun.file(path.join(root, ".local", "share", "bharatcode-test", ".schema-version")).exists()).toBe(
+        false,
+      )
+    }
 
     const doctor = Bun.spawn([process.execPath, "run", "--conditions=browser", "./src/index.ts", "doctor"], {
       cwd: path.join(import.meta.dir, "../.."),
@@ -185,17 +173,6 @@ describe("bharatcode doctor and recovery adapter", () => {
     expect(doctorExit).toBe(0)
     expect(doctorError).not.toContain("Performing one time database migration")
     expect(parseRecoveryCommandResult(doctorOut)).toEqual({ state: "start-fresh", reason: "no-source" })
-
-    const blocked = Bun.spawn([process.execPath, "run", "--conditions=browser", "./src/index.ts", "db", "path"], {
-      cwd: path.join(import.meta.dir, "../.."),
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-    })
-    const [blockedError, blockedExit] = await Promise.all([new Response(blocked.stderr).text(), blocked.exited])
-    expect(blockedExit).not.toBe(0)
-    expect(blockedError).toContain("BharatCode recovery is required")
-    expect(await Bun.file(path.join(root, ".local", "share", "bharatcode-test", "bharatcode.db")).exists()).toBe(false)
 
     const fresh = Bun.spawn(
       [
@@ -224,7 +201,7 @@ describe("bharatcode doctor and recovery adapter", () => {
     expect(startedExit).toBe(0)
     expect(startedError).not.toContain("recovery is required")
     expect(await Bun.file(path.join(root, ".local", "share", "bharatcode-test", ".schema-version")).exists()).toBe(true)
-  }, 20_000)
+  }, 40_000)
 })
 
 async function setup() {

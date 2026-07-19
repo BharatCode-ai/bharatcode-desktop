@@ -117,7 +117,7 @@ TMPDIR=/tmp/codex-lean-migration-recovery bun test \
 bun typecheck
 ```
 
-Result: **61 passed, 0 failed, 270 assertions; typecheck exit 0**.
+Result: **61 passed, 0 failed, 281 assertions; typecheck exit 0**.
 
 From `packages/desktop`:
 
@@ -160,10 +160,12 @@ TMPDIR=/tmp/codex-lean-migration-recovery bun test \
   test/cli/doctor.test.ts
 ```
 
-Result: **7 passed, 0 failed, 55 assertions**. This includes an actual local
+Result: **7 passed, 0 failed, 66 assertions**. This includes an actual local
 package/install probe plus fresh-home `--help` and `--version` processes that
-created neither a canonical database nor a schema marker, and an ordinary
-stateful command that remained blocked.
+created neither a canonical database nor a schema marker. Command help remains
+available, while ordinary `db path` and the post-separator payload forms
+`db path -- --help` and `run -- --version` remain recovery-blocked without
+creating either artifact.
 
 The shared Node/Desktop runtime boundary was also built and executed:
 
@@ -190,9 +192,9 @@ claim of native Windows packaging.
   shared recovery controller returns `ready`.
 - `bharatcode doctor` is read-only. `bharatcode doctor repair --confirm` is the
   only marker repair path and does not rewrite database contents.
-- Top-level help and version metadata invocations bypass recovery inspection
-  without creating the canonical database or schema marker; ordinary stateful
-  commands remain recovery-gated.
+- Help and version metadata tokens bypass recovery inspection only before the
+  first literal `--`, without creating the canonical database or schema marker;
+  ordinary and post-separator stateful forms remain recovery-gated.
 - Desktop interrupted recovery exposes both Retry and marker-independent Start
   Fresh through a closed action helper, with every rendered action disabled
   while another action is in flight.
