@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { readFile } from "node:fs/promises"
 import path from "node:path"
+import { availableRecoveryActions } from "./loading-recovery"
 
 describe("loading recovery UI", () => {
   test("renders only closed recovery labels and disables every action while an operation is in flight", async () => {
@@ -26,5 +27,12 @@ describe("loading recovery UI", () => {
       types.indexOf("export type WslConfig"),
     )
     expect(recoveryTypes).not.toMatch(/(?:path|bytes|credential|command)\s*:/i)
+  })
+
+  test("interrupted recovery offers both Retry and marker-independent Start Fresh", () => {
+    expect(availableRecoveryActions({ state: "retry", operationID: "5f8c2aef-b4b6-4f21-8f76-d036074888e4" })).toEqual([
+      "retry",
+      "start-fresh",
+    ])
   })
 })

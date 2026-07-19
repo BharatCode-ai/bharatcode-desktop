@@ -17,6 +17,12 @@ import { releasedSchemaCandidatesFromMigrations, type SchemaDatabase } from "@/s
 import { createStartupRecovery } from "../../../desktop/src/main/startup-recovery"
 
 type Receipt = { scenario: 6 | 7; proof: string; assertions: number }
+type RuntimeReceipt = {
+  attempts: readonly { kind: "fetch" | "connect" | "spawn" | "schema" | "provider" | "authorize"; target: string }[]
+  forbiddenAttempts: readonly unknown[]
+  shareAttempts: readonly unknown[]
+  checks: { boundaryClosed: boolean }
+}
 const receipts: Receipt[] = []
 const roots: string[] = []
 
@@ -31,15 +37,13 @@ afterAll(() => {
 })
 
 describe("lean next-beta migration and recovery scenarios 6-7", () => {
-  test("explicitly chooses, sanitizes, preserves, repairs, restarts, and executes zero forbidden targets", async () => {
+  test("explicitly chooses, sanitizes, preserves, repairs, and restarts", async () => {
     const fixture = await databaseFixture()
     const sourceDatabase = path.join(fixture.home, ".local", "share", "opencode", "opencode.db")
     const sourceConfig = path.join(fixture.home, ".config", "opencode", "opencode.json")
     const sourceDatabaseBytes = await readFile(sourceDatabase)
     const sourceConfigBytes = await readFile(sourceConfig)
-    const hostile = new ForbiddenTargetRecorder()
-    await exerciseActiveTargets({ database: sourceDatabase, config: sourceConfig }, hostile)
-    expect(hostile.total()).toBeGreaterThan(0)
+    expect(sourceConfigBytes.toString()).toContain("https://opencode.ai")
 
     const controller = createRecoveryController(fixture.input)
     const status = await controller.inspect()
@@ -58,9 +62,11 @@ describe("lean next-beta migration and recovery scenarios 6-7", () => {
 
     expect(await readFile(sourceDatabase)).toEqual(sourceDatabaseBytes)
     expect(await readFile(sourceConfig)).toEqual(sourceConfigBytes)
-    expect(JSON.parse(await readFile(path.join(fixture.destination.config, "opencode.json"), "utf8"))).toEqual({
+    expect(JSON.parse(await readFile(path.join(fixture.destination.config, "bharatcode.json"), "utf8"))).toEqual({
       theme: "dark",
+      snapshot: false,
     })
+    expect(await Bun.file(path.join(fixture.destination.config, "opencode.json")).exists()).toBe(false)
     const activated = new BunDatabase(fixture.destination.database, { readonly: true })
     expect(activated.query("SELECT title, model FROM session").get()).toEqual({ title: "retained", model: null })
     expect(activated.query("SELECT data FROM message").get()).toEqual({
@@ -69,14 +75,8 @@ describe("lean next-beta migration and recovery scenarios 6-7", () => {
     expect(activated.query("SELECT count(*) AS count FROM permission").get()).toEqual({ count: 0 })
     activated.close()
 
-    const recorder = new ForbiddenTargetRecorder()
-    await exerciseActiveTargets(
-      { database: fixture.destination.database, config: path.join(fixture.destination.config, "opencode.json") },
-      recorder,
-    )
-    expect(recorder.receipt()).toEqual({ fetch: [], connect: [], spawn: [] })
     expect(await createRecoveryController(fixture.input).inspect()).toEqual({ state: "ready" })
-    receipts.push({ scenario: 6, proof: "explicit-sanitized-preserved-restart-zero-targets", assertions: 13 })
+    receipts.push({ scenario: 6, proof: "explicit-sanitized-preserved-restart", assertions: 13 })
   }, 20_000)
 
   test("rejects stale choices and exposes deterministic ambiguity without destination effects", async () => {
@@ -107,6 +107,17 @@ describe("lean next-beta migration and recovery scenarios 6-7", () => {
       ambiguous.sources.map((source) => source.id).toSorted(),
     )
     receipts.push({ scenario: 6, proof: "stale-choice-and-ambiguity", assertions: 6 })
+  })
+
+  test("fails closed when legacy and canonical global configuration names collide", async () => {
+    const fixture = await configFixture()
+    const sourceConfig = path.join(fixture.home, ".config", "opencode")
+    await writeFile(path.join(sourceConfig, "bharatcode.json"), '{"snapshot":true}', { mode: 0o600 })
+
+    await expect(createRecoveryController(fixture.input).inspect()).rejects.toThrow("canonical destination collision")
+    expect(await Bun.file(path.join(fixture.destination.config, "bharatcode.json")).exists()).toBe(false)
+    expect(await Bun.file(path.join(sourceConfig, "opencode.json")).exists()).toBe(true)
+    expect(await Bun.file(path.join(sourceConfig, "bharatcode.json")).exists()).toBe(true)
   })
 
   test("Retry converges after the canonical database durable switch and rejects exact mutation", async () => {
@@ -180,7 +191,7 @@ describe("lean next-beta migration and recovery scenarios 6-7", () => {
     })
   }, 20_000)
 
-  test("real CLI and Desktop adapters expose identical closed choices and converge across processes", async () => {
+  test("real CLI and Desktop converge and execute the migrated config through instrumented runtime boundaries", async () => {
     const fixture = await configFixture()
     const env = childEnvironment(fixture.home)
     const desktop = createStartupRecovery({
@@ -216,85 +227,33 @@ describe("lean next-beta migration and recovery scenarios 6-7", () => {
     expect(parseRecoveryCommandResult(await runCliRaw(env, ["recovery", "status", "--json"]))).toEqual({
       state: "ready",
     })
-    expect(await Bun.file(path.join(fixture.home, ".config", "opencode", "opencode.json")).exists()).toBe(true)
-    receipts.push({ scenario: 7, proof: "real-cli-desktop-cross-process-convergence", assertions: 6 })
-  }, 30_000)
+    const sourceConfig = path.join(fixture.home, ".config", "opencode", "opencode.json")
+    const canonicalConfig = path.join(fixture.home, ".config", "bharatcode-test", "bharatcode.json")
+    expect(await Bun.file(sourceConfig).exists()).toBe(true)
+    expect(await Bun.file(canonicalConfig).exists()).toBe(true)
+    expect(await Bun.file(path.join(fixture.home, ".config", "bharatcode-test", "opencode.json")).exists()).toBe(false)
+
+    const commandProject = path.join(fixture.root, "debug-config-project")
+    await mkdir(commandProject, { recursive: true })
+    const resolved = JSON.parse(await runCliRaw(env, ["--pure", "debug", "config"], commandProject)) as {
+      snapshot?: boolean
+      provider?: unknown
+      server?: unknown
+    }
+    expect(resolved.snapshot).toBe(false)
+    expect(resolved.provider).toBeUndefined()
+    expect(resolved.server).toBeUndefined()
+
+    const runtime = await runVerticalRuntime(env, path.join(fixture.root, "vertical-project"))
+    expect(runtime.forbiddenAttempts).toEqual([])
+    expect(runtime.shareAttempts).toEqual([])
+    expect(runtime.checks.boundaryClosed).toBe(true)
+    expect(new Set(runtime.attempts.map((attempt) => attempt.kind))).toEqual(
+      new Set(["fetch", "connect", "spawn", "schema", "provider", "authorize"]),
+    )
+    receipts.push({ scenario: 7, proof: "real-cli-desktop-runtime-boundary-convergence", assertions: 15 })
+  }, 120_000)
 })
-
-class ForbiddenTargetRecorder {
-  readonly fetch: string[] = []
-  readonly connect: string[] = []
-  readonly spawn: string[] = []
-
-  record(key: string, value: string) {
-    if (!/opencode\.ai|opncd\.ai|models\.dev|\bopencode(?:\.exe)?\b/i.test(value)) return
-    if (/command|exec|binary|runtime/i.test(key)) this.recordSpawn(value)
-    else if (/host|origin|endpoint|server/i.test(key)) this.recordConnect(value)
-    else this.recordFetch(value)
-  }
-
-  recordFetch(value: string) {
-    this.fetch.push(value)
-  }
-
-  recordConnect(value: string) {
-    this.connect.push(value)
-  }
-
-  recordSpawn(value: string) {
-    this.spawn.push(value)
-  }
-
-  total() {
-    return this.fetch.length + this.connect.length + this.spawn.length
-  }
-
-  receipt() {
-    return { fetch: this.fetch, connect: this.connect, spawn: this.spawn }
-  }
-}
-
-async function exerciseActiveTargets(input: { database: string; config: string }, recorder: ForbiddenTargetRecorder) {
-  const config = JSON.parse(await readFile(input.config, "utf8"))
-  visitActive(config, recorder)
-  const database = new BunDatabase(input.database, { readonly: true })
-  try {
-    for (const table of ["permission", "workspace"] as const) {
-      if (!database.query("SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?").get(table)) continue
-      const columns = database.query(`PRAGMA table_info(${table})`).all() as { name: string }[]
-      for (const column of columns.filter((item) => item.name === "data" || item.name === "config")) {
-        for (const row of database.query(`SELECT ${column.name} AS value FROM ${table}`).all() as { value: string }[]) {
-          visitActive(JSON.parse(row.value), recorder)
-        }
-      }
-    }
-    if (database.query("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='session'").get()) {
-      for (const row of database.query("SELECT model FROM session WHERE model IS NOT NULL").all() as {
-        model: string
-      }[]) {
-        recorder.record("model", row.model)
-      }
-    }
-  } finally {
-    database.close()
-  }
-}
-
-function visitActive(value: unknown, recorder: ForbiddenTargetRecorder, key = "") {
-  if (typeof value === "string") {
-    if (
-      /provider|model|plugin|mcp|skill|share|update|command|exec|binary|runtime|server|url|host|origin|endpoint/i.test(
-        key,
-      )
-    ) {
-      recorder.record(key, value)
-    }
-    return
-  }
-  if (Array.isArray(value)) return value.forEach((item) => visitActive(item, recorder, key))
-  if (!value || typeof value !== "object") return
-  for (const [child, item] of Object.entries(value)) visitActive(item, recorder, child)
-}
 
 async function databaseFixture() {
   const fixture = await emptyFixture("database")
@@ -303,7 +262,7 @@ async function databaseFixture() {
   await Promise.all([mkdir(data, { recursive: true, mode: 0o700 }), mkdir(config, { recursive: true, mode: 0o700 })])
   await writeFile(
     path.join(config, "opencode.json"),
-    JSON.stringify({ theme: "dark", provider: "opencode", server: { url: "https://opencode.ai" } }),
+    JSON.stringify({ theme: "dark", snapshot: false, provider: "opencode", server: { url: "https://opencode.ai" } }),
     { mode: 0o600 },
   )
   const database = new BunDatabase(path.join(data, "opencode.db"), { create: true })
@@ -335,7 +294,7 @@ async function configFixture() {
   const fixture = await emptyFixture("config")
   const config = path.join(fixture.home, ".config", "opencode")
   await mkdir(config, { recursive: true, mode: 0o700 })
-  await writeFile(path.join(config, "opencode.json"), '{"theme":"dark"}', { mode: 0o600 })
+  await writeFile(path.join(config, "opencode.json"), '{"theme":"dark","snapshot":false}', { mode: 0o600 })
   return fixture
 }
 
@@ -461,10 +420,31 @@ async function runCli(env: Record<string, string | undefined>, args: readonly st
   return parseRecoveryCommandResult(await runCliRaw(env, args))
 }
 
-async function runCliRaw(env: Record<string, string | undefined>, args: readonly string[]) {
-  const child = Bun.spawn([process.execPath, "run", "--conditions=browser", "./src/index.ts", ...args], {
-    cwd: path.join(import.meta.dir, "../.."),
-    env,
+async function runCliRaw(env: Record<string, string | undefined>, args: readonly string[], cwd?: string) {
+  const packageRoot = path.join(import.meta.dir, "../..")
+  const child = Bun.spawn(
+    [process.execPath, "run", "--conditions=browser", path.join(packageRoot, "src", "index.ts"), ...args],
+    {
+      cwd: cwd ?? packageRoot,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  )
+  const [stdout, stderr, exit] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ])
+  if (exit !== 0) throw new Error(`closed CLI recovery failed (${exit}): ${stderr.split("\n")[0] ?? ""}`)
+  return stdout
+}
+
+async function runVerticalRuntime(env: Record<string, string | undefined>, project: string): Promise<RuntimeReceipt> {
+  const packageRoot = path.join(import.meta.dir, "../..")
+  const child = Bun.spawn([process.execPath, "test/product/fixtures/core-vertical-worker.ts"], {
+    cwd: packageRoot,
+    env: { ...env, BHARATCODE_ACCEPTANCE_PROJECT: project },
     stdout: "pipe",
     stderr: "pipe",
   })
@@ -473,6 +453,6 @@ async function runCliRaw(env: Record<string, string | undefined>, args: readonly
     new Response(child.stderr).text(),
     child.exited,
   ])
-  if (exit !== 0) throw new Error(`closed CLI recovery failed (${exit}): ${stderr.split("\n")[0] ?? ""}`)
-  return stdout
+  if (exit !== 0) throw new Error(`instrumented runtime failed (${exit}): ${stderr.slice(-2000)}`)
+  return JSON.parse(stdout) as RuntimeReceipt
 }

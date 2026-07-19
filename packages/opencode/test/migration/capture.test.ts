@@ -113,8 +113,11 @@ describe("migration capture", () => {
     const captured = await captureMigrationSource(source, target(tmp.path))
     writer.close()
 
-    expect(await Bun.file(path.join(captured.snapshotDirectory, "records", "config", "opencode.jsonc")).text()).toBe(
+    expect(await Bun.file(path.join(captured.snapshotDirectory, "records", "config", "bharatcode.jsonc")).text()).toBe(
       '{"theme":"dark"}',
+    )
+    expect(await Bun.file(path.join(captured.snapshotDirectory, "records", "config", "opencode.jsonc")).exists()).toBe(
+      false,
     )
     expect(
       await Bun.file(

@@ -11,7 +11,8 @@
   "acceptedCompatibilitySource": "da8d2db8389e89a7c9e5021f294bebd52a322bfd",
   "localCompatibilityCommit": "9f8526a73221917fe675875df4d3aebe8ea65416",
   "task6Head": "2bb1a31f9d548a295c99d3aeafc594ca18d9da0a",
-  "resultCommitParent": "2bb1a31f9d548a295c99d3aeafc594ca18d9da0a",
+  "task7Head": "c90e54aff89d17cf91d8ec781a8be7bb483aaca6",
+  "correctionCommitParent": "c90e54aff89d17cf91d8ec781a8be7bb483aaca6",
   "scenarios": {
     "6": "PASS_LOCAL",
     "7": "PASS_LOCAL"
@@ -27,9 +28,9 @@
 }
 ```
 
-The result commit cannot contain its own Git object ID. `resultCommitParent`
-therefore identifies the exact verified implementation parent; the final result
-commit SHA is returned alongside this report.
+The correction commit cannot contain its own Git object ID.
+`correctionCommitParent` therefore identifies the exact reviewed Task 7 parent;
+the final correction SHA is returned alongside this report.
 
 ## Executed scenario receipts
 
@@ -42,7 +43,7 @@ completed:
   "receipts": [
     {
       "scenario": 6,
-      "proof": "explicit-sanitized-preserved-restart-zero-targets",
+      "proof": "explicit-sanitized-preserved-restart",
       "assertions": 13
     },
     {
@@ -62,8 +63,8 @@ completed:
     },
     {
       "scenario": 7,
-      "proof": "real-cli-desktop-cross-process-convergence",
-      "assertions": 6
+      "proof": "real-cli-desktop-runtime-boundary-convergence",
+      "assertions": 15
     }
   ]
 }
@@ -74,7 +75,9 @@ They prove:
 
 - explicit opaque source selection and deterministic ambiguity;
 - stale-choice/source-mutation rejection before destination effects;
-- source byte preservation and retained session/config continuity;
+- source byte preservation and retained session/config continuity, including
+  legacy global `opencode.json[c]` publication as canonical
+  `bharatcode.json[c]` with collision refusal;
 - removal of active provider, URL, command, account, and permission state while
   retaining harmless transcript text;
 - restart to the same ready state;
@@ -85,9 +88,17 @@ They prove:
   database mutation;
 - concurrent real CLI/Desktop adapter use across separate processes converging
   under the same maintenance lock;
-- an executed forbidden-target recorder whose hostile source control populated
-  fetch/connect/spawn buckets, while the activated destination produced
-  `{"fetch":[],"connect":[],"spawn":[]}`.
+- actual BharatCode `debug config` loading the migrated canonical configuration
+  from the migrated home; and
+- the accepted Product Core vertical worker running against that same migrated
+  home while instrumenting real fetch, connect, spawn, schema, provider, and
+  authorization boundaries. Its executed receipt contained no forbidden or
+  ShareNext attempts and reported a closed boundary.
+
+The capture and SQLite assertions remain static sanitation evidence. They are
+not presented as executed network/process evidence. The vertical worker is
+local source-runtime evidence; this report does not claim packaged or native
+host execution.
 
 ## Final-byte verification
 
@@ -106,7 +117,7 @@ TMPDIR=/tmp/codex-lean-migration-recovery bun test \
 bun typecheck
 ```
 
-Result: **60 passed, 0 failed, 246 assertions; typecheck exit 0**.
+Result: **61 passed, 0 failed, 270 assertions; typecheck exit 0**.
 
 From `packages/desktop`:
 
@@ -117,7 +128,8 @@ TMPDIR=/tmp/codex-lean-migration-recovery bun test \
 bun typecheck
 ```
 
-Result: **8 passed, 0 failed, 33 assertions; typecheck exit 0**.
+Result: **9 passed, 0 failed, 34 assertions; typecheck exit 0**. The complete
+Desktop suite also passed **57 tests, 0 failures, 201 assertions**.
 
 The exact compatibility command that previously exposed 29 failures was rerun
 after the accepted test-only compatibility checkpoint:
@@ -135,15 +147,31 @@ TMPDIR=/tmp/codex-lean-migration-recovery bun test \
   test/config/tui.test.ts
 ```
 
-Result: **108 passed, 3 Windows-only skips, 0 failed, 401 assertions**. The
+Result: **108 passed, 3 Windows-only skips, 0 failed, 402 assertions**. The
 29-failure compatibility debt is closed by the accepted two-test-file
 checkpoint; no Product Core source changed for that correction.
+
+Product Core distribution and metadata-path acceptance was rerun from
+`packages/opencode`:
+
+```bash
+TMPDIR=/tmp/codex-lean-migration-recovery bun test \
+  test/distribution/lean-package.test.ts \
+  test/cli/doctor.test.ts
+```
+
+Result: **7 passed, 0 failed, 55 assertions**. This includes an actual local
+package/install probe plus fresh-home `--help` and `--version` processes that
+created neither a canonical database nor a schema marker, and an ordinary
+stateful command that remained blocked.
 
 The shared Node/Desktop runtime boundary was also built and executed:
 
 ```bash
 bun script/build-node.ts
-OPENCODE_TEST_HOME="$LANE_ROOT" BHARATCODE_CHANNEL=test \
+mkdir -p /tmp/codex-lean-migration-recovery/node-smoke/.local/share/bharatcode-test
+OPENCODE_TEST_HOME=/tmp/codex-lean-migration-recovery/node-smoke \
+  BHARATCODE_CHANNEL=test \
   node --input-type=module -e \
   'const { Database } = await import("./dist/node/node.js"); Database.Client(); Database.close()'
 ```
@@ -162,6 +190,12 @@ claim of native Windows packaging.
   shared recovery controller returns `ready`.
 - `bharatcode doctor` is read-only. `bharatcode doctor repair --confirm` is the
   only marker repair path and does not rewrite database contents.
+- Top-level help and version metadata invocations bypass recovery inspection
+  without creating the canonical database or schema marker; ordinary stateful
+  commands remain recovery-gated.
+- Desktop interrupted recovery exposes both Retry and marker-independent Start
+  Fresh through a closed action helper, with every rendered action disabled
+  while another action is in flight.
 - The database client validates a compatible marker before opening an existing
   canonical database, applies released migrations only after that gate, and
   publishes/revalidates the exact resulting marker before returning the client.

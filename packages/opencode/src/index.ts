@@ -65,6 +65,9 @@ const requestedCommand = (() => {
     return value
   }
 })()
+const informationalInvocation = args.some(
+  (value) => value === "-h" || value === "--help" || value === "-v" || value === "--version",
+)
 
 function show(out: string) {
   const text = out.trimStart()
@@ -127,7 +130,8 @@ const cli = yargs(args)
     })
 
     const recoveryCommand = requestedCommand === "doctor" || requestedCommand === "recovery"
-    if (!recoveryCommand) {
+    const bypassRecoveryGate = recoveryCommand || informationalInvocation
+    if (!bypassRecoveryGate) {
       const recovery = await createDefaultRecoveryController().inspect()
       if (recovery.state !== "ready") {
         throw new Error("BharatCode recovery is required. Run `bharatcode doctor` before startup.")
@@ -135,7 +139,7 @@ const cli = yargs(args)
     }
 
     const marker = Global.Path.database
-    if (!recoveryCommand && !(await Filesystem.exists(marker))) {
+    if (!bypassRecoveryGate && !(await Filesystem.exists(marker))) {
       const tty = process.stderr.isTTY
       process.stderr.write("Performing one time database migration, may take a few minutes..." + EOL)
       const width = 36

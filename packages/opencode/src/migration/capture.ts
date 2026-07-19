@@ -204,7 +204,7 @@ async function scanSource(source: MigrationSource) {
     .flat()
     .toSorted((left, right) => left.relative.localeCompare(right.relative))
   if (new Set(entries.map((entry) => entry.relative)).size !== entries.length) {
-    throw new MigrationCaptureError("The migration source contained multiple database candidates.")
+    throw new MigrationCaptureError("The migration source contained a canonical destination collision.")
   }
   if (entries.length > MAX_FILES || entries.reduce((total, entry) => total + entry.size, 0) > MAX_TOTAL_BYTES) {
     throw new MigrationCaptureError("The migration source exceeded its capture budget.")
@@ -240,9 +240,11 @@ async function scanDirectory(role: string, root: string): Promise<CapturedEntry[
         throw new MigrationCaptureError("The migration source changed during capture.")
       }
       const sanitized = sanitizeBytes(role, relative, bytes)
-      const capturedRelative = /\.db$/i.test(relative) ? "database/main.sqlite" : path.posix.join(role, relative)
+      const capturedRelative = /\.db$/i.test(relative)
+        ? "database/main.sqlite"
+        : path.posix.join(role, canonicalRelative(role, relative))
       if (result.some((entry) => entry.relative === capturedRelative)) {
-        throw new MigrationCaptureError("The migration source contained multiple database candidates.")
+        throw new MigrationCaptureError("The migration source contained a canonical destination collision.")
       }
       result.push({
         relative: capturedRelative,
@@ -254,6 +256,13 @@ async function scanDirectory(role: string, root: string): Promise<CapturedEntry[
   }
   await visit(root, "")
   return result
+}
+
+function canonicalRelative(role: string, relative: string) {
+  if (role !== "config" || relative.includes("/")) return relative
+  if (relative === "opencode.json") return "bharatcode.json"
+  if (relative === "opencode.jsonc") return "bharatcode.jsonc"
+  return relative
 }
 
 function sanitizeBytes(role: string, relative: string, bytes: Uint8Array) {

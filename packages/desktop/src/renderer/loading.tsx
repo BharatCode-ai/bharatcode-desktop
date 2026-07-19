@@ -7,6 +7,7 @@ import { Progress } from "@opencode-ai/ui/progress"
 import "./styles.css"
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js"
 import type { InitStep, RecoveryAction, RecoveryStatus, SqliteMigrationProgress } from "../preload/types"
+import { availableRecoveryActions } from "./loading-recovery"
 
 const root = document.getElementById("root")!
 const lines = ["Just a moment...", "Migrating your BharatCode database", "This may take a couple of minutes"]
@@ -24,6 +25,7 @@ render(() => {
     const current = recovery()
     return current?.state === "choose-source" ? current.sources : []
   })
+  const recoveryActions = createMemo(() => availableRecoveryActions(recovery()))
 
   const value = createMemo(() => {
     if (phase() === "done") return 100
@@ -109,7 +111,7 @@ render(() => {
               }
             >
               <div class="flex w-full flex-col gap-2">
-                <Show when={recovery()?.state === "choose-source"}>
+                <Show when={recoveryActions().includes("choose-source")}>
                   <For each={sourceChoices()}>
                     {(source) => (
                       <button
@@ -128,7 +130,7 @@ render(() => {
                     )}
                   </For>
                 </Show>
-                <Show when={recovery()?.state === "retry"}>
+                <Show when={recoveryActions().includes("retry")}>
                   <button
                     type="button"
                     disabled={inFlight()}
@@ -141,7 +143,7 @@ render(() => {
                     Retry
                   </button>
                 </Show>
-                <Show when={recovery()?.state === "marker-repair"}>
+                <Show when={recoveryActions().includes("repair-marker")}>
                   <button
                     type="button"
                     disabled={inFlight()}
@@ -150,7 +152,7 @@ render(() => {
                     Repair Database Marker
                   </button>
                 </Show>
-                <Show when={recovery()?.state !== "retry"}>
+                <Show when={recoveryActions().includes("start-fresh")}>
                   <button
                     type="button"
                     disabled={inFlight()}
