@@ -3,6 +3,7 @@ import { createHash } from "node:crypto"
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, join, resolve } from "node:path"
+import { Database } from "bun:sqlite"
 
 import * as acceptance from "./lean-upgrade-acceptance.mjs"
 import {
@@ -321,6 +322,44 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
     ).toBeTrue()
   })
 
+  test("seeds the inert account against the exact pinned current-beta account schema", async () => {
+    const accountSource = await readFile(new URL("../../opencode/src/account/account.sql.ts", import.meta.url), "utf8")
+    const accountTable = accountSource.slice(
+      accountSource.indexOf("export const AccountTable"),
+      accountSource.indexOf("export const AccountStateTable"),
+    )
+    expect(accountTable).not.toContain("selected_org_id")
+    expect(accountSource).toContain("active_org_id: text().$type<OrgID>()")
+
+    const source = await readFile(new URL("./lean-upgrade-acceptance.mjs", import.meta.url), "utf8")
+    expect(source).not.toContain("selected_org_id")
+    expect(source).toContain("active_account_id, active_org_id")
+
+    const database = new Database(":memory:")
+    try {
+      database.run(
+        "CREATE TABLE account (id text PRIMARY KEY, email text NOT NULL, url text NOT NULL, access_token text NOT NULL, refresh_token text NOT NULL, token_expiry integer, time_created integer NOT NULL, time_updated integer NOT NULL)",
+      )
+      database.run(
+        "CREATE TABLE account_state (id integer PRIMARY KEY NOT NULL, active_account_id text, active_org_id text)",
+      )
+      acceptance.seedLegacyAccount(database)
+      expect(acceptance.legacyAccountIntact(database)).toBeTrue()
+      expect(database.query("SELECT id, active_account_id, active_org_id FROM account_state").get()).toEqual({
+        id: 1,
+        active_account_id: "acc_upgrade_acceptance",
+        active_org_id: null,
+      })
+      database.query("UPDATE account_state SET active_org_id = 'org_hostile'").run()
+      expect(acceptance.legacyAccountIntact(database)).toBeFalse()
+      database.query("UPDATE account_state SET active_org_id = NULL").run()
+      database.query("UPDATE account SET access_token = 'substituted'").run()
+      expect(acceptance.legacyAccountIntact(database)).toBeFalse()
+    } finally {
+      database.close()
+    }
+  })
+
   test("requires executed share/unshare refusal and complete nonempty network captures", () => {
     const event = {
       source: { id: 1, start_time: "1" },
@@ -363,6 +402,14 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
       utility_pid: 4101,
       before_pids: [4100, 4101],
       after_pids: [4100, 4101],
+      unauthenticated_control: {
+        status: 401,
+        content_type: null,
+        body: "",
+        url: `${sidecarOrigin}/session/${session.id}/share`,
+        redirected: false,
+        www_authenticate: 'Basic realm="Secure Area"',
+      },
       post: response,
       delete: response,
       audit_requests: 0,
@@ -374,7 +421,13 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
     for (const hostile of [
       { help_only: true },
       { ...observation, renderer_origin: "https://hostile.example" },
+      { ...observation, unauthenticated_control: { ...observation.unauthenticated_control, status: 500 } },
+      {
+        ...observation,
+        unauthenticated_control: { ...observation.unauthenticated_control, www_authenticate: null },
+      },
       { ...observation, post: { ...response, status: 200 } },
+      { ...observation, post: { ...response, status: 401 } },
       { ...observation, delete: { ...response, status: 401 } },
       { ...observation, post: { ...response, redirected: true } },
       { ...observation, audit_requests: 1 },
@@ -430,6 +483,108 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
     ]) {
       expect(() => acceptance.validateLoopbackListenerOwner(hostile, expected)).toThrow()
     }
+  })
+
+  test("requires enabled active firewall profiles and effective candidate-process egress blocking", () => {
+    const firewall = {
+      schema: "bharatcode-windows-firewall-observation-v1",
+      active_profiles: ["Public"],
+      control_address: "10.20.30.40",
+      profiles: [
+        { name: "Domain", enabled: true },
+        { name: "Private", enabled: true },
+        { name: "Public", enabled: true },
+      ],
+    }
+    expect(acceptance.validateFirewallProfileObservation(firewall)).toEqual(firewall)
+    for (const hostile of [
+      { ...firewall, active_profiles: [] },
+      { ...firewall, active_profiles: ["Public", "Public"] },
+      { ...firewall, control_address: "127.0.0.1" },
+      {
+        ...firewall,
+        profiles: firewall.profiles.map((profile) =>
+          profile.name === "Public" ? { ...profile, enabled: false } : profile,
+        ),
+      },
+    ]) {
+      expect(() => acceptance.validateFirewallProfileObservation(hostile)).toThrow()
+    }
+
+    const egress = {
+      schema: "bharatcode-candidate-egress-control-v1",
+      renderer_origin: "oc://renderer",
+      control_url: "http://10.20.30.40:43125/bharatcode-firewall-control",
+      reachable_control: {
+        status: 204,
+        body: "",
+        url: "http://10.20.30.40:43125/bharatcode-firewall-control",
+        redirected: false,
+        control_header: "active",
+      },
+      request_failed: true,
+      requests_before: 2,
+      requests_after: 2,
+    }
+    expect(acceptance.validateBlockedEgressObservation(egress, firewall)).toBeTrue()
+    for (const hostile of [
+      { ...egress, renderer_origin: "https://hostile.example" },
+      { ...egress, control_url: "http://127.0.0.1:43125/bharatcode-firewall-control" },
+      { ...egress, control_url: "http://10.20.30.40:99999/bharatcode-firewall-control" },
+      { ...egress, reachable_control: { ...egress.reachable_control, status: 0 } },
+      { ...egress, reachable_control: { ...egress.reachable_control, control_header: null } },
+      { ...egress, requests_before: 1, requests_after: 1 },
+      { ...egress, request_failed: false },
+      { ...egress, requests_after: 3 },
+    ]) {
+      expect(() => acceptance.validateBlockedEgressObservation(hostile, firewall)).toThrow()
+    }
+  })
+
+  test("always attempts every cleanup and preserves the original failure without leaking cleanup details", async () => {
+    const calls: string[] = []
+    const original = new Error("post-create validation failed")
+    try {
+      await acceptance.runAcceptanceWithCleanup(
+        async () => {
+          throw original
+        },
+        {
+          processes: async () => {
+            calls.push("processes")
+            throw new Error("process-cleanup-sensitive-detail")
+          },
+          boundary: async () => {
+            calls.push("boundary")
+            throw new Error("firewall-removal-sensitive-detail")
+          },
+          audit: async () => {
+            calls.push("audit")
+            return true
+          },
+          egress: async () => {
+            calls.push("egress")
+            return true
+          },
+        },
+      )
+      throw new Error("cleanup failure was accepted")
+    } catch (error) {
+      expect(error).toBeInstanceOf(AggregateError)
+      expect((error as AggregateError).errors[0]).toBe(original)
+      expect((error as Error).message).toBe("Packaged upgrade acceptance failed; cleanup failed: processes,boundary")
+      expect((error as Error).message).not.toMatch(/sensitive-detail/u)
+    }
+    expect(calls).toEqual(["processes", "boundary", "audit", "egress"])
+
+    await expect(
+      acceptance.runAcceptanceWithCleanup(async () => "result", {
+        processes: async () => true,
+        boundary: async () => false,
+        audit: async () => true,
+        egress: async () => true,
+      }),
+    ).rejects.toThrow("cleanup failed: boundary")
   })
 
   test("closes the public release, tag source, and selected asset API identity", async () => {
@@ -614,6 +769,7 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
       "observeCredentialSentinelPresence",
       "control_account",
       "validateShareSurfaceObservation",
+      "validateUnauthenticatedSidecarResponse",
       "selectRendererCdpTarget",
       "parseRendererShareEvaluation",
       "validateLoopbackListenerOwner",
@@ -621,8 +777,13 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
       "remote-debugging-port",
       "BHARATCODE_SHARE_ACCESS_TOKEN",
       "New-NetFirewallRule",
-      "RemoteAddress Internet",
+      "0.0.0.0-126.255.255.255",
+      "128.0.0.0-255.255.255.255",
+      "::2-ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
       "Remove-NetFirewallRule",
+      "validateFirewallProfileObservation",
+      "validateBlockedEgressObservation",
+      "runAcceptanceWithCleanup",
       "validatePackagedNetLogBytes",
       "Get-CimInstance Win32_Process",
       "initializeIsolatedProfile",
@@ -635,14 +796,19 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
     expect(source).not.toContain('[runtime, "serve"')
     expect(source).not.toContain("BHARATCODE_SERVER_PASSWORD")
     expect(source).not.toContain("Authorization")
-    expect(source).not.toContain("Basic ")
+    expect(source).not.toMatch(/["']authorization["']\s*:/iu)
+    expect(source).toContain('Basic realm="Secure Area"')
+    expect(source).not.toContain("RemoteAddress Internet")
     const betaStart = source.indexOf('profile, "current-beta", active')
     const candidateInstall = source.indexOf("runInstaller(input.candidate")
     const recovery = source.indexOf("completeCandidateRecovery(candidateRuntime, profile)")
-    const candidateStart = source.indexOf('profile,\n      "candidate",')
+    const candidateStart = source.indexOf("const candidateStart = await startDesktop(")
     const liveShareProbe = source.indexOf("observeShareSurface(profile, candidateStart")
     const candidateCleanup = source.indexOf('finishDesktop(candidateStart, active, profile, "candidate")')
-    const networkBoundary = source.indexOf("installCandidateNetworkBoundary(")
+    const shareObserver = source.indexOf("async function observeShareSurface(")
+    const rendererControl = source.indexOf("evaluateRendererEgressControl(", shareObserver)
+    const networkBoundary = source.indexOf("installCandidateNetworkBoundary(desktop.executable", shareObserver)
+    const blockedRendererControl = source.indexOf("evaluateRendererShareRequests(", shareObserver)
     const networkBoundaryCleanup = source.indexOf(
       "removeCandidateNetworkBoundary(candidateInstalled.application.executable",
     )
@@ -650,10 +816,11 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
     expect(candidateInstall).toBeGreaterThan(betaStart)
     expect(recovery).toBeGreaterThan(candidateInstall)
     expect(candidateStart).toBeGreaterThan(recovery)
-    expect(networkBoundary).toBeGreaterThan(recovery)
-    expect(candidateStart).toBeGreaterThan(networkBoundary)
     expect(liveShareProbe).toBeGreaterThan(candidateStart)
     expect(candidateCleanup).toBeGreaterThan(liveShareProbe)
+    expect(rendererControl).toBeGreaterThan(shareObserver)
+    expect(networkBoundary).toBeGreaterThan(rendererControl)
+    expect(blockedRendererControl).toBeGreaterThan(networkBoundary)
     expect(networkBoundaryCleanup).toBeGreaterThan(candidateCleanup)
     expect(basename(fixturePath)).toBe("current-beta-windows-x64.json")
   })

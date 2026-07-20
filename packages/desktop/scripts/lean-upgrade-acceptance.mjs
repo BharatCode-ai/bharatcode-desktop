@@ -28,6 +28,13 @@ const ACCEPTANCE_REFRESH_SENTINEL = "bharatcode-cp3-inert-refresh-sentinel"
 const ACCEPTANCE_CREDENTIAL_SENTINELS = [ACCEPTANCE_ACCESS_SENTINEL, ACCEPTANCE_REFRESH_SENTINEL]
 const ACCEPTANCE_SHARE_TOKEN = "bharatcode-cp3-inert-share-audit-token"
 const ACCEPTANCE_FIREWALL_RULE = "BharatCode CP3 packaged share public-network block"
+const ACCEPTANCE_EGRESS_PATH = "/bharatcode-firewall-control"
+const ACCEPTANCE_FIREWALL_REMOTE_RANGES = [
+  "0.0.0.0-126.255.255.255",
+  "128.0.0.0-255.255.255.255",
+  "::",
+  "::2-ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+]
 const argumentNames = new Map([
   ["--fixture", "fixture"],
   ["--candidate", "candidate"],
@@ -388,6 +395,7 @@ export function validateShareSurfaceObservation(value) {
       "schema",
       "sidecar_origin",
       "target_id",
+      "unauthenticated_control",
       "utility_pid",
     ],
     "packaged share surface observation",
@@ -408,10 +416,153 @@ export function validateShareSurfaceObservation(value) {
       value.before_pids.includes(value.utility_pid),
     "Live Electron or utility sidecar identity changed during ShareNext observation",
   )
+  validateUnauthenticatedSidecarResponse(value.unauthenticated_control, value.sidecar_origin)
   validateDisabledShareResponse(value.post, value.sidecar_origin)
   validateDisabledShareResponse(value.delete, value.sidecar_origin)
   requireValue(value.audit_requests === 0, "Packaged ShareNext surface or local network audit did not fail closed")
   return { sharenextAbsent: true, shareNetworkAttemptAbsent: true }
+}
+
+export function validateUnauthenticatedSidecarResponse(value, sidecarOrigin) {
+  requireLoopbackOrigin(sidecarOrigin, "Packaged share sidecar origin")
+  requireRecord(
+    value,
+    ["body", "content_type", "redirected", "status", "url", "www_authenticate"],
+    "unauthenticated sidecar control response",
+  )
+  requireValue(
+    value.status === 401 &&
+      value.content_type === null &&
+      value.body === "" &&
+      value.url === `${sidecarOrigin}/session/${ACCEPTANCE_SESSION.id}/share` &&
+      value.redirected === false &&
+      value.www_authenticate === 'Basic realm="Secure Area"',
+    "Packaged sidecar did not enforce the exact Basic-auth boundary",
+  )
+  return true
+}
+
+export function validateFirewallProfileObservation(value) {
+  requireRecord(value, ["active_profiles", "control_address", "profiles", "schema"], "firewall observation")
+  requireValue(value.schema === "bharatcode-windows-firewall-observation-v1", "Firewall schema is invalid")
+  requireValue(
+    typeof value.control_address === "string" && isPrivateIpv4(value.control_address),
+    "Firewall control address is not a closed non-loopback host address",
+  )
+  requireValue(
+    Array.isArray(value.active_profiles) &&
+      value.active_profiles.length >= 1 &&
+      value.active_profiles.length <= 3 &&
+      value.active_profiles.every((profile) => ["Domain", "Private", "Public"].includes(profile)) &&
+      new Set(value.active_profiles).size === value.active_profiles.length &&
+      value.active_profiles.every((profile, index) => index === 0 || value.active_profiles[index - 1] < profile),
+    "Active firewall profile identity is invalid or ambiguous",
+  )
+  requireValue(Array.isArray(value.profiles) && value.profiles.length === 3, "Firewall profile inventory is invalid")
+  for (const [index, name] of ["Domain", "Private", "Public"].entries()) {
+    requireRecord(value.profiles[index], ["enabled", "name"], "firewall profile")
+    requireValue(value.profiles[index].name === name, "Firewall profile inventory is not exact and ordered")
+    requireValue(typeof value.profiles[index].enabled === "boolean", "Firewall profile state is invalid")
+  }
+  requireValue(
+    value.active_profiles.every((name) => value.profiles.find((profile) => profile.name === name)?.enabled === true),
+    "An active Windows Firewall profile is disabled",
+  )
+  return structuredClone(value)
+}
+
+export function validateBlockedEgressObservation(value, firewall) {
+  const profile = validateFirewallProfileObservation(firewall)
+  requireRecord(
+    value,
+    [
+      "control_url",
+      "reachable_control",
+      "renderer_origin",
+      "request_failed",
+      "requests_after",
+      "requests_before",
+      "schema",
+    ],
+    "candidate egress control observation",
+  )
+  let control
+  requireValue(typeof value.control_url === "string", "Candidate egress control URL is invalid")
+  try {
+    control = new URL(value.control_url)
+  } catch {
+    throw new Error("Candidate egress control URL is invalid")
+  }
+  const port = Number(control.port)
+  validateReachableEgressControl(value.reachable_control, value.control_url)
+  requireValue(
+    value.schema === "bharatcode-candidate-egress-control-v1" &&
+      value.renderer_origin === "oc://renderer" &&
+      control.protocol === "http:" &&
+      control.hostname === profile.control_address &&
+      control.pathname === ACCEPTANCE_EGRESS_PATH &&
+      control.username === "" &&
+      control.password === "" &&
+      control.search === "" &&
+      control.hash === "" &&
+      Number.isSafeInteger(port) &&
+      port >= 1 &&
+      port <= 65535 &&
+      value.request_failed === true &&
+      value.requests_before === 2 &&
+      value.requests_after === 2,
+    "Candidate process did not prove enforced non-loopback egress blocking",
+  )
+  return true
+}
+
+function validateReachableEgressControl(value, controlUrl) {
+  requireRecord(value, ["body", "control_header", "redirected", "status", "url"], "reachable candidate egress control")
+  requireValue(
+    value.status === 204 &&
+      value.body === "" &&
+      value.url === controlUrl &&
+      value.redirected === false &&
+      value.control_header === "active",
+    "Candidate renderer did not reach the exact pre-boundary egress control",
+  )
+  return true
+}
+
+export async function runAcceptanceWithCleanup(operation, cleanup) {
+  requireValue(typeof operation === "function", "Packaged upgrade acceptance operation is invalid")
+  requireRecord(cleanup, ["audit", "boundary", "egress", "processes"], "packaged acceptance cleanup")
+  const invalidCleanup = Object.values(cleanup).some((item) => typeof item !== "function")
+  requireValue(!invalidCleanup, "Packaged acceptance cleanup operation is invalid")
+  let result
+  let original
+  try {
+    result = await operation()
+  } catch (error) {
+    original = error
+  }
+  const failures = []
+  for (const label of ["processes", "boundary", "audit", "egress"]) {
+    try {
+      if ((await cleanup[label]()) !== true) failures.push(label)
+    } catch {
+      failures.push(label)
+    }
+  }
+  if (original && failures.length > 0) {
+    throw new AggregateError(
+      [original, ...failures.map((label) => new Error(`cleanup:${label}`))],
+      `Packaged upgrade acceptance failed; cleanup failed: ${failures.join(",")}`,
+    )
+  }
+  if (original) throw original
+  if (failures.length > 0) {
+    throw new AggregateError(
+      failures.map((label) => new Error(`cleanup:${label}`)),
+      `Packaged upgrade acceptance cleanup failed: ${failures.join(",")}`,
+    )
+  }
+  return result
 }
 
 export function selectRendererCdpTarget(value, port) {
@@ -526,125 +677,126 @@ async function executeProductionAcceptance(input) {
   const profile = isolatedProfile(input.acceptanceDirectory, input.environment)
   const active = new Map()
   const audit = startLocalShareAudit()
-  let cleanupComplete = false
-  let networkBoundaryInstalled = false
-  try {
-    await initializeIsolatedProfile(profile)
-    const prepared = await prepareProductionInputs(input)
-    await verifyPinnedInstaller(prepared.betaInstaller, input.currentBeta.assets[0])
-    const betaInstalled = await runInstaller(prepared.betaInstaller, installDirectory, profile.env)
-    const betaStart = await startDesktop(betaInstalled.application, installDirectory, profile, "current-beta", active)
-    const seeded = await seedLegacyBetaState(profile)
-    await verifyPinnedInstaller(input.candidate, prepared.candidate)
-    const candidateInstalled = await runInstaller(input.candidate, installDirectory, profile.env)
-    requireValue(
-      candidateInstalled.executable.sha256 !== betaInstalled.executable.sha256 &&
-        candidateInstalled.inventory.sha256 !== betaInstalled.inventory.sha256,
-      "candidate did not replace the beta installation",
-    )
-    const candidateRuntime = await packagedRuntime(installDirectory)
-    const recovery = await completeCandidateRecovery(candidateRuntime, profile)
-    const runtime = await verifyCandidateRuntime(candidateRuntime, profile)
-    const remoteDebuggingPort = await reserveLoopbackPort()
-    networkBoundaryInstalled = await installCandidateNetworkBoundary(
-      candidateInstalled.application.executable,
-      profile.env,
-    )
-    profile.env.BHARATCODE_SHARE_BASE_URL = audit.url
-    profile.env.BHARATCODE_SHARE_ACCESS_TOKEN = ACCEPTANCE_SHARE_TOKEN
-    const candidateStart = await startDesktop(
-      candidateInstalled.application,
-      installDirectory,
-      profile,
-      "candidate",
-      active,
-      { keepAlive: true, remoteDebuggingPort },
-    )
-    const share = await observeShareSurface(profile, candidateStart, remoteDebuggingPort, audit)
-    await finishDesktop(candidateStart, active, profile, "candidate")
-    requireValue(audit.requests === 0, "ShareNext network audit changed before candidate cleanup completed")
-    requireValue(
-      await removeCandidateNetworkBoundary(candidateInstalled.application.executable, profile.env),
-      "Candidate public-network boundary cleanup failed",
-    )
-    networkBoundaryInstalled = false
-    delete profile.env.BHARATCODE_SHARE_BASE_URL
-    delete profile.env.BHARATCODE_SHARE_ACCESS_TOKEN
-    const candidateState = await observeCandidateState(candidateRuntime, profile)
-    await verifyPinnedInstaller(prepared.betaInstaller, input.currentBeta.assets[0])
-    const rollbackInstalled = await runInstaller(prepared.betaInstaller, installDirectory, profile.env)
-    requireValue(
-      rollbackInstalled.executable.bytes === betaInstalled.executable.bytes &&
-        rollbackInstalled.executable.sha256 === betaInstalled.executable.sha256 &&
-        rollbackInstalled.inventory.files === betaInstalled.inventory.files &&
-        rollbackInstalled.inventory.sha256 === betaInstalled.inventory.sha256,
-      "rollback did not restore the exact beta installation",
-    )
-    const rollbackStart = await startDesktop(
-      rollbackInstalled.application,
-      installDirectory,
-      profile,
-      "rollback",
-      active,
-    )
-    const rollbackState = await observeRollbackState(await packagedRuntime(installDirectory), profile)
-    const state = validateStateEvidence(
-      {
-        schema: "bharatcode-packaged-state-evidence-v1",
-        source: {
-          database_before_sha256: seeded.databaseSha256,
-          database_after_sha256: digest(await readStableFile(profile.legacyDatabase, "legacy beta database")),
-          config_before_sha256: seeded.configSha256,
-          config_after_sha256: digest(await readStableFile(profile.legacyConfigFile, "legacy beta config")),
-        },
-        recovery,
-        candidate: candidateState,
-        rollback: rollbackState,
-      },
-      ACCEPTANCE_SESSION,
-    )
-    const shareNetworkAttemptAbsent = await verifyShareNetworkAbsence([
-      betaStart.netLog,
-      candidateStart.netLog,
-      rollbackStart.netLog,
-    ])
-    cleanupComplete = await verifyNoOwnedProcesses(active, profile.env)
-    return {
-      schema: "bharatcode-packaged-upgrade-observation-v1",
-      candidate: prepared.candidate,
-      checks: {
-        current_beta_download_verified: prepared.currentBetaVerified,
-        current_beta_installed_and_started: betaStart.ready,
-        eligible_state_seeded: seeded.seeded,
-        candidate_installed_over_beta:
-          candidateInstalled.executable.sha256 !== betaInstalled.executable.sha256 &&
+  let egress
+  let candidateExecutable = join(installDirectory, PACKAGED_EXECUTABLE_FILENAME)
+  const observation = await runAcceptanceWithCleanup(
+    async () => {
+      await initializeIsolatedProfile(profile)
+      const prepared = await prepareProductionInputs(input)
+      await verifyPinnedInstaller(prepared.betaInstaller, input.currentBeta.assets[0])
+      const betaInstalled = await runInstaller(prepared.betaInstaller, installDirectory, profile.env)
+      const betaStart = await startDesktop(betaInstalled.application, installDirectory, profile, "current-beta", active)
+      const seeded = await seedLegacyBetaState(profile)
+      await verifyPinnedInstaller(input.candidate, prepared.candidate)
+      const candidateInstalled = await runInstaller(input.candidate, installDirectory, profile.env)
+      candidateExecutable = candidateInstalled.application.executable
+      requireValue(
+        candidateInstalled.executable.sha256 !== betaInstalled.executable.sha256 &&
           candidateInstalled.inventory.sha256 !== betaInstalled.inventory.sha256,
-        eligible_state_preserved: state.eligibleStatePreserved,
-        candidate_started: candidateStart.ready,
-        bharatcode_runtime_only: runtime.bharatcodeOnly,
-        rollback_installed:
+        "candidate did not replace the beta installation",
+      )
+      const candidateRuntime = await packagedRuntime(installDirectory)
+      const recovery = await completeCandidateRecovery(candidateRuntime, profile)
+      const runtime = await verifyCandidateRuntime(candidateRuntime, profile)
+      const remoteDebuggingPort = await reserveLoopbackPort()
+      const firewall = await observeFirewallProfiles(profile.env)
+      egress = startLocalEgressControl(firewall.control_address)
+      await proveEgressControlReachability(egress)
+      profile.env.BHARATCODE_SHARE_BASE_URL = audit.url
+      profile.env.BHARATCODE_SHARE_ACCESS_TOKEN = ACCEPTANCE_SHARE_TOKEN
+      const candidateStart = await startDesktop(
+        candidateInstalled.application,
+        installDirectory,
+        profile,
+        "candidate",
+        active,
+        { keepAlive: true, remoteDebuggingPort },
+      )
+      const share = await observeShareSurface(profile, candidateStart, remoteDebuggingPort, audit, firewall, egress)
+      await finishDesktop(candidateStart, active, profile, "candidate")
+      requireValue(audit.requests === 0, "ShareNext network audit changed before candidate cleanup completed")
+      requireValue(
+        await removeCandidateNetworkBoundary(candidateInstalled.application.executable, profile.env),
+        "Candidate public-network boundary cleanup failed",
+      )
+      delete profile.env.BHARATCODE_SHARE_BASE_URL
+      delete profile.env.BHARATCODE_SHARE_ACCESS_TOKEN
+      const candidateState = await observeCandidateState(candidateRuntime, profile)
+      await verifyPinnedInstaller(prepared.betaInstaller, input.currentBeta.assets[0])
+      const rollbackInstalled = await runInstaller(prepared.betaInstaller, installDirectory, profile.env)
+      requireValue(
+        rollbackInstalled.executable.bytes === betaInstalled.executable.bytes &&
           rollbackInstalled.executable.sha256 === betaInstalled.executable.sha256 &&
+          rollbackInstalled.inventory.files === betaInstalled.inventory.files &&
           rollbackInstalled.inventory.sha256 === betaInstalled.inventory.sha256,
-        rollback_state_structurally_valid: state.rollbackStateStructurallyValid,
-        migration_source_preserved: state.migrationSourcePreserved,
-        recovery_evidence_preserved: state.recoveryEvidencePreserved,
-        sharenext_absent: share.sharenextAbsent,
-        share_network_attempt_absent: share.shareNetworkAttemptAbsent && shareNetworkAttemptAbsent,
+        "rollback did not restore the exact beta installation",
+      )
+      const rollbackStart = await startDesktop(
+        rollbackInstalled.application,
+        installDirectory,
+        profile,
+        "rollback",
+        active,
+      )
+      const rollbackState = await observeRollbackState(await packagedRuntime(installDirectory), profile)
+      const state = validateStateEvidence(
+        {
+          schema: "bharatcode-packaged-state-evidence-v1",
+          source: {
+            database_before_sha256: seeded.databaseSha256,
+            database_after_sha256: digest(await readStableFile(profile.legacyDatabase, "legacy beta database")),
+            config_before_sha256: seeded.configSha256,
+            config_after_sha256: digest(await readStableFile(profile.legacyConfigFile, "legacy beta config")),
+          },
+          recovery,
+          candidate: candidateState,
+          rollback: rollbackState,
+        },
+        ACCEPTANCE_SESSION,
+      )
+      const shareNetworkAttemptAbsent = await verifyShareNetworkAbsence([
+        betaStart.netLog,
+        candidateStart.netLog,
+        rollbackStart.netLog,
+      ])
+      requireValue(await verifyNoOwnedProcesses(active, profile.env), "Packaged upgrade process cleanup is incomplete")
+      return {
+        schema: "bharatcode-packaged-upgrade-observation-v1",
+        candidate: prepared.candidate,
+        checks: {
+          current_beta_download_verified: prepared.currentBetaVerified,
+          current_beta_installed_and_started: betaStart.ready,
+          eligible_state_seeded: seeded.seeded,
+          candidate_installed_over_beta:
+            candidateInstalled.executable.sha256 !== betaInstalled.executable.sha256 &&
+            candidateInstalled.inventory.sha256 !== betaInstalled.inventory.sha256,
+          eligible_state_preserved: state.eligibleStatePreserved,
+          candidate_started: candidateStart.ready,
+          bharatcode_runtime_only: runtime.bharatcodeOnly,
+          rollback_installed:
+            rollbackInstalled.executable.sha256 === betaInstalled.executable.sha256 &&
+            rollbackInstalled.inventory.sha256 === betaInstalled.inventory.sha256,
+          rollback_state_structurally_valid: state.rollbackStateStructurallyValid,
+          migration_source_preserved: state.migrationSourcePreserved,
+          recovery_evidence_preserved: state.recoveryEvidencePreserved,
+          sharenext_absent: share.sharenextAbsent,
+          share_network_attempt_absent: share.shareNetworkAttemptAbsent && shareNetworkAttemptAbsent,
+        },
+      }
+    },
+    {
+      processes: () => terminateOwnedProcesses(active, profile.env),
+      boundary: () => removeCandidateNetworkBoundary(candidateExecutable, profile.env),
+      audit: async () => {
+        delete profile.env.BHARATCODE_SHARE_BASE_URL
+        delete profile.env.BHARATCODE_SHARE_ACCESS_TOKEN
+        await audit.stop(true)
+        return true
       },
-      cleanup_complete: cleanupComplete,
-    }
-  } finally {
-    const processesClean = cleanupComplete || (await terminateOwnedProcesses(active, profile.env))
-    const boundaryClean =
-      !networkBoundaryInstalled ||
-      (await removeCandidateNetworkBoundary(join(installDirectory, PACKAGED_EXECUTABLE_FILENAME), profile.env).catch(
-        () => false,
-      ))
-    await audit.stop(true)
-    if (!processesClean || !boundaryClean) {
-      throw new Error("Packaged upgrade process or network-boundary cleanup failed")
-    }
-  }
+      egress: () => (egress ? egress.stop(true) : true),
+    },
+  )
+  return { ...observation, cleanup_complete: true }
 }
 
 async function prepareProductionInputs(input) {
@@ -820,18 +972,6 @@ async function seedLegacyBetaState(profile) {
       "time_created",
       "time_updated",
     ])
-    requireDatabaseColumns(database, "account_state", ["id", "active_account_id"])
-    requireDatabaseColumns(database, "account", [
-      "id",
-      "email",
-      "url",
-      "access_token",
-      "refresh_token",
-      "token_expiry",
-      "selected_org_id",
-      "time_created",
-      "time_updated",
-    ])
     database.transaction(() => {
       database
         .query(
@@ -859,24 +999,7 @@ async function seedLegacyBetaState(profile) {
           ACCEPTANCE_TIME,
           ACCEPTANCE_TIME,
         )
-      database
-        .query(
-          "INSERT INTO account (id, email, url, access_token, refresh_token, token_expiry, selected_org_id, time_created, time_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .run(
-          ACCEPTANCE_ACCOUNT_ID,
-          "upgrade-acceptance@example.invalid",
-          "https://example.invalid",
-          ACCEPTANCE_ACCESS_SENTINEL,
-          ACCEPTANCE_REFRESH_SENTINEL,
-          ACCEPTANCE_TIME + 86_400_000,
-          null,
-          ACCEPTANCE_TIME,
-          ACCEPTANCE_TIME,
-        )
-      database
-        .query("INSERT OR REPLACE INTO account_state (id, active_account_id) VALUES (1, ?)")
-        .run(ACCEPTANCE_ACCOUNT_ID)
+      seedLegacyAccount(database)
     })()
     requireValue(database.query("PRAGMA quick_check").get()?.quick_check === "ok", "legacy beta database is corrupt")
     requireValue(legacyAccountIntact(database), "legacy beta inert account was not seeded exactly")
@@ -1131,7 +1254,7 @@ async function verifyShareNetworkAbsence(netLogs) {
   return true
 }
 
-async function observeShareSurface(profile, desktop, remoteDebuggingPort, audit) {
+async function observeShareSurface(profile, desktop, remoteDebuggingPort, audit, firewall, egress) {
   const beforeRecords = await observeWindowsProcesses(profile.env)
   const before = validateOwnedProcessTree(beforeRecords, {
     rootPid: desktop.processes.rootPid,
@@ -1146,8 +1269,24 @@ async function observeShareSurface(profile, desktop, remoteDebuggingPort, audit)
   validateLoopbackListenerOwner(beforeListeners, { port: remoteDebuggingPort, pid: before.rootPid })
   validateLoopbackListenerOwner(beforeListeners, { port: sidecarPort, pid: before.utilityPid })
   const target = selectRendererCdpTarget(await waitForRendererTargets(remoteDebuggingPort), remoteDebuggingPort)
+  const reachableControl = parseRendererShareEvaluation(
+    await evaluateRendererEgressControl(target.webSocketDebuggerUrl, egress.url),
+    6,
+  )
+  validateReachableEgressControl(reachableControl, egress.url)
+  egress.markRendererReachable()
+  await installCandidateNetworkBoundary(desktop.executable, profile.env)
+  const unauthenticatedControl = await observeUnauthenticatedSidecarControl(
+    desktop.sidecarOrigin,
+    profile.projectDirectory,
+  )
   const evaluation = parseRendererShareEvaluation(
-    await evaluateRendererShareRequests(target.webSocketDebuggerUrl, desktop.sidecarOrigin, profile.projectDirectory),
+    await evaluateRendererShareRequests(
+      target.webSocketDebuggerUrl,
+      desktop.sidecarOrigin,
+      profile.projectDirectory,
+      egress.url,
+    ),
     7,
   )
   await delay(2_000)
@@ -1160,7 +1299,19 @@ async function observeShareSurface(profile, desktop, remoteDebuggingPort, audit)
   const afterListeners = await observeWindowsLoopbackListeners(profile.env, [remoteDebuggingPort, sidecarPort])
   validateLoopbackListenerOwner(afterListeners, { port: remoteDebuggingPort, pid: after.rootPid })
   validateLoopbackListenerOwner(afterListeners, { port: sidecarPort, pid: after.utilityPid })
-  return validateShareSurfaceObservation({
+  const blockedEgress = validateBlockedEgressObservation(
+    {
+      schema: "bharatcode-candidate-egress-control-v1",
+      renderer_origin: evaluation.renderer_origin,
+      control_url: egress.url,
+      reachable_control: reachableControl,
+      request_failed: evaluation.egress_request_failed,
+      requests_before: egress.requestsBefore,
+      requests_after: egress.requests,
+    },
+    firewall,
+  )
+  const share = validateShareSurfaceObservation({
     schema: "bharatcode-live-electron-share-observation-v1",
     renderer_origin: evaluation.renderer_origin,
     sidecar_origin: evaluation.sidecar_origin,
@@ -1169,10 +1320,32 @@ async function observeShareSurface(profile, desktop, remoteDebuggingPort, audit)
     utility_pid: before.utilityPid,
     before_pids: before.pids,
     after_pids: after.pids,
+    unauthenticated_control: unauthenticatedControl,
     post: evaluation.post,
     delete: evaluation.delete,
     audit_requests: audit.requests,
   })
+  return {
+    sharenextAbsent: share.sharenextAbsent,
+    shareNetworkAttemptAbsent: share.shareNetworkAttemptAbsent && blockedEgress,
+  }
+}
+
+async function observeUnauthenticatedSidecarControl(sidecarOrigin, projectDirectory) {
+  const response = await fetch(`${sidecarOrigin}/session/${ACCEPTANCE_SESSION.id}/share`, {
+    method: "POST",
+    headers: { "x-opencode-directory": projectDirectory },
+    redirect: "error",
+    signal: AbortSignal.timeout(5_000),
+  })
+  return {
+    status: response.status,
+    content_type: response.headers.get("content-type"),
+    body: await response.text(),
+    url: response.url,
+    redirected: response.redirected,
+    www_authenticate: response.headers.get("www-authenticate"),
+  }
 }
 
 function startLocalShareAudit() {
@@ -1194,16 +1367,89 @@ function startLocalShareAudit() {
   }
 }
 
-async function installCandidateNetworkBoundary(executable, env) {
-  const name = powershellLiteral(ACCEPTANCE_FIREWALL_RULE)
-  const program = powershellLiteral(executable)
+function startLocalEgressControl(controlAddress) {
+  requireValue(isPrivateIpv4(controlAddress), "Firewall egress control address is invalid")
+  let requests = 0
+  let requestsBefore = 0
+  const server = Bun.serve({
+    hostname: controlAddress,
+    port: 0,
+    fetch(request) {
+      requests += 1
+      if (new URL(request.url).pathname !== ACCEPTANCE_EGRESS_PATH || request.method !== "GET") {
+        return new Response("invalid", { status: 400 })
+      }
+      return new Response(null, {
+        status: 204,
+        headers: {
+          "access-control-allow-origin": "oc://renderer",
+          "x-bharatcode-egress-control": "active",
+        },
+      })
+    },
+  })
+  return {
+    url: `http://${controlAddress}:${server.port}${ACCEPTANCE_EGRESS_PATH}`,
+    get requestsBefore() {
+      return requestsBefore
+    },
+    get requests() {
+      return requests
+    },
+    markReachable() {
+      requireValue(requests === 1, "Firewall egress control reachability request was not unique")
+      return true
+    },
+    markRendererReachable() {
+      requireValue(requests === 2, "Candidate renderer did not uniquely reach the firewall egress control")
+      requestsBefore = requests
+      return true
+    },
+    stop: async (force) => {
+      await server.stop(force)
+      return true
+    },
+  }
+}
+
+async function proveEgressControlReachability(egress) {
+  const response = await fetch(egress.url, { redirect: "error", signal: AbortSignal.timeout(5_000) })
+  requireValue(
+    response.status === 204 &&
+      response.url === egress.url &&
+      response.redirected === false &&
+      response.headers.get("x-bharatcode-egress-control") === "active" &&
+      (await response.text()) === "",
+    "Harness-owned non-loopback egress control is not exactly reachable",
+  )
+  return egress.markReachable()
+}
+
+async function observeFirewallProfiles(env) {
   const result = await runProcess(
     "powershell.exe",
     [
       "-NoProfile",
       "-NonInteractive",
       "-Command",
-      `$ErrorActionPreference = 'Stop'; if (Get-NetFirewallRule -DisplayName '${name}' -ErrorAction SilentlyContinue) { throw 'pre-existing acceptance firewall rule' }; try { New-NetFirewallRule -DisplayName '${name}' -Direction Outbound -Action Block -Program '${program}' -RemoteAddress Internet -Profile Any | Out-Null; $rule = Get-NetFirewallRule -DisplayName '${name}'; $app = $rule | Get-NetFirewallApplicationFilter; $address = $rule | Get-NetFirewallAddressFilter; if ($rule.DisplayName -cne '${name}' -or $rule.Enabled.ToString() -cne 'True' -or $rule.Direction.ToString() -cne 'Outbound' -or $rule.Action.ToString() -cne 'Block' -or $rule.Profile.ToString() -cne 'Any' -or $app.Program -ine '${program}' -or @($address.RemoteAddress).Count -ne 1 -or @($address.RemoteAddress)[0] -cne 'Internet') { throw 'acceptance firewall rule identity changed' }; Write-Output 'BOUNDARY_INSTALLED' } catch { Remove-NetFirewallRule -DisplayName '${name}' -ErrorAction SilentlyContinue; throw }`,
+      `$ErrorActionPreference = 'Stop'; $profiles = @(Get-NetFirewallProfile | Sort-Object Name | ForEach-Object { [ordered]@{ name = $_.Name.ToString(); enabled = [bool]$_.Enabled } }); $active = @(Get-NetConnectionProfile | Where-Object { $_.IPv4Connectivity.ToString() -ne 'Disconnected' -or $_.IPv6Connectivity.ToString() -ne 'Disconnected' } | ForEach-Object { if ($_.NetworkCategory.ToString() -eq 'DomainAuthenticated') { 'Domain' } else { $_.NetworkCategory.ToString() } } | Sort-Object -Unique); $addresses = @(Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway -and $_.IPv4Address } | ForEach-Object { $_.IPv4Address } | ForEach-Object { $_.IPAddress } | Where-Object { $_ -match '^(?:10\\.|192\\.168\\.|172\\.(?:1[6-9]|2[0-9]|3[01])\\.)' } | Sort-Object -Unique); if ($profiles.Count -ne 3 -or $active.Count -lt 1 -or $addresses.Count -ne 1) { throw 'firewall profile or control-address observation is ambiguous' }; [ordered]@{ schema = 'bharatcode-windows-firewall-observation-v1'; active_profiles = @($active); control_address = $addresses[0]; profiles = @($profiles) } | ConvertTo-Json -Compress -Depth 4`,
+    ],
+    { env, timeout: 30_000 },
+  )
+  return validateFirewallProfileObservation(JSON.parse(result.stdout.trim()))
+}
+
+async function installCandidateNetworkBoundary(executable, env) {
+  const name = powershellLiteral(ACCEPTANCE_FIREWALL_RULE)
+  const program = powershellLiteral(executable)
+  const remoteRanges = ACCEPTANCE_FIREWALL_REMOTE_RANGES.map((value) => `'${powershellLiteral(value)}'`).join(",")
+  const result = await runProcess(
+    "powershell.exe",
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      `$ErrorActionPreference = 'Stop'; $remote = @(${remoteRanges}); if (Get-NetFirewallRule -DisplayName '${name}' -ErrorAction SilentlyContinue) { throw 'pre-existing acceptance firewall rule' }; try { New-NetFirewallRule -DisplayName '${name}' -Direction Outbound -Action Block -Program '${program}' -RemoteAddress $remote -Profile Any | Out-Null; $rule = Get-NetFirewallRule -DisplayName '${name}'; $app = $rule | Get-NetFirewallApplicationFilter; $address = @($rule | Get-NetFirewallAddressFilter).RemoteAddress; if ($rule.DisplayName -cne '${name}' -or $rule.Enabled.ToString() -cne 'True' -or $rule.Direction.ToString() -cne 'Outbound' -or $rule.Action.ToString() -cne 'Block' -or $rule.Profile.ToString() -cne 'Any' -or $app.Program -ine '${program}' -or $address.Count -ne $remote.Count -or (Compare-Object @($address | Sort-Object) @($remote | Sort-Object))) { throw 'acceptance firewall rule identity changed' }; Write-Output 'BOUNDARY_INSTALLED' } catch { Remove-NetFirewallRule -DisplayName '${name}' -ErrorAction SilentlyContinue; throw }`,
     ],
     { env, timeout: 30_000 },
   )
@@ -1223,7 +1469,7 @@ async function removeCandidateNetworkBoundary(executable, env) {
       "-NoProfile",
       "-NonInteractive",
       "-Command",
-      `$ErrorActionPreference = 'Stop'; $rules = @(Get-NetFirewallRule -DisplayName '${name}' -ErrorAction Stop); if ($rules.Count -ne 1) { throw 'acceptance firewall rule is missing or ambiguous' }; $app = $rules[0] | Get-NetFirewallApplicationFilter; if ($app.Program -ine '${program}') { throw 'acceptance firewall program identity changed' }; $rules[0] | Remove-NetFirewallRule; if (Get-NetFirewallRule -DisplayName '${name}' -ErrorAction SilentlyContinue) { throw 'acceptance firewall rule survived cleanup' }`,
+      `$ErrorActionPreference = 'Stop'; $rules = @(Get-NetFirewallRule -DisplayName '${name}' -ErrorAction SilentlyContinue); if ($rules.Count -gt 1) { throw 'acceptance firewall rule is ambiguous' }; if ($rules.Count -eq 1) { $app = $rules[0] | Get-NetFirewallApplicationFilter; if ($app.Program -ine '${program}') { throw 'acceptance firewall program identity changed' }; $rules[0] | Remove-NetFirewallRule }; if (Get-NetFirewallRule -DisplayName '${name}' -ErrorAction SilentlyContinue) { throw 'acceptance firewall rule survived cleanup' }; Write-Output 'BOUNDARY_ABSENT'`,
     ],
     { env, timeout: 30_000 },
   )
@@ -1253,7 +1499,28 @@ async function waitForRendererTargets(port) {
   throw new Error("Candidate Electron renderer CDP target timed out")
 }
 
-async function evaluateRendererShareRequests(webSocketDebuggerUrl, sidecarOrigin, projectDirectory) {
+async function evaluateRendererEgressControl(webSocketDebuggerUrl, egressControlUrl) {
+  const expression = `
+    (async () => {
+      if (location.origin !== "oc://renderer") throw new Error("renderer origin changed")
+      const response = await fetch(${JSON.stringify(egressControlUrl)}, {
+        cache: "no-store",
+        redirect: "error",
+        signal: AbortSignal.timeout(5_000),
+      })
+      return {
+        status: response.status,
+        body: await response.text(),
+        url: response.url,
+        redirected: response.redirected,
+        control_header: response.headers.get("x-bharatcode-egress-control"),
+      }
+    })()
+  `
+  return evaluateRendererExpression(webSocketDebuggerUrl, expression, 6)
+}
+
+async function evaluateRendererShareRequests(webSocketDebuggerUrl, sidecarOrigin, projectDirectory, egressControlUrl) {
   const shareUrl = `${sidecarOrigin}/session/${ACCEPTANCE_SESSION.id}/share`
   const expression = `
     (async () => {
@@ -1275,23 +1542,39 @@ async function evaluateRendererShareRequests(webSocketDebuggerUrl, sidecarOrigin
       return {
         renderer_origin: location.origin,
         sidecar_origin: ${JSON.stringify(sidecarOrigin)},
+        egress_request_failed: await (async () => {
+          try {
+            await fetch(${JSON.stringify(egressControlUrl)}, {
+              cache: "no-store",
+              redirect: "error",
+              signal: AbortSignal.timeout(5_000),
+            })
+            return false
+          } catch {
+            return true
+          }
+        })(),
         post: await request("POST"),
         delete: await request("DELETE"),
       }
     })()
   `
+  return evaluateRendererExpression(webSocketDebuggerUrl, expression, 7)
+}
+
+async function evaluateRendererExpression(webSocketDebuggerUrl, expression, id) {
   const socket = new WebSocket(webSocketDebuggerUrl)
   const response = await new Promise((resolveResponse, rejectResponse) => {
     const timeout = setTimeout(() => {
       socket.close()
-      rejectResponse(new Error("Renderer CDP ShareNext evaluation timed out"))
+      rejectResponse(new Error("Renderer CDP acceptance evaluation timed out"))
     }, 15_000)
     socket.addEventListener(
       "open",
       () =>
         socket.send(
           JSON.stringify({
-            id: 7,
+            id,
             method: "Runtime.evaluate",
             params: { expression, awaitPromise: true, returnByValue: true },
           }),
@@ -1303,14 +1586,14 @@ async function evaluateRendererShareRequests(webSocketDebuggerUrl, sidecarOrigin
       (event) => {
         try {
           const value = JSON.parse(String(event.data))
-          if (value.id !== 7) return
+          if (value.id !== id) return
           clearTimeout(timeout)
           socket.close()
           resolveResponse(value)
         } catch {
           clearTimeout(timeout)
           socket.close()
-          rejectResponse(new Error("Renderer CDP ShareNext response was invalid"))
+          rejectResponse(new Error("Renderer CDP acceptance response was invalid"))
         }
       },
       { once: false },
@@ -1319,7 +1602,7 @@ async function evaluateRendererShareRequests(webSocketDebuggerUrl, sidecarOrigin
       "error",
       () => {
         clearTimeout(timeout)
-        rejectResponse(new Error("Renderer CDP ShareNext evaluation disconnected"))
+        rejectResponse(new Error("Renderer CDP acceptance evaluation disconnected"))
       },
       { once: true },
     )
@@ -1354,29 +1637,60 @@ function exactSessionRows(value) {
   return { id: value[0].id, title: value[0].title }
 }
 
-function legacyAccountIntact(database) {
+export function seedLegacyAccount(database) {
+  requireExactDatabaseColumns(database, "account", [
+    "id",
+    "email",
+    "url",
+    "access_token",
+    "refresh_token",
+    "token_expiry",
+    "time_created",
+    "time_updated",
+  ])
+  requireExactDatabaseColumns(database, "account_state", ["id", "active_account_id", "active_org_id"])
+  database
+    .query(
+      "INSERT INTO account (id, email, url, access_token, refresh_token, token_expiry, time_created, time_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .run(
+      ACCEPTANCE_ACCOUNT_ID,
+      "upgrade-acceptance@example.invalid",
+      "https://example.invalid",
+      ACCEPTANCE_ACCESS_SENTINEL,
+      ACCEPTANCE_REFRESH_SENTINEL,
+      ACCEPTANCE_TIME + 86_400_000,
+      ACCEPTANCE_TIME,
+      ACCEPTANCE_TIME,
+    )
+  database
+    .query("INSERT OR REPLACE INTO account_state (id, active_account_id, active_org_id) VALUES (1, ?, NULL)")
+    .run(ACCEPTANCE_ACCOUNT_ID)
+}
+
+export function legacyAccountIntact(database) {
   const account = database
     .query(
-      "SELECT id, email, url, access_token, refresh_token, token_expiry, selected_org_id, time_created, time_updated FROM account WHERE id = ?",
+      "SELECT id, email, url, access_token, refresh_token, token_expiry, time_created, time_updated FROM account WHERE id = ?",
     )
     .get(ACCEPTANCE_ACCOUNT_ID)
-  const state = database.query("SELECT id, active_account_id FROM account_state WHERE id = 1").get()
+  const state = database.query("SELECT id, active_account_id, active_org_id FROM account_state WHERE id = 1").get()
   return (
     account &&
-    Object.keys(account).length === 9 &&
+    Object.keys(account).length === 8 &&
     account.id === ACCEPTANCE_ACCOUNT_ID &&
     account.email === "upgrade-acceptance@example.invalid" &&
     account.url === "https://example.invalid" &&
     account.access_token === ACCEPTANCE_ACCESS_SENTINEL &&
     account.refresh_token === ACCEPTANCE_REFRESH_SENTINEL &&
     account.token_expiry === ACCEPTANCE_TIME + 86_400_000 &&
-    account.selected_org_id === null &&
     account.time_created === ACCEPTANCE_TIME &&
     account.time_updated === ACCEPTANCE_TIME &&
     state &&
-    Object.keys(state).length === 2 &&
+    Object.keys(state).length === 3 &&
     state.id === 1 &&
-    state.active_account_id === ACCEPTANCE_ACCOUNT_ID
+    state.active_account_id === ACCEPTANCE_ACCOUNT_ID &&
+    state.active_org_id === null
   )
 }
 
@@ -1416,6 +1730,19 @@ function requireDatabaseColumns(database, table, required) {
   )
   requireValue(
     required.every((column) => columns.has(column)),
+    `Legacy beta ${table} schema changed`,
+  )
+}
+
+function requireExactDatabaseColumns(database, table, expected) {
+  const columns = database
+    .query(`PRAGMA table_info(${table})`)
+    .all()
+    .map((item) => item.name)
+    .sort()
+  const required = [...expected].sort()
+  requireValue(
+    columns.length === required.length && columns.every((column, index) => column === required[index]),
     `Legacy beta ${table} schema changed`,
   )
 }
@@ -1841,6 +2168,21 @@ function requireLoopbackOrigin(value, label) {
   )
   const port = Number(new URL(value).port)
   requireValue(Number.isSafeInteger(port) && port >= 1 && port <= 65535, `${label} port is invalid`)
+}
+
+function isPrivateIpv4(value) {
+  const octets = value.split(".").map(Number)
+  if (
+    octets.length !== 4 ||
+    octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255) ||
+    octets[0] === 127
+  )
+    return false
+  return (
+    octets[0] === 10 ||
+    (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) ||
+    (octets[0] === 192 && octets[1] === 168)
+  )
 }
 
 function validateDisabledShareResponse(value, sidecarOrigin) {
