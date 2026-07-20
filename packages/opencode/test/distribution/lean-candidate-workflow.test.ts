@@ -13,14 +13,14 @@ const download = "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a546
 const attest = "actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6"
 const azureLogin = "azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43"
 const reviewedSecurityEnclosureSha256 = {
-  nativePreflight: "48de8947a8f5eda336219b3cdbdfb0ff128c24c2268b18e4c0621242374a7a5b",
+  nativePreflight: "96c72efbac3d82b23c8aa3232608b63afea496818381c7aad4f3e922c896ab2d",
   linuxPackage: "5120170c09954e6e2d57d72cd856cd1e3c193b19cfe8243d20154b73d5289b67",
   windowsPreflight: "7ae4ff03740ad94b8a24c83ae22db01e8825221b2d3238adca3d75a65de5c0ba",
   windowsAuthenticode: "01359917d489dc0dc9fe7e2f16b24008c69d324573f5b9b9af62194d2b72169d",
   windowsSigner: "a9e6e0b3732b9dddbae80d6539f061f6935d7cd15bfefc614084b67e08511c5d",
 } as const
 const reviewedSecurityStepSha256 = {
-  nativePreflight: "f3f46d099dbd6fd4f821a156b2ae7fd68f5d943b0db2316152ded666b4b817dc",
+  nativePreflight: "fb81af32a451e1fbb04c88c7b5cfc4e63eca4f759f73c3d967f17cd4001617d5",
   linuxPackage: "54d38a70454ffd857a51ca05848eb30afc19bcd86dbe22d1d9b5944ac3fbf8d7",
   windowsPreflight: "89f6c8b0d43faf38a3cadc4e31505bc820be2a90ffd19060c22153aa45d460e2",
   windowsAuthenticode: "20c44131417eff06359c17cfdcd81fa45a4f4bdd73cea224ce88e0ac2ce08db1",
@@ -345,8 +345,8 @@ function runNativePreflightFixture(script: string, mode: NativeFixtureMode) {
   const base = process.env.TMPDIR ?? tmpdir()
   const root = mkdtempSync(resolve(base, "lean-native-preflight-"))
   try {
-    const packageRoot = resolve(root, "packages")
-    const modules = resolve(packageRoot, "node_modules")
+    const packageRoot = resolve(root, "packages/opencode")
+    const modules = resolve(root, "node_modules")
     const version = "1.2.3"
     const fixtures = [
       ["@fixture/elf-arm64", "native.bin", "linux", "arm64"],
@@ -407,8 +407,8 @@ function runNativePreflightFixture(script: string, mode: NativeFixtureMode) {
     fixtureScript = `
       import { realpathSync } from "node:fs"
       import { dirname, resolve, sep } from "node:path"
-      const packageRoot = resolve("packages")
-      const approvedDependencyRoot = realpathSync(resolve("packages/node_modules"))
+      const packageRoot = resolve("packages/opencode")
+      const approvedDependencyRoot = realpathSync(resolve("node_modules"))
       const opentui = ${JSON.stringify(fixtures.map(([name]) => name))}
       const watcher = []
       const versions = { opentui: "${version}", watcher: "${version}" }
@@ -600,8 +600,8 @@ function nativeBuildViolations(value: string) {
     "view.getUint32(0x3c, true)",
     "view.getUint16(peOffset + 4, true)",
     "opentui.length !== 6 || watcher.length !== 8",
-    'const approvedDependencyRoot = realpathSync(resolve(workspaceRoot, "node_modules/.bun"))',
-    'approvedDependencyRoot !== resolve(workspaceRoot, "node_modules/.bun")',
+    'const approvedDependencyRoot = realpathSync(resolve(workspaceRoot, "node_modules"))',
+    'approvedDependencyRoot !== resolve(workspaceRoot, "node_modules")',
     "manifestResolution !== manifestPath",
     "!manifestPath.startsWith(`${approvedDependencyRoot}${sep}`)",
     "entryResolution !== entry",
@@ -942,6 +942,19 @@ describe("lean next-beta candidate workflow", () => {
         ),
       ),
     ).not.toEqual([])
+  })
+
+  test("validates native provenance in the exact hoisted repository node_modules layout", async () => {
+    const value = await source()
+    const install = runStep(value, "build-cli", "Install exact dependencies")
+    const preflight = runStep(value, "build-cli", "Preflight exact cross-platform native dependencies")
+    const script = bunEvalScripts(preflight)[0]
+    expect(install).toBe("bun install --frozen-lockfile --linker hoisted --os='*' --cpu='*'")
+    expect(preflight).toContain('const approvedDependencyRoot = realpathSync(resolve(workspaceRoot, "node_modules"))')
+    expect(preflight).toContain('approvedDependencyRoot !== resolve(workspaceRoot, "node_modules")')
+    expect(preflight).not.toContain("node_modules/.bun")
+    expect(script).toBeDefined()
+    expect(nativePreflightExecutionViolations(script)).toEqual([])
   })
 
   test("binds Run-1 Linux and macOS package evidence to the real AppRun target and protected signer identity", async () => {
