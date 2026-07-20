@@ -1,0 +1,392 @@
+name: BharatCode preliminary unsigned Windows WSL acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact lowercase 40-hex source on dev for non-promotable unsigned WSL evidence
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  ACCEPTED_WSL_SOURCE_SHA: f223e2c6b53f567667491f6f1e5667c42fb73fa0
+  BHARATCODE_CHANNEL: beta
+  OPENCODE_CHANNEL: beta
+  SOURCE_SHA: ${{ inputs.source_sha }}
+  VITE_OPENCODE_CHANNEL: beta
+  WORKFLOW_PATH: .github/workflows/bharatcode-preliminary-unsigned-wsl.yml
+
+jobs:
+  admit-source:
+    if: github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-24.04
+    outputs:
+      desktop_version: ${{ steps.identity.outputs.desktop_version }}
+    steps:
+      - name: Checkout the exact preliminary source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.source_sha }}
+
+      - name: Setup repository-pinned Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+
+      - name: Admit immutable preliminary source
+        id: identity
+        shell: bash
+        env:
+          EVENT_SHA: ${{ github.sha }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EVENT_SHA" == "$SOURCE_SHA" ]]
+          [[ "$GITHUB_SHA" == "$SOURCE_SHA" ]]
+          [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]]
+          [[ "$(git status --porcelain)" == "" ]]
+          git merge-base --is-ancestor "$ACCEPTED_WSL_SOURCE_SHA" "$SOURCE_SHA"
+          git diff --exit-code "$ACCEPTED_WSL_SOURCE_SHA" "$SOURCE_SHA" -- \
+            packages/desktop/electron-builder.config.ts \
+            packages/desktop/scripts/stage-wsl-runtime.ts \
+            packages/desktop/scripts/wsl-windows-acceptance.mjs \
+            packages/desktop/src/main/index.ts \
+            packages/desktop/src/main/ipc.ts \
+            packages/desktop/src/main/server.ts \
+            packages/desktop/src/main/windows.ts \
+            'packages/desktop/src/main/wsl-*' \
+            packages/desktop/src/preload/index.ts \
+            packages/desktop/src/preload/types.ts \
+            packages/desktop/src/renderer/index.tsx \
+            packages/opencode/script/build.ts \
+            packages/opencode/src/cli/cmd/serve.ts \
+            packages/opencode/src/server/wsl-desktop-transport.ts
+          grep -F '"packageManager": "bun@1.3.14"' package.json
+          [[ "$(bun --version)" == "1.3.14" ]]
+          desktop_version="$(bun -e 'process.stdout.write((await Bun.file("packages/desktop/package.json").json()).version)')"
+          [[ "$desktop_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          printf 'desktop_version=%s\n' "$desktop_version" >> "$GITHUB_OUTPUT"
+
+  build-wsl-runtime:
+    needs: admit-source
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout the exact preliminary source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          ref: ${{ env.SOURCE_SHA }}
+
+      - name: Setup repository-pinned Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+
+      - name: Build exact same-source WSL runtime input
+        shell: bash
+        env:
+          DESKTOP_VERSION: ${{ needs.admit-source.outputs.desktop_version }}
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile --linker hoisted
+          (
+            cd packages/opencode
+            OPENCODE_VERSION="$DESKTOP_VERSION" BHARATCODE_SOURCE_SHA="$SOURCE_SHA" \
+              bun run script/build.ts --single --skip-install --skip-embed-web-ui --wsl-candidate
+          )
+          mkdir preliminary-runtime
+          runtime="packages/opencode/dist/bharatcode-linux-x64/bin/bharatcode"
+          cp "$runtime" preliminary-runtime/bharatcode-runtime-linux-x64-glibc
+          bytes="$(stat -c %s preliminary-runtime/bharatcode-runtime-linux-x64-glibc)"
+          sha256="$(sha256sum preliminary-runtime/bharatcode-runtime-linux-x64-glibc | cut -d ' ' -f 1)"
+          RUNTIME_BYTES="$bytes" RUNTIME_SHA256="$sha256" bun --eval '
+            const value = { schema: 1, source_sha: process.env.SOURCE_SHA, version: process.env.DESKTOP_VERSION, arch: "x64", filename: "bharatcode-runtime-linux-x64-glibc", bytes: Number(process.env.RUNTIME_BYTES), sha256: process.env.RUNTIME_SHA256 }
+            await Bun.write("preliminary-runtime/manifest.json", `${JSON.stringify(value)}\n`)
+          '
+          chmod 444 preliminary-runtime/bharatcode-runtime-linux-x64-glibc preliminary-runtime/manifest.json
+
+      - name: Upload same-run preliminary runtime input
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: preliminary-wsl-runtime-${{ github.run_id }}-${{ github.run_attempt }}
+          path: preliminary-runtime
+          if-no-files-found: error
+          overwrite: ${{ false }}
+          retention-days: 1
+
+  package-preliminary-unsigned-windows:
+    needs: [admit-source, build-wsl-runtime]
+    runs-on: windows-2025
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout the exact preliminary source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          ref: ${{ env.SOURCE_SHA }}
+
+      - name: Setup repository-pinned Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+
+      - name: Download same-run preliminary runtime input
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: preliminary-wsl-runtime-${{ github.run_id }}-${{ github.run_attempt }}
+          path: preliminary-runtime
+          digest-mismatch: error
+
+      - name: Install exact dependencies and stage same-source runtime
+        shell: pwsh
+        env:
+          INTEGRATED_HEAD: ${{ inputs.source_sha }}
+        run: |
+          bun install --frozen-lockfile --linker hoisted
+          $env:BHARATCODE_WSL_RUNTIME = (Resolve-Path preliminary-runtime/bharatcode-runtime-linux-x64-glibc)
+          $env:BHARATCODE_WSL_RUNTIME_MANIFEST = (Resolve-Path preliminary-runtime/manifest.json)
+          $env:BHARATCODE_WSL_RUNTIME_ARCH = "x64"
+          bun run --cwd packages/desktop stage:wsl-runtime
+
+      - name: Build and verify unsigned TEST-only NSIS
+        working-directory: packages/desktop
+        shell: pwsh
+        env:
+          BHARATCODE_ALLOW_UNSIGNED_WINDOWS: "1"
+          INTEGRATED_HEAD: ${{ inputs.source_sha }}
+        run: |
+          bun run typecheck
+          bun run build
+          bunx electron-builder --win nsis --x64 --config electron-builder.config.ts --publish never
+          $files = @(Get-ChildItem dist -File -Filter *.exe)
+          if ($files.Count -ne 1) { throw "Expected exactly one unsigned TEST-only NSIS" }
+          $target = "$env:GITHUB_WORKSPACE/bharatcode-desktop-preliminary-unsigned-test-win-x64.exe"
+          Move-Item $files[0].FullName $target
+          $signature = Get-AuthenticodeSignature $target
+          if ($signature.Status -ne "NotSigned" -or $signature.SignerCertificate -or $signature.TimeStamperCertificate) {
+            throw "Preliminary Windows TEST artifact must be unsigned"
+          }
+          $version = (Get-Item $target).VersionInfo.ProductVersion
+          if ([version]$version -ne [version]'${{ needs.admit-source.outputs.desktop_version }}') {
+            throw "Preliminary Windows package version drift"
+          }
+          $env:PRELIMINARY_INSTALLER = $target
+          bun --eval '
+            const bytes = Buffer.from(await Bun.file(process.env.PRELIMINARY_INSTALLER).arrayBuffer())
+            if (bytes.length < 4 || bytes.subarray(0, 2).toString("ascii") !== "MZ" || !bytes.includes(Buffer.from("PE\0\0"))) throw new Error("Preliminary installer is not PE")
+          '
+          Copy-Item resources/wsl-runtime/manifest.json "$env:GITHUB_WORKSPACE/bharatcode-wsl-runtime-manifest.json"
+          Copy-Item resources/wsl-runtime/bharatcode-runtime-linux-x64-glibc "$env:GITHUB_WORKSPACE/bharatcode-runtime-linux-x64-glibc"
+
+      - name: Upload same-run unsigned TEST-only package inputs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: preliminary-wsl-unsigned-windows-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            bharatcode-desktop-preliminary-unsigned-test-win-x64.exe
+            bharatcode-wsl-runtime-manifest.json
+            bharatcode-runtime-linux-x64-glibc
+          if-no-files-found: error
+          overwrite: ${{ false }}
+          retention-days: 1
+
+  accept-preliminary-unsigned-wsl:
+    needs: [admit-source, package-preliminary-unsigned-windows]
+    runs-on: [self-hosted, windows, x64, wsl2, "bharatcode-acceptance-${{ github.run_id }}-${{ github.run_attempt }}"]
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout the exact preliminary source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          ref: ${{ env.SOURCE_SHA }}
+
+      - name: Setup repository-pinned Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+
+      - name: Download same-run unsigned TEST-only package inputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: preliminary-wsl-unsigned-windows-${{ github.run_id }}-${{ github.run_attempt }}
+          path: preliminary-input
+          digest-mismatch: error
+
+      - name: Install unsigned NSIS into a create-only root
+        shell: pwsh
+        run: |
+          $installer = (Resolve-Path preliminary-input/bharatcode-desktop-preliminary-unsigned-test-win-x64.exe).Path
+          $signature = Get-AuthenticodeSignature $installer
+          if ($signature.Status -ne "NotSigned" -or $signature.SignerCertificate -or $signature.TimeStamperCertificate) {
+            throw "Preliminary installer signature identity drift"
+          }
+          $installRoot = Join-Path $env:RUNNER_TEMP "bharatcode-preliminary-unsigned-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          if (Test-Path $installRoot) { throw "Preliminary install root already exists" }
+          $process = Start-Process -FilePath $installer -ArgumentList @("/S", "/D=$installRoot") -PassThru
+          try {
+            Wait-Process -Id $process.Id -Timeout 180 -ErrorAction Stop
+          }
+          catch {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            throw "Preliminary NSIS install timed out"
+          }
+          $process.Refresh()
+          if ($process.ExitCode -ne 0) { throw "Preliminary NSIS install failed" }
+          $installed = Join-Path $installRoot "BharatCode Beta.exe"
+          $admissible = @(Get-ChildItem $installRoot -File -Filter *.exe | Where-Object { $_.Name -notlike "Uninstall*" })
+          if ($admissible.Count -ne 1 -or $admissible[0].FullName -cne $installed -or -not (Test-Path $installed -PathType Leaf)) {
+            throw "Expected exactly one installed preliminary Desktop executable"
+          }
+          $installedSignature = Get-AuthenticodeSignature $installed
+          if ($installedSignature.Status -ne "NotSigned" -or $installedSignature.SignerCertificate -or $installedSignature.TimeStamperCertificate) {
+            throw "Installed preliminary Desktop must remain unsigned"
+          }
+          $installedVersion = (Get-Item $installed).VersionInfo.ProductVersion
+          if ([version]$installedVersion -ne [version]'${{ needs.admit-source.outputs.desktop_version }}') {
+            throw "Installed preliminary Desktop version drift"
+          }
+          $uninstaller = Join-Path $installRoot "Uninstall BharatCode Beta.exe"
+          if (-not (Test-Path $uninstaller -PathType Leaf)) { throw "Preliminary NSIS uninstaller is missing" }
+          attrib +R $installer
+          attrib +R $installed
+          attrib +R preliminary-input/bharatcode-wsl-runtime-manifest.json
+          attrib +R preliminary-input/bharatcode-runtime-linux-x64-glibc
+          "UNSIGNED_INSTALLER_PATH=$installer" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "INSTALLED_DESKTOP_EXE=$installed" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "PRELIMINARY_INSTALL_ROOT=$installRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "PRELIMINARY_UNINSTALLER=$uninstaller" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Run installed Desktop through the real WSL contract and write preliminary evidence
+        shell: bash
+        env:
+          WSL_DISTRIBUTION: ${{ vars.BHARATCODE_WSL_DISTRIBUTION }}
+          WSL_INVALID_DISTRIBUTION: ${{ vars.BHARATCODE_WSL_INVALID_DISTRIBUTION }}
+          WSL_MISSING_PREREQUISITE_DISTRIBUTION: ${{ vars.BHARATCODE_WSL_MISSING_PREREQUISITE_DISTRIBUTION }}
+          WSL_WINDOWS_PROJECT: ${{ vars.BHARATCODE_WSL_WINDOWS_PROJECT }}
+        run: |
+          set -euo pipefail
+          test ! -e bharatcode-wsl-preliminary-unsigned.json
+          test ! -e "$RUNNER_TEMP/bharatcode-wsl-preliminary-acceptance/scenarios-9-10.json"
+          bun --eval '
+            import { createHash } from "node:crypto"
+            import { open, stat } from "node:fs/promises"
+            import { runPreliminaryWindowsAcceptance } from "./packages/desktop/scripts/wsl-windows-preliminary-acceptance.mjs"
+            import { canonicalPreliminaryUnsignedWslJson } from "./packages/opencode/script/lean-preliminary-unsigned-wsl.mjs"
+            const manifest = "preliminary-input/bharatcode-wsl-runtime-manifest.json"
+            const runtime = "preliminary-input/bharatcode-runtime-linux-x64-glibc"
+            const harness = "packages/desktop/scripts/wsl-windows-acceptance.mjs"
+            const argv = [
+              "--desktop-exe", process.env.INSTALLED_DESKTOP_EXE,
+              "--runtime-manifest", manifest,
+              "--distribution", process.env.WSL_DISTRIBUTION,
+              "--invalid-distribution", process.env.WSL_INVALID_DISTRIBUTION,
+              "--missing-prerequisite-distribution", process.env.WSL_MISSING_PREREQUISITE_DISTRIBUTION,
+              "--windows-project", process.env.WSL_WINDOWS_PROJECT,
+              "--source-sha", process.env.SOURCE_SHA,
+              "--acceptance-dir", `${process.env.RUNNER_TEMP}\\bharatcode-wsl-preliminary-acceptance`,
+            ]
+            const result = await runPreliminaryWindowsAcceptance(argv)
+            if (result.authority !== "PRELIMINARY_UNSIGNED" || !result.evidence) throw new Error("Preliminary harness authority drift")
+            const digest = async (path) => createHash("sha256").update(await Bun.file(path).arrayBuffer()).digest("hex")
+            const installerStat = await stat(process.env.UNSIGNED_INSTALLER_PATH)
+            const installedStat = await stat(process.env.INSTALLED_DESKTOP_EXE)
+            const bindings = {
+              source_sha: process.env.SOURCE_SHA,
+              run_id: process.env.GITHUB_RUN_ID,
+              run_attempt: process.env.GITHUB_RUN_ATTEMPT,
+              unsigned_installer_bytes: installerStat.size,
+              unsigned_installer_sha256: await digest(process.env.UNSIGNED_INSTALLER_PATH),
+              installed_desktop_bytes: installedStat.size,
+              installed_desktop_sha256: await digest(process.env.INSTALLED_DESKTOP_EXE),
+              runtime_manifest_sha256: await digest(manifest),
+              harness_sha256: await digest(harness),
+            }
+            if ((await digest(runtime)) !== result.evidence.runtime.manifest_sha256) throw new Error("Preliminary raw runtime digest drift")
+            const receipt = {
+              schema: "bharatcode-wsl-preliminary-unsigned-v1",
+              evidence_class: "PRELIMINARY_UNSIGNED",
+              result: "PRELIMINARY_UNSIGNED",
+              signature_status: "PRELIMINARY_UNSIGNED",
+              provenance_status: "PRELIMINARY_UNSIGNED",
+              promotable: false,
+              composable: false,
+              repository: "BharatCode-ai/bharatcode-desktop",
+              workflow: process.env.WORKFLOW_PATH,
+              source_sha: result.evidence.source_sha,
+              github: { run_id: Number(process.env.GITHUB_RUN_ID), run_attempt: Number(process.env.GITHUB_RUN_ATTEMPT) },
+              unsigned_installer: { filename: "bharatcode-desktop-preliminary-unsigned-test-win-x64.exe", bytes: bindings.unsigned_installer_bytes, sha256: bindings.unsigned_installer_sha256 },
+              installed_desktop: { filename: "BharatCode Beta.exe", bytes: bindings.installed_desktop_bytes, sha256: result.evidence.desktop_sha256 },
+              runtime_manifest_sha256: result.evidence.runtime_manifest_sha256,
+              runtime: result.evidence.runtime,
+              harness: { contract: harness, contract_sha256: bindings.harness_sha256, authority: result.authority },
+              identity: result.evidence.identity,
+              scenarios: result.evidence.scenarios,
+              completed_at: result.evidence.completed_at,
+            }
+            const bytes = canonicalPreliminaryUnsignedWslJson(receipt, bindings)
+            const output = await open("bharatcode-wsl-preliminary-unsigned.json", "wx", 0o444)
+            try {
+              await output.writeFile(bytes)
+              await output.sync()
+            } finally {
+              await output.close()
+            }
+          '
+          test ! -e "$RUNNER_TEMP/bharatcode-wsl-preliminary-acceptance/scenarios-9-10.json"
+          test ! -e "$RUNNER_TEMP/bharatcode-wsl-preliminary-acceptance/scenarios-9-10.json.sha256"
+
+      - name: Uninstall isolated preliminary Desktop
+        shell: pwsh
+        run: |
+          $installedFile = Get-Item $env:INSTALLED_DESKTOP_EXE
+          $installedFile.IsReadOnly = $false
+          $process = Start-Process -FilePath $env:PRELIMINARY_UNINSTALLER -ArgumentList @("/S") -PassThru
+          try {
+            Wait-Process -Id $process.Id -Timeout 180 -ErrorAction Stop
+          }
+          catch {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            throw "Preliminary NSIS uninstall timed out"
+          }
+          $process.Refresh()
+          if ($process.ExitCode -ne 0) { throw "Preliminary NSIS uninstall failed" }
+          $deadline = [DateTime]::UtcNow.AddSeconds(30)
+          while ((Test-Path $env:INSTALLED_DESKTOP_EXE) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Seconds 1 }
+          if (Test-Path $env:INSTALLED_DESKTOP_EXE) { throw "Installed preliminary Desktop survived uninstall" }
+
+      - name: Attest preliminary unsigned evidence
+        id: attest_preliminary
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-path: bharatcode-wsl-preliminary-unsigned.json
+          show-summary: false
+
+      - name: Stage preliminary provenance bundle
+        shell: pwsh
+        env:
+          BUNDLE_PATH: ${{ steps.attest_preliminary.outputs.bundle-path }}
+        run: Copy-Item $env:BUNDLE_PATH bharatcode-wsl-preliminary-unsigned.json.intoto.jsonl
+
+      - name: Upload run-attempt-scoped preliminary evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: preliminary-wsl-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            bharatcode-wsl-preliminary-unsigned.json
+            bharatcode-wsl-preliminary-unsigned.json.intoto.jsonl
+          if-no-files-found: error
+          overwrite: ${{ false }}
+          retention-days: 1
