@@ -486,7 +486,7 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
   })
 
   test("accepts only the exact optional Chromium private-network preflight contract", async () => {
-    const controlUrl = "http://10.20.30.40:43125/bharatcode-firewall-control"
+    const controlUrl = "http://10.20.30.40:43125/bharatcode-firewall-control/11111111-1111-4111-8111-111111111111"
     const harness = acceptance.routeEgressControlRequest(new Request(controlUrl), controlUrl)
     expect(harness.kind).toBe("harness-get")
     expect(harness.response.status).toBe(204)
@@ -527,7 +527,7 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
     expect(renderer.kind).toBe("renderer-get")
     expect(renderer.response.status).toBe(204)
     expect(Object.fromEntries(renderer.response.headers)).toEqual({
-      "access-control-expose-headers": "Cache-Control, X-BharatCode-Egress-Control",
+      "access-control-expose-headers": "Cache-Control, Connection, X-BharatCode-Egress-Control",
       "access-control-allow-origin": "oc://renderer",
       "cache-control": "no-store",
       connection: "close",
@@ -572,6 +572,161 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
     }
   })
 
+  test("constructs one candidate-only Chromium 146 endpoint address-space override", async () => {
+    const controlUrl = "http://10.20.30.40:43125/bharatcode-firewall-control/11111111-1111-4111-8111-111111111111"
+    expect(acceptance.candidateAddressSpaceOverrideArguments("candidate", controlUrl)).toEqual([
+      "--ip-address-space-overrides=10.20.30.40:43125=public",
+    ])
+    expect(acceptance.candidateAddressSpaceOverrideArguments("current-beta")).toEqual([])
+    expect(acceptance.candidateAddressSpaceOverrideArguments("rollback")).toEqual([])
+    const override = acceptance.candidateAddressSpaceOverrideArguments("candidate", controlUrl)
+    const executable = "C:\\Program Files\\BharatCode Beta\\BharatCode Beta.exe"
+    const records = [
+      {
+        process_id: 4100,
+        parent_process_id: 1,
+        executable_path: executable,
+        command_line: `"${executable}" ${override[0]} --no-proxy-server`,
+      },
+      {
+        process_id: 4101,
+        parent_process_id: 4100,
+        executable_path: executable,
+        command_line: `"${executable}" --type=utility --utility-sub-type=node.mojom.NodeService`,
+      },
+      {
+        process_id: 4102,
+        parent_process_id: 4100,
+        executable_path: executable,
+        command_line: `"${executable}" --type=utility --utility-sub-type=network.mojom.NetworkService`,
+      },
+    ]
+    expect(
+      acceptance.validateOwnedProcessTree(records, {
+        rootPid: 4100,
+        executable,
+        addressSpaceOverrideArguments: override,
+        requireNetworkService: true,
+      }),
+    ).toEqual({ rootPid: 4100, utilityPid: 4101, networkServicePid: 4102, pids: [4100, 4101, 4102] })
+    for (const hostile of [
+      records.slice(0, 2),
+      [...records, { ...records[2], process_id: 4103 }],
+      records.map((record) =>
+        record.process_id === 4100 ? { ...record, command_line: `"${executable}" --no-proxy-server` } : record,
+      ),
+      records.map((record) =>
+        record.process_id === 4100
+          ? {
+              ...record,
+              command_line: record.command_line.replace(override[0], `${override[0]},10.20.30.41:43125=public`),
+            }
+          : record,
+      ),
+    ]) {
+      expect(() =>
+        acceptance.validateOwnedProcessTree(hostile, {
+          rootPid: 4100,
+          executable,
+          addressSpaceOverrideArguments: override,
+          requireNetworkService: true,
+        }),
+      ).toThrow()
+    }
+
+    for (const [phase, hostile] of [
+      ["candidate", undefined],
+      ["current-beta", controlUrl],
+      ["rollback", controlUrl],
+      ["foreign", undefined],
+      ["candidate", "http://127.0.0.1:43125/bharatcode-firewall-control"],
+      ["candidate", "http://8.8.8.8:43125/bharatcode-firewall-control"],
+      ["candidate", "http://10.20.30.40:0/bharatcode-firewall-control"],
+      ["candidate", "http://10.20.30.40/bharatcode-firewall-control"],
+      ["candidate", "http://10.20.30.40:43125/foreign"],
+      ["candidate", "http://user@10.20.30.40:43125/bharatcode-firewall-control"],
+      ["candidate", `${controlUrl}?drift=1`],
+      ["candidate", "10.20.30.40:43125=public,10.20.30.41:43125=public"],
+      ["candidate", "0.0.0.0/0=public"],
+      ["candidate", "*=public"],
+    ] as const) {
+      expect(() => acceptance.candidateAddressSpaceOverrideArguments(phase, hostile)).toThrow()
+    }
+
+    const windows = await readFile(new URL("../src/main/windows.ts", import.meta.url), "utf8")
+    const index = await readFile(new URL("../src/main/index.ts", import.meta.url), "utf8")
+    expect(windows).not.toContain("ip-address-space-overrides")
+    expect(index).not.toContain("ip-address-space-overrides")
+  })
+
+  test("uses four distinct one-shot controls and closes candidate netlog evidence", () => {
+    const nonces = [
+      "11111111-1111-4111-8111-111111111111",
+      "22222222-2222-4222-8222-222222222222",
+      "33333333-3333-4333-8333-333333333333",
+      "44444444-4444-4444-8444-444444444444",
+    ]
+    const controls = acceptance.createEgressControlUrls("http://10.20.30.40:43125", nonces)
+    expect(controls).toEqual({
+      harnessBefore: `http://10.20.30.40:43125/bharatcode-firewall-control/${nonces[0]}`,
+      rendererBefore: `http://10.20.30.40:43125/bharatcode-firewall-control/${nonces[1]}`,
+      rendererBlocked: `http://10.20.30.40:43125/bharatcode-firewall-control/${nonces[2]}`,
+      harnessAfter: `http://10.20.30.40:43125/bharatcode-firewall-control/${nonces[3]}`,
+    })
+    expect(() => acceptance.createEgressControlUrls("http://127.0.0.1:43125", nonces)).toThrow()
+    expect(() =>
+      acceptance.createEgressControlUrls("http://10.20.30.40:43125", [...nonces.slice(0, 3), nonces[0]]),
+    ).toThrow()
+    expect(() => acceptance.createEgressControlUrls("http://10.20.30.40:43125", ["predictable"])).toThrow()
+
+    const eventTypes = {
+      URL_REQUEST_START_JOB: 1,
+      HTTP_TRANSACTION_READ_RESPONSE_HEADERS: 2,
+      URL_REQUEST_FAILED: 3,
+    }
+    const events = [
+      { source: { id: 10 }, type: 1, phase: 0, params: { url: controls.rendererBefore } },
+      { source: { id: 10 }, type: 2, phase: 0, params: { headers: ["HTTP/1.1 204 No Content"] } },
+      { source: { id: 20 }, type: 1, phase: 0, params: { url: controls.rendererBlocked } },
+      { source: { id: 20 }, type: 3, phase: 0, params: { net_error: -118 } },
+    ]
+    const bytes = Buffer.from(JSON.stringify({ constants: { logEventTypes: eventTypes }, events }))
+    expect(acceptance.validateCandidateEgressNetLogBytes(bytes, controls)).toBeTrue()
+    for (const hostile of [
+      Buffer.from(JSON.stringify({ constants: { logEventTypes: eventTypes }, events: events.slice(0, 2) })),
+      Buffer.from(
+        JSON.stringify({
+          constants: { logEventTypes: eventTypes },
+          events: [...events, { source: { id: 20 }, type: 2, phase: 0, params: { headers: ["HTTP/1.1 204"] } }],
+        }),
+      ),
+      Buffer.from(
+        JSON.stringify({
+          constants: { logEventTypes: eventTypes },
+          events: [...events, { source: { id: 30 }, type: 1, phase: 0, params: { url: controls.harnessAfter } }],
+        }),
+      ),
+      Buffer.from(
+        JSON.stringify({
+          constants: { logEventTypes: eventTypes },
+          events: events.map((event) =>
+            event.type === 2 ? { ...event, params: { headers: ["HTTP/1.1 200 OK"] } } : event,
+          ),
+        }),
+      ),
+      Buffer.from(
+        JSON.stringify({
+          constants: { logEventTypes: eventTypes },
+          events: events.map((event) =>
+            event.type === 2 ? { ...event, params: { headers: ["HTTP/1.1 200 OK", "x-control: 204"] } } : event,
+          ),
+        }),
+      ),
+    ]) {
+      expect(() => acceptance.validateCandidateEgressNetLogBytes(hostile, controls)).toThrow()
+    }
+  })
+
   test("requires enabled active firewall profiles and effective candidate-process egress blocking", () => {
     const firewall = {
       schema: "bharatcode-windows-firewall-observation-v1",
@@ -598,22 +753,30 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
       expect(() => acceptance.validateFirewallProfileObservation(hostile)).toThrow()
     }
 
+    const controls = acceptance.createEgressControlUrls("http://10.20.30.40:43125", [
+      "11111111-1111-4111-8111-111111111111",
+      "22222222-2222-4222-8222-222222222222",
+      "33333333-3333-4333-8333-333333333333",
+      "44444444-4444-4444-8444-444444444444",
+    ])
+
     const egress = {
       schema: "bharatcode-candidate-egress-control-v1",
       renderer_origin: "oc://renderer",
-      control_url: "http://10.20.30.40:43125/bharatcode-firewall-control",
+      control_urls: controls,
       reachable_control: {
         status: 204,
         body: "",
-        url: "http://10.20.30.40:43125/bharatcode-firewall-control",
+        url: controls.rendererBefore,
         redirected: false,
         cache_control: "no-store",
+        connection: "close",
         control_header: "active",
       },
       post_boundary_control: {
         status: 204,
         body: "",
-        url: "http://10.20.30.40:43125/bharatcode-firewall-control",
+        url: controls.harnessAfter,
         redirected: false,
         cache_control: "no-store",
         connection: "close",
@@ -621,9 +784,9 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
       },
       request_failed: true,
       preflight_observed: false,
-      request_sequence_before: ["harness-get", "renderer-get"],
-      request_sequence_blocked: ["harness-get", "renderer-get"],
-      request_sequence_after: ["harness-get", "renderer-get", "harness-get"],
+      request_sequence_before: ["harness-before", "renderer-before"],
+      request_sequence_blocked: ["harness-before", "renderer-before"],
+      request_sequence_after: ["harness-before", "renderer-before", "harness-after"],
       requests_before: 2,
       requests_blocked: 2,
       requests_after: 3,
@@ -634,9 +797,9 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
         {
           ...egress,
           preflight_observed: true,
-          request_sequence_before: ["harness-get", "renderer-preflight", "renderer-get"],
-          request_sequence_blocked: ["harness-get", "renderer-preflight", "renderer-get"],
-          request_sequence_after: ["harness-get", "renderer-preflight", "renderer-get", "harness-get"],
+          request_sequence_before: ["harness-before", "renderer-preflight", "renderer-before"],
+          request_sequence_blocked: ["harness-before", "renderer-preflight", "renderer-before"],
+          request_sequence_after: ["harness-before", "renderer-preflight", "renderer-before", "harness-after"],
           requests_before: 3,
           requests_blocked: 3,
           requests_after: 4,
@@ -646,23 +809,27 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
     ).toBeTrue()
     for (const hostile of [
       { ...egress, renderer_origin: "https://hostile.example" },
-      { ...egress, control_url: "http://127.0.0.1:43125/bharatcode-firewall-control" },
-      { ...egress, control_url: "http://10.20.30.40:99999/bharatcode-firewall-control" },
+      { ...egress, control_urls: { ...controls, rendererBefore: controls.harnessBefore } },
+      {
+        ...egress,
+        control_urls: { ...controls, rendererBefore: controls.rendererBefore.replace("10.20.30.40", "127.0.0.1") },
+      },
       { ...egress, reachable_control: { ...egress.reachable_control, status: 0 } },
       { ...egress, reachable_control: { ...egress.reachable_control, control_header: null } },
       { ...egress, reachable_control: { ...egress.reachable_control, cache_control: null } },
+      { ...egress, reachable_control: { ...egress.reachable_control, connection: "keep-alive" } },
       { ...egress, post_boundary_control: { ...egress.post_boundary_control, status: 0 } },
       { ...egress, post_boundary_control: { ...egress.post_boundary_control, connection: "keep-alive" } },
       { ...egress, preflight_observed: true },
-      { ...egress, request_sequence_before: ["harness-get", "renderer-get", "renderer-get"] },
+      { ...egress, request_sequence_before: ["harness-before", "renderer-before", "renderer-before"] },
       {
         ...egress,
-        request_sequence_blocked: ["harness-get", "renderer-get", "renderer-preflight"],
-        request_sequence_after: ["harness-get", "renderer-get", "renderer-preflight", "harness-get"],
+        request_sequence_blocked: ["harness-before", "renderer-before", "renderer-blocked"],
+        request_sequence_after: ["harness-before", "renderer-before", "renderer-blocked", "harness-after"],
         requests_blocked: 3,
         requests_after: 4,
       },
-      { ...egress, request_sequence_after: ["harness-get", "renderer-get"], requests_after: 2 },
+      { ...egress, request_sequence_after: ["harness-before", "renderer-before"], requests_after: 2 },
       { ...egress, requests_before: 1, requests_blocked: 1, requests_after: 2 },
       { ...egress, request_failed: false },
       { ...egress, requests_after: 4 },
@@ -905,6 +1072,11 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
       "validateLoopbackListenerOwner",
       "Get-NetTCPConnection -State Listen",
       "remote-debugging-port",
+      "ip-address-space-overrides",
+      "candidateAddressSpaceOverrideArguments",
+      "validateCandidateEgressNetLogBytes",
+      "NetworkService",
+      "--no-proxy-server",
       "BHARATCODE_SHARE_ACCESS_TOKEN",
       "New-NetFirewallRule",
       "0.0.0.0-126.255.255.255",
@@ -932,9 +1104,12 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
     const betaStart = source.indexOf('profile, "current-beta", active')
     const candidateInstall = source.indexOf("runInstaller(input.candidate")
     const recovery = source.indexOf("completeCandidateRecovery(candidateRuntime, profile)")
+    const egressStart = source.indexOf("egress = startLocalEgressControl(firewall.control_address)")
     const candidateStart = source.indexOf("const candidateStart = await startDesktop(")
     const liveShareProbe = source.indexOf("observeShareSurface(profile, candidateStart")
-    const candidateCleanup = source.indexOf('finishDesktop(candidateStart, active, profile, "candidate")')
+    const candidateCleanup = source.indexOf(
+      'finishDesktop(candidateStart, active, profile, "candidate", share.controls)',
+    )
     const shareObserver = source.indexOf("async function observeShareSurface(")
     const rendererControl = source.indexOf("evaluateRendererEgressControl(", shareObserver)
     const networkBoundary = source.indexOf("installCandidateNetworkBoundary(desktop.executable", shareObserver)
@@ -945,7 +1120,8 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
     expect(betaStart).toBeGreaterThan(-1)
     expect(candidateInstall).toBeGreaterThan(betaStart)
     expect(recovery).toBeGreaterThan(candidateInstall)
-    expect(candidateStart).toBeGreaterThan(recovery)
+    expect(egressStart).toBeGreaterThan(recovery)
+    expect(candidateStart).toBeGreaterThan(egressStart)
     expect(liveShareProbe).toBeGreaterThan(candidateStart)
     expect(candidateCleanup).toBeGreaterThan(liveShareProbe)
     expect(rendererControl).toBeGreaterThan(shareObserver)

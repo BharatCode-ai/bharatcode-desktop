@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { createHash } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import { constants } from "node:fs"
 import { lstat, mkdir, open, readFile, readdir, stat } from "node:fs/promises"
 import { basename, dirname, join, relative, resolve } from "node:path"
@@ -158,6 +158,11 @@ export function validateOwnedProcessTree(records, expected) {
     sameWindowsPath(root[0].executable_path, expected.executable),
     "Owned application process executable changed",
   )
+  const addressSpaceOverrideArguments = root[0].command_line.match(/--ip-address-space-overrides=[^\s"]+/gu) ?? []
+  requireValue(
+    sameStringSequence(addressSpaceOverrideArguments, expected.addressSpaceOverrideArguments ?? []),
+    "Owned application Chromium address-space override changed",
+  )
   const descendants = descendantProcesses(records, expected.rootPid)
   const utility = descendants.filter(
     (item) =>
@@ -166,9 +171,25 @@ export function validateOwnedProcessTree(records, expected) {
       /--utility-sub-type=node\.mojom\.NodeService\b/iu.test(item.command_line),
   )
   requireValue(utility.length === 1, "Owned BharatCode utility sidecar is missing or ambiguous")
+  const networkService = descendants.filter(
+    (item) =>
+      sameWindowsPath(item.executable_path, expected.executable) &&
+      /--type=utility\b/iu.test(item.command_line) &&
+      /--utility-sub-type=network\.mojom\.NetworkService\b/iu.test(item.command_line),
+  )
+  if (expected.requireNetworkService) {
+    requireValue(networkService.length === 1, "Owned Chromium NetworkService is missing or ambiguous")
+    requireValue(
+      (root[0].command_line.match(/--no-proxy-server\b/gu) ?? []).length === 1,
+      "Candidate did not disable proxying exactly",
+    )
+  } else {
+    requireValue(networkService.length <= 1, "Owned Chromium NetworkService is ambiguous")
+  }
   return {
     rootPid: expected.rootPid,
     utilityPid: utility[0].process_id,
+    ...(expected.requireNetworkService ? { networkServicePid: networkService[0].process_id } : {}),
     pids: [expected.rootPid, ...descendants.map((item) => item.process_id)].sort((left, right) => left - right),
   }
 }
@@ -381,6 +402,133 @@ export function validatePackagedNetLogBytes(bytes) {
   return true
 }
 
+export function createEgressControlUrls(origin, nonces = Array.from({ length: 4 }, () => randomUUID())) {
+  let base
+  try {
+    base = new URL(origin)
+  } catch {
+    throw new Error("Firewall egress control origin is invalid")
+  }
+  requireValue(
+    base.protocol === "http:" &&
+      isPrivateIpv4(base.hostname) &&
+      Number(base.port) >= 1 &&
+      Number(base.port) <= 65535 &&
+      base.username === "" &&
+      base.password === "" &&
+      base.pathname === "/" &&
+      base.search === "" &&
+      base.hash === "" &&
+      base.origin === origin,
+    "Firewall egress control origin is invalid",
+  )
+  requireValue(
+    Array.isArray(nonces) &&
+      nonces.length === 4 &&
+      new Set(nonces).size === 4 &&
+      nonces.every((value) => /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(value)),
+    "Firewall egress control nonces are invalid or reused",
+  )
+  const url = (nonce) => `${origin}${ACCEPTANCE_EGRESS_PATH}/${nonce}`
+  return {
+    harnessBefore: url(nonces[0]),
+    rendererBefore: url(nonces[1]),
+    rendererBlocked: url(nonces[2]),
+    harnessAfter: url(nonces[3]),
+  }
+}
+
+export function validateCandidateEgressNetLogBytes(bytes, controls) {
+  validatePackagedNetLogBytes(bytes)
+  requireRecord(
+    controls,
+    ["harnessAfter", "harnessBefore", "rendererBefore", "rendererBlocked"],
+    "candidate egress netlog controls",
+  )
+  const values = Object.values(controls)
+  requireValue(new Set(values).size === 4, "candidate egress netlog controls are reused")
+  const parsed = JSON.parse(Buffer.from(bytes).toString("utf8"))
+  const eventTypes = parsed.constants.logEventTypes
+  requireValue(
+    eventTypes && typeof eventTypes === "object" && !Array.isArray(eventTypes),
+    "candidate egress netlog event types are invalid",
+  )
+  const names = new Map(Object.entries(eventTypes).map(([name, type]) => [type, name]))
+  const starts = (url) =>
+    parsed.events.filter((event) => names.get(event?.type) === "URL_REQUEST_START_JOB" && event?.params?.url === url)
+  const before = starts(controls.rendererBefore)
+  const blocked = starts(controls.rendererBlocked)
+  requireValue(before.length === 1 && blocked.length === 1, "candidate egress netlog request identity is incomplete")
+  requireValue(
+    parsed.events.indexOf(before[0]) < parsed.events.indexOf(blocked[0]),
+    "candidate egress netlog request chronology changed",
+  )
+  requireValue(
+    starts(controls.harnessBefore).length === 0 && starts(controls.harnessAfter).length === 0,
+    "harness egress control leaked into the candidate netlog",
+  )
+  const connected = (root) => {
+    const ids = new Set([root.source.id])
+    let changed = true
+    while (changed) {
+      changed = false
+      for (const event of parsed.events) {
+        const dependencies = networkSourceDependencies(event.params)
+        if (!ids.has(event?.source?.id) && !dependencies.some((id) => ids.has(id))) continue
+        for (const id of [event?.source?.id, ...dependencies]) {
+          if (!Number.isSafeInteger(id) || ids.has(id)) continue
+          ids.add(id)
+          changed = true
+        }
+      }
+    }
+    return parsed.events.filter((event) => ids.has(event?.source?.id))
+  }
+  const beforeEvents = connected(before[0])
+  const blockedEvents = connected(blocked[0])
+  requireValue(
+    beforeEvents.some(
+      (event) =>
+        /READ_RESPONSE_HEADERS/u.test(names.get(event.type) ?? "") &&
+        networkStringValues(event.params).some((value) => /^HTTP\/1\.[01] 204(?:\s|$)/u.test(value)),
+    ),
+    "candidate pre-boundary netlog has no exact 204 response",
+  )
+  requireValue(
+    !blockedEvents.some((event) => /READ_RESPONSE_HEADERS/u.test(names.get(event.type) ?? "")) &&
+      blockedEvents.some((event) => Number.isInteger(event?.params?.net_error) && event.params.net_error < 0),
+    "candidate blocked netlog has a response or no network failure",
+  )
+  return true
+}
+
+function validateEgressControlUrls(controls, expectedAddress) {
+  requireRecord(
+    controls,
+    ["harnessAfter", "harnessBefore", "rendererBefore", "rendererBlocked"],
+    "firewall egress control URLs",
+  )
+  const urls = Object.values(controls).map((value) => {
+    requireValue(typeof value === "string", "Firewall egress control URL is invalid")
+    try {
+      return new URL(value)
+    } catch {
+      throw new Error("Firewall egress control URL is invalid")
+    }
+  })
+  requireValue(
+    urls.every((url) => url.origin === urls[0].origin && url.hostname === expectedAddress),
+    "Firewall egress control endpoint changed",
+  )
+  const nonces = urls.map((url) => url.pathname.slice(`${ACCEPTANCE_EGRESS_PATH}/`.length))
+  const expected = createEgressControlUrls(urls[0].origin, nonces)
+  requireValue(
+    Object.keys(expected).every((key) => expected[key] === controls[key]),
+    "Firewall egress control URL roles changed",
+  )
+  return structuredClone(controls)
+}
+
 export function validateShareSurfaceObservation(value) {
   requireRecord(
     value,
@@ -476,7 +624,7 @@ export function validateBlockedEgressObservation(value, firewall) {
   requireRecord(
     value,
     [
-      "control_url",
+      "control_urls",
       "post_boundary_control",
       "preflight_observed",
       "reachable_control",
@@ -492,33 +640,16 @@ export function validateBlockedEgressObservation(value, firewall) {
     ],
     "candidate egress control observation",
   )
-  let control
-  requireValue(typeof value.control_url === "string", "Candidate egress control URL is invalid")
-  try {
-    control = new URL(value.control_url)
-  } catch {
-    throw new Error("Candidate egress control URL is invalid")
-  }
-  const port = Number(control.port)
-  validateReachableEgressControl(value.reachable_control, value.control_url)
-  validateHarnessEgressControl(value.post_boundary_control, value.control_url)
+  const controls = validateEgressControlUrls(value.control_urls, profile.control_address)
+  validateReachableEgressControl(value.reachable_control, controls.rendererBefore)
+  validateHarnessEgressControl(value.post_boundary_control, controls.harnessAfter)
   const expectedSequence = value.preflight_observed
-    ? ["harness-get", "renderer-preflight", "renderer-get"]
-    : ["harness-get", "renderer-get"]
-  const expectedFinalSequence = [...expectedSequence, "harness-get"]
+    ? ["harness-before", "renderer-preflight", "renderer-before"]
+    : ["harness-before", "renderer-before"]
+  const expectedFinalSequence = [...expectedSequence, "harness-after"]
   requireValue(
     value.schema === "bharatcode-candidate-egress-control-v1" &&
       value.renderer_origin === "oc://renderer" &&
-      control.protocol === "http:" &&
-      control.hostname === profile.control_address &&
-      control.pathname === ACCEPTANCE_EGRESS_PATH &&
-      control.username === "" &&
-      control.password === "" &&
-      control.search === "" &&
-      control.hash === "" &&
-      Number.isSafeInteger(port) &&
-      port >= 1 &&
-      port <= 65535 &&
       typeof value.preflight_observed === "boolean" &&
       sameStringSequence(value.request_sequence_before, expectedSequence) &&
       sameStringSequence(value.request_sequence_blocked, expectedSequence) &&
@@ -578,7 +709,7 @@ export function routeEgressControlRequest(request, controlUrl) {
         ...(origin === "oc://renderer"
           ? {
               "access-control-allow-origin": "oc://renderer",
-              "access-control-expose-headers": "Cache-Control, X-BharatCode-Egress-Control",
+              "access-control-expose-headers": "Cache-Control, Connection, X-BharatCode-Egress-Control",
             }
           : {}),
         "cache-control": "no-store",
@@ -589,10 +720,44 @@ export function routeEgressControlRequest(request, controlUrl) {
   }
 }
 
+export function candidateAddressSpaceOverrideArguments(phase, controlUrl) {
+  requireValue(["current-beta", "candidate", "rollback"].includes(phase), "Packaged Desktop launch phase is invalid")
+  if (phase !== "candidate") {
+    requireValue(controlUrl === undefined, "Chromium address-space override is candidate-only")
+    return []
+  }
+  requireValue(typeof controlUrl === "string", "Candidate Chromium address-space control is missing")
+  let control
+  try {
+    control = new URL(controlUrl)
+  } catch {
+    throw new Error("Candidate Chromium address-space control is invalid")
+  }
+  const port = Number(control.port)
+  requireValue(
+    control.protocol === "http:" &&
+      isPrivateIpv4(control.hostname) &&
+      Number.isSafeInteger(port) &&
+      port >= 1 &&
+      port <= 65535 &&
+      control.username === "" &&
+      control.password === "" &&
+      new RegExp(
+        `^${ACCEPTANCE_EGRESS_PATH}/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`,
+        "u",
+      ).test(control.pathname) &&
+      control.search === "" &&
+      control.hash === "" &&
+      control.href === controlUrl,
+    "Candidate Chromium address-space control is invalid",
+  )
+  return [`--ip-address-space-overrides=${control.hostname}:${port}=public`]
+}
+
 function validateReachableEgressControl(value, controlUrl) {
   requireRecord(
     value,
-    ["body", "cache_control", "control_header", "redirected", "status", "url"],
+    ["body", "cache_control", "connection", "control_header", "redirected", "status", "url"],
     "reachable candidate egress control",
   )
   requireValue(
@@ -601,6 +766,7 @@ function validateReachableEgressControl(value, controlUrl) {
       value.url === controlUrl &&
       value.redirected === false &&
       value.cache_control === "no-store" &&
+      value.connection === "close" &&
       value.control_header === "active",
     "Candidate renderer did not reach the exact pre-boundary egress control",
   )
@@ -807,10 +973,10 @@ async function executeProductionAcceptance(input) {
         profile,
         "candidate",
         active,
-        { keepAlive: true, remoteDebuggingPort },
+        { keepAlive: true, remoteDebuggingPort, localNetworkControlUrl: egress.urls.rendererBefore },
       )
       const share = await observeShareSurface(profile, candidateStart, remoteDebuggingPort, audit, firewall, egress)
-      await finishDesktop(candidateStart, active, profile, "candidate")
+      await finishDesktop(candidateStart, active, profile, "candidate", share.controls)
       requireValue(audit.requests === 0, "ShareNext network audit changed before candidate cleanup completed")
       requireValue(
         await removeCandidateNetworkBoundary(candidateInstalled.application.executable, profile.env),
@@ -972,6 +1138,7 @@ async function startDesktop(application, installDirectory, profile, phase, activ
   const netLog = join(profile.netLogs, `${phase}.json`)
   const logRoot = join(profile.userData, "logs")
   const checkpoints = await textFileCheckpoints(logRoot)
+  const addressSpaceOverrideArguments = candidateAddressSpaceOverrideArguments(phase, options.localNetworkControlUrl)
   const child = Bun.spawn(
     [
       application.executable,
@@ -981,6 +1148,8 @@ async function startDesktop(application, installDirectory, profile, phase, activ
       ...(options.remoteDebuggingPort
         ? ["--remote-debugging-address=127.0.0.1", `--remote-debugging-port=${options.remoteDebuggingPort}`]
         : []),
+      ...addressSpaceOverrideArguments,
+      ...(phase === "candidate" ? ["--no-proxy-server"] : []),
     ],
     {
       env: profile.env,
@@ -997,7 +1166,12 @@ async function startDesktop(application, installDirectory, profile, phase, activ
     rememberOwnedProcesses(active, child.pid, records)
     const processes = validatePackagedReadinessObservation(
       { log_delta: logDelta, processes: records },
-      { rootPid: child.pid, executable: application.executable },
+      {
+        rootPid: child.pid,
+        executable: application.executable,
+        addressSpaceOverrideArguments,
+        requireNetworkService: phase === "candidate",
+      },
     )
     processes.pids.forEach((pid) => active.get(child.pid).add(pid))
     if (options.keepAlive) {
@@ -1005,6 +1179,7 @@ async function startDesktop(application, installDirectory, profile, phase, activ
         ready: true,
         executable: application.executable,
         processes,
+        addressSpaceOverrideArguments,
         sidecarOrigin: processes.sidecarOrigin,
         netLog,
       }
@@ -1024,12 +1199,14 @@ async function startDesktop(application, installDirectory, profile, phase, activ
   }
 }
 
-async function finishDesktop(start, active, profile, phase) {
+async function finishDesktop(start, active, profile, phase, egressControls) {
   requireValue(
     await terminateTrackedProcess(start.processes.rootPid, active, profile.env, true),
     `${phase} process cleanup failed`,
   )
-  validatePackagedNetLogBytes(await readStableFile(start.netLog, `${phase} complete Desktop network observation`))
+  const bytes = await readStableFile(start.netLog, `${phase} complete Desktop network observation`)
+  validatePackagedNetLogBytes(bytes)
+  if (egressControls) validateCandidateEgressNetLogBytes(bytes, egressControls)
   return true
 }
 
@@ -1356,10 +1533,14 @@ async function observeShareSurface(profile, desktop, remoteDebuggingPort, audit,
   const before = validateOwnedProcessTree(beforeRecords, {
     rootPid: desktop.processes.rootPid,
     executable: desktop.executable,
+    addressSpaceOverrideArguments: desktop.addressSpaceOverrideArguments,
+    requireNetworkService: true,
   })
   requireValue(
-    before.utilityPid === desktop.processes.utilityPid && samePidSet(before.pids, desktop.processes.pids),
-    "Candidate Electron utility sidecar changed before ShareNext probe",
+    before.utilityPid === desktop.processes.utilityPid &&
+      before.networkServicePid === desktop.processes.networkServicePid &&
+      samePidSet(before.pids, desktop.processes.pids),
+    "Candidate Electron utility or NetworkService changed before ShareNext probe",
   )
   const sidecarPort = Number(new URL(desktop.sidecarOrigin).port)
   const beforeListeners = await observeWindowsLoopbackListeners(profile.env, [remoteDebuggingPort, sidecarPort])
@@ -1367,10 +1548,10 @@ async function observeShareSurface(profile, desktop, remoteDebuggingPort, audit,
   validateLoopbackListenerOwner(beforeListeners, { port: sidecarPort, pid: before.utilityPid })
   const target = selectRendererCdpTarget(await waitForRendererTargets(remoteDebuggingPort), remoteDebuggingPort)
   const reachableControl = parseRendererShareEvaluation(
-    await evaluateRendererEgressControl(target.webSocketDebuggerUrl, egress.url),
+    await evaluateRendererEgressControl(target.webSocketDebuggerUrl, egress.urls.rendererBefore),
     6,
   )
-  validateReachableEgressControl(reachableControl, egress.url)
+  validateReachableEgressControl(reachableControl, egress.urls.rendererBefore)
   egress.markRendererReachable()
   await installCandidateNetworkBoundary(desktop.executable, profile.env)
   const unauthenticatedControl = await observeUnauthenticatedSidecarControl(
@@ -1382,22 +1563,28 @@ async function observeShareSurface(profile, desktop, remoteDebuggingPort, audit,
       target.webSocketDebuggerUrl,
       desktop.sidecarOrigin,
       profile.projectDirectory,
-      egress.url,
+      egress.urls.rendererBlocked,
     ),
     7,
   )
   const requestSequenceBlocked = egress.requestSequence
   const requestsBlocked = egress.requests
-  const postBoundaryControl = await observeHarnessEgressControl(egress)
-  validateHarnessEgressControl(postBoundaryControl, egress.url)
-  egress.markPostBoundaryReachable()
   await delay(2_000)
+  egress.markRendererBlocked()
+  const postBoundaryControl = await observeHarnessEgressControl(egress)
+  validateHarnessEgressControl(postBoundaryControl, egress.urls.harnessAfter)
+  egress.markPostBoundaryReachable()
   const afterRecords = await observeWindowsProcesses(profile.env)
   const after = validateOwnedProcessTree(afterRecords, {
     rootPid: desktop.processes.rootPid,
     executable: desktop.executable,
+    addressSpaceOverrideArguments: desktop.addressSpaceOverrideArguments,
+    requireNetworkService: true,
   })
-  requireValue(after.utilityPid === before.utilityPid, "Candidate Electron utility sidecar died or was replaced")
+  requireValue(
+    after.utilityPid === before.utilityPid && after.networkServicePid === before.networkServicePid,
+    "Candidate Electron utility or NetworkService died or was replaced",
+  )
   const afterListeners = await observeWindowsLoopbackListeners(profile.env, [remoteDebuggingPort, sidecarPort])
   validateLoopbackListenerOwner(afterListeners, { port: remoteDebuggingPort, pid: after.rootPid })
   validateLoopbackListenerOwner(afterListeners, { port: sidecarPort, pid: after.utilityPid })
@@ -1405,7 +1592,7 @@ async function observeShareSurface(profile, desktop, remoteDebuggingPort, audit,
     {
       schema: "bharatcode-candidate-egress-control-v1",
       renderer_origin: evaluation.renderer_origin,
-      control_url: egress.url,
+      control_urls: egress.urls,
       reachable_control: reachableControl,
       post_boundary_control: postBoundaryControl,
       request_failed: evaluation.egress_request_failed,
@@ -1436,6 +1623,7 @@ async function observeShareSurface(profile, desktop, remoteDebuggingPort, audit,
   return {
     sharenextAbsent: share.sharenextAbsent,
     shareNetworkAttemptAbsent: share.shareNetworkAttemptAbsent && blockedEgress,
+    controls: egress.urls,
   }
 }
 
@@ -1479,14 +1667,33 @@ function startLocalEgressControl(controlAddress) {
   requireValue(isPrivateIpv4(controlAddress), "Firewall egress control address is invalid")
   const requestSequence = []
   let requestSequenceBefore = []
-  let controlUrl
+  let controls
+  const seen = new Set()
   const server = Bun.serve({
     hostname: controlAddress,
     port: 0,
     fetch(request) {
       try {
-        const routed = routeEgressControlRequest(request, controlUrl)
-        requestSequence.push(routed.kind)
+        const role = Object.entries(controls).find(([, url]) => request.url === url)?.[0]
+        requireValue(role, "Firewall egress control URL changed")
+        const routed = routeEgressControlRequest(request, controls[role])
+        const kind =
+          routed.kind === "renderer-preflight"
+            ? role === "rendererBefore"
+              ? "renderer-preflight"
+              : "invalid"
+            : role === "harnessBefore" && routed.kind === "harness-get"
+              ? "harness-before"
+              : role === "rendererBefore" && routed.kind === "renderer-get"
+                ? "renderer-before"
+                : role === "rendererBlocked" && routed.kind === "renderer-get"
+                  ? "renderer-blocked"
+                  : role === "harnessAfter" && routed.kind === "harness-get"
+                    ? "harness-after"
+                    : "invalid"
+        requireValue(kind !== "invalid" && !seen.has(kind), "Firewall egress control request was reused")
+        seen.add(kind)
+        requestSequence.push(kind)
         return routed.response
       } catch {
         requestSequence.push("invalid")
@@ -1494,9 +1701,9 @@ function startLocalEgressControl(controlAddress) {
       }
     },
   })
-  controlUrl = `http://${controlAddress}:${server.port}${ACCEPTANCE_EGRESS_PATH}`
+  controls = createEgressControlUrls(`http://${controlAddress}:${server.port}`)
   return {
-    url: controlUrl,
+    urls: controls,
     get requestsBefore() {
       return requestSequenceBefore.length
     },
@@ -1514,24 +1721,31 @@ function startLocalEgressControl(controlAddress) {
     },
     markReachable() {
       requireValue(
-        sameStringSequence(requestSequence, ["harness-get"]),
+        sameStringSequence(requestSequence, ["harness-before"]),
         "Firewall egress control reachability request was not unique",
       )
       return true
     },
     markRendererReachable() {
       requireValue(
-        sameStringSequence(requestSequence, ["harness-get", "renderer-get"]) ||
-          sameStringSequence(requestSequence, ["harness-get", "renderer-preflight", "renderer-get"]),
+        sameStringSequence(requestSequence, ["harness-before", "renderer-before"]) ||
+          sameStringSequence(requestSequence, ["harness-before", "renderer-preflight", "renderer-before"]),
         "Candidate renderer did not uniquely reach the firewall egress control",
       )
       requestSequenceBefore = [...requestSequence]
       return true
     },
+    markRendererBlocked() {
+      requireValue(
+        requestSequenceBefore.length > 0 && sameStringSequence(requestSequence, requestSequenceBefore),
+        "Blocked candidate request reached the firewall egress control",
+      )
+      return true
+    },
     markPostBoundaryReachable() {
       requireValue(
         requestSequenceBefore.length > 0 &&
-          sameStringSequence(requestSequence, [...requestSequenceBefore, "harness-get"]),
+          sameStringSequence(requestSequence, [...requestSequenceBefore, "harness-after"]),
         "Post-boundary harness control sequence is invalid",
       )
       return true
@@ -1544,14 +1758,14 @@ function startLocalEgressControl(controlAddress) {
 }
 
 async function proveEgressControlReachability(egress) {
-  const observation = await observeHarnessEgressControl(egress)
-  validateHarnessEgressControl(observation, egress.url)
+  const observation = await observeHarnessEgressControl(egress, egress.urls.harnessBefore)
+  validateHarnessEgressControl(observation, egress.urls.harnessBefore)
   egress.markReachable()
   return observation
 }
 
-async function observeHarnessEgressControl(egress) {
-  const response = await fetch(egress.url, { redirect: "error", signal: AbortSignal.timeout(5_000) })
+async function observeHarnessEgressControl(egress, url = egress.urls.harnessAfter) {
+  const response = await fetch(url, { cache: "no-store", redirect: "error", signal: AbortSignal.timeout(5_000) })
   return {
     status: response.status,
     body: await response.text(),
@@ -1652,6 +1866,7 @@ async function evaluateRendererEgressControl(webSocketDebuggerUrl, egressControl
         url: response.url,
         redirected: response.redirected,
         cache_control: response.headers.get("cache-control"),
+        connection: response.headers.get("connection"),
         control_header: response.headers.get("x-bharatcode-egress-control"),
       }
     })()
@@ -2354,6 +2569,28 @@ function sameStringSequence(left, right) {
     left.length === right.length &&
     left.every((value, index) => typeof value === "string" && value === right[index])
   )
+}
+
+function networkSourceDependencies(value) {
+  if (!value || typeof value !== "object") return []
+  if (Array.isArray(value)) return value.flatMap(networkSourceDependencies)
+  return Object.entries(value).flatMap(([key, item]) => {
+    if (
+      (key === "source_dependency" || key === "source") &&
+      item &&
+      typeof item === "object" &&
+      Number.isSafeInteger(item.id)
+    ) {
+      return [item.id, ...networkSourceDependencies(item)]
+    }
+    return networkSourceDependencies(item)
+  })
+}
+
+function networkStringValues(value) {
+  if (typeof value === "string") return [value]
+  if (!value || typeof value !== "object") return []
+  return Object.values(value).flatMap(networkStringValues)
 }
 
 function sameFile(left, right) {
