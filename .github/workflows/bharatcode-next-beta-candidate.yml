@@ -208,6 +208,8 @@ jobs:
             cp -R dist/* "$GITHUB_WORKSPACE/cli-dist/"
           )
           bun --eval '
+            import { lstatSync, realpathSync } from "node:fs"
+            import { resolve, sep } from "node:path"
             import { PLATFORM_PACKAGE_NAMES } from "./packages/opencode/script/lean-cohort.mjs"
             for (const name of PLATFORM_PACKAGE_NAMES) {
               const pkg = await Bun.file(`cli-dist/${name}/package.json`).json()
@@ -220,11 +222,49 @@ jobs:
               if (packed.exitCode !== 0) process.exit(packed.exitCode)
             }
             const optionalDependencies = Object.fromEntries(PLATFORM_PACKAGE_NAMES.map((name) => [name, process.env.CLI_VERSION]))
-            await Bun.$`mkdir -p cli-dist/bharatcode/bin`
-            await Bun.write("cli-dist/bharatcode/package.json", JSON.stringify({ name: "bharatcode", version: process.env.CLI_VERSION, bin: { bharatcode: "bin/bharatcode.mjs" }, optionalDependencies, os: ["darwin", "linux", "win32"], cpu: ["arm64", "x64"] }, null, 2))
-            await Bun.write("cli-dist/bharatcode/bin/bharatcode.mjs", await Bun.file("packages/opencode/bin/bharatcode.mjs").arrayBuffer())
+            const metaRoot = resolve("cli-dist/bharatcode")
+            await Bun.$`mkdir -p ${metaRoot}/bin ${metaRoot}/script`
+            if (realpathSync(metaRoot) !== metaRoot || lstatSync(metaRoot).isSymbolicLink()) throw new Error("CLI meta package root drift")
+            const sources = [
+              { source: resolve("packages/opencode/bin/bharatcode.mjs"), target: resolve(metaRoot, "bin/bharatcode.mjs"), packagePath: "package/bin/bharatcode.mjs" },
+              { source: resolve("packages/opencode/script/distribution.mjs"), target: resolve(metaRoot, "script/distribution.mjs"), packagePath: "package/script/distribution.mjs" },
+            ]
+            const digest = (bytes) => new Bun.CryptoHasher("sha256").update(bytes).digest("hex")
+            for (const binding of sources) {
+              if (realpathSync(binding.source) !== binding.source || lstatSync(binding.source).isSymbolicLink()) throw new Error("CLI meta source path drift")
+              if (!binding.target.startsWith(`${metaRoot}${sep}`)) throw new Error("CLI meta target path drift")
+              const sourceBytes = new Uint8Array(await Bun.file(binding.source).arrayBuffer())
+              await Bun.write(binding.target, sourceBytes)
+              if (realpathSync(binding.target) !== binding.target || lstatSync(binding.target).isSymbolicLink()) throw new Error("CLI meta staged path drift")
+              const targetBytes = new Uint8Array(await Bun.file(binding.target).arrayBuffer())
+              if (sourceBytes.length !== targetBytes.length || digest(sourceBytes) !== digest(targetBytes)) throw new Error("CLI meta staged bytes drift")
+            }
+            const metaManifest = { name: "bharatcode", version: process.env.CLI_VERSION, type: "module", bin: { bharatcode: "bin/bharatcode.mjs" }, files: ["bin", "script/distribution.mjs"], optionalDependencies, os: ["darwin", "linux", "win32"], cpu: ["arm64", "x64"] }
+            const metaManifestPath = resolve(metaRoot, "package.json")
+            if (!metaManifestPath.startsWith(`${metaRoot}${sep}`)) throw new Error("CLI meta manifest path drift")
+            await Bun.write(metaManifestPath, JSON.stringify(metaManifest, null, 2))
+            if (realpathSync(metaManifestPath) !== metaManifestPath || lstatSync(metaManifestPath).isSymbolicLink()) throw new Error("CLI meta manifest path drift")
+            const writtenManifest = await Bun.file(metaManifestPath).json()
+            if (JSON.stringify(Object.keys(writtenManifest).sort()) !== JSON.stringify(["bin", "cpu", "files", "name", "optionalDependencies", "os", "type", "version"])) throw new Error("CLI meta package schema drift")
+            if (JSON.stringify(writtenManifest) !== JSON.stringify(metaManifest)) throw new Error("CLI meta package content drift")
             const packed = Bun.spawnSync(["bun", "pm", "pack", "--destination", "../../out/cli"], { cwd: "cli-dist/bharatcode", stdout: "inherit", stderr: "inherit" })
             if (packed.exitCode !== 0) process.exit(packed.exitCode)
+            const metaTarball = resolve("out/cli", `bharatcode-${process.env.CLI_VERSION}.tgz`)
+            const listed = Bun.spawnSync(["tar", "-tzf", metaTarball], { stdout: "pipe", stderr: "inherit" })
+            if (listed.exitCode !== 0) process.exit(listed.exitCode)
+            const entries = listed.stdout.toString().trim().split("\n").filter(Boolean).sort()
+            const expectedEntries = ["package/bin/bharatcode.mjs", "package/package.json", "package/script/distribution.mjs"]
+            if (JSON.stringify(entries) !== JSON.stringify(expectedEntries)) throw new Error("CLI meta tarball closure drift")
+            for (const binding of sources) {
+              const extracted = Bun.spawnSync(["tar", "-xOf", metaTarball, binding.packagePath], { stdout: "pipe", stderr: "inherit" })
+              if (extracted.exitCode !== 0) process.exit(extracted.exitCode)
+              const sourceBytes = new Uint8Array(await Bun.file(binding.source).arrayBuffer())
+              if (sourceBytes.length !== extracted.stdout.length || digest(sourceBytes) !== digest(extracted.stdout)) throw new Error("CLI meta tarball bytes drift")
+            }
+            const extractedManifest = Bun.spawnSync(["tar", "-xOf", metaTarball, "package/package.json"], { stdout: "pipe", stderr: "inherit" })
+            if (extractedManifest.exitCode !== 0) process.exit(extractedManifest.exitCode)
+            const manifestBytes = new Uint8Array(await Bun.file(metaManifestPath).arrayBuffer())
+            if (manifestBytes.length !== extractedManifest.stdout.length || digest(manifestBytes) !== digest(extractedManifest.stdout)) throw new Error("CLI meta tarball manifest drift")
           '
           rm -rf packages/opencode/dist
           (

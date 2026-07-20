@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test"
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { chmodSync, cpSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, resolve } from "node:path"
 
-import { REQUIRED_COHORT_KEYS } from "../../script/lean-cohort.mjs"
+import { hostDistributionTarget } from "../../script/distribution.mjs"
+import { PLATFORM_PACKAGE_NAMES, REQUIRED_COHORT_KEYS } from "../../script/lean-cohort.mjs"
 
 const workflowPath = resolve(import.meta.dir, "../../../../.github/workflows/bharatcode-next-beta-candidate.yml")
 const checkout = "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0"
@@ -320,6 +321,146 @@ function bunEvalScripts(run: string) {
   return [...run.matchAll(/bun --eval '\n([\s\S]*?)\n\s*'/gu)].map((match) => match[1])
 }
 
+async function runWorkflowMetaPackageFixture(script: string) {
+  const base = process.env.TMPDIR ?? tmpdir()
+  const root = mkdtempSync(resolve(base, "lean-workflow-meta-"))
+  const version = "0.0.0-run3-fixture.1"
+  const violations: string[] = []
+  try {
+    for (const directory of ["packages/opencode/bin", "packages/opencode/script", "cli-dist", "out/cli"]) {
+      mkdirSync(resolve(root, directory), { recursive: true })
+    }
+    for (const path of ["bin/bharatcode.mjs", "script/distribution.mjs", "script/lean-cohort.mjs"]) {
+      cpSync(resolve(import.meta.dir, `../../${path}`), resolve(root, `packages/opencode/${path}`))
+    }
+
+    for (const name of PLATFORM_PACKAGE_NAMES) {
+      const os = name.includes("windows") ? "win32" : name.includes("darwin") ? "darwin" : "linux"
+      const arch = name.includes("arm64") ? "arm64" : "x64"
+      const packageRoot = resolve(root, "cli-dist", name)
+      const binary = resolve(packageRoot, "bin", `bharatcode${os === "win32" ? ".exe" : ""}`)
+      mkdirSync(dirname(binary), { recursive: true })
+      writeFileSync(
+        resolve(packageRoot, "package.json"),
+        JSON.stringify({ name, version, preferUnplugged: true, os: [os], cpu: [arch], files: ["bin"] }),
+      )
+      writeFileSync(binary, minimalNativeBytes(os, arch))
+      chmodSync(binary, 0o755)
+    }
+
+    const host = hostDistributionTarget()
+    if (process.platform !== "win32") {
+      const hostPackage = host.candidates[0]
+      const hostBinary = resolve(root, "cli-dist", hostPackage, "bin", host.binary)
+      const compile = Bun.spawnSync(["cc", "-x", "c", "-o", hostBinary, "-"], {
+        stdin: Buffer.from(`#include <stdio.h>\nint main(void) { puts("${version}"); return 0; }\n`),
+        stdout: "pipe",
+        stderr: "pipe",
+      })
+      if (compile.exitCode !== 0) throw new Error(`host fixture compilation failed: ${compile.stderr}`)
+      chmodSync(hostBinary, 0o755)
+    }
+
+    const assembly = Bun.spawnSync(["bun", "--eval", script], {
+      cwd: root,
+      env: { ...Bun.env, CLI_VERSION: version },
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    if (assembly.exitCode !== 0) {
+      violations.push("workflow meta assembly")
+      return violations
+    }
+
+    const metaName = `bharatcode-${version}.tgz`
+    const metaPath = resolve(root, "out/cli", metaName)
+    if (!readdirSync(resolve(root, "out/cli")).includes(metaName)) {
+      violations.push("meta tarball missing")
+      return violations
+    }
+    const tarList = Bun.spawnSync(["tar", "-tzf", metaPath], { stdout: "pipe", stderr: "pipe" })
+    const entries = tarList.stdout.toString().trim().split("\n").filter(Boolean).sort()
+    const expectedEntries = ["package/bin/bharatcode.mjs", "package/package.json", "package/script/distribution.mjs"]
+    if (tarList.exitCode !== 0 || JSON.stringify(entries) !== JSON.stringify(expectedEntries)) {
+      violations.push("closed meta tarball files")
+    }
+
+    const extract = (path: string) => Bun.spawnSync(["tar", "-xOf", metaPath, path], { stdout: "pipe", stderr: "pipe" })
+    const launcher = extract("package/bin/bharatcode.mjs")
+    const distribution = extract("package/script/distribution.mjs")
+    const manifest = extract("package/package.json")
+    const sourceLauncher = new Uint8Array(
+      await Bun.file(resolve(root, "packages/opencode/bin/bharatcode.mjs")).arrayBuffer(),
+    )
+    const sourceDistribution = new Uint8Array(
+      await Bun.file(resolve(root, "packages/opencode/script/distribution.mjs")).arrayBuffer(),
+    )
+    if (launcher.exitCode !== 0 || sha256(launcher.stdout) !== sha256(sourceLauncher)) {
+      violations.push("launcher source bytes")
+    }
+    if (distribution.exitCode !== 0 || sha256(distribution.stdout) !== sha256(sourceDistribution)) {
+      violations.push("distribution source bytes")
+    }
+    if (manifest.exitCode !== 0) {
+      violations.push("meta manifest missing")
+    } else {
+      const parsed = JSON.parse(manifest.stdout.toString())
+      const expected = {
+        name: "bharatcode",
+        version,
+        type: "module",
+        bin: { bharatcode: "bin/bharatcode.mjs" },
+        files: ["bin", "script/distribution.mjs"],
+        optionalDependencies: Object.fromEntries(PLATFORM_PACKAGE_NAMES.map((name) => [name, version])),
+        os: ["darwin", "linux", "win32"],
+        cpu: ["arm64", "x64"],
+      }
+      if (canonicalJson(parsed) !== canonicalJson(expected)) violations.push("closed meta manifest")
+    }
+
+    if (process.platform !== "win32") {
+      const hostTarball = resolve(root, "out/cli", `${host.candidates[0]}-${version}.tgz`)
+      const prefix = resolve(root, "global")
+      const install = Bun.spawnSync(
+        ["npm", "install", "--global", "--prefix", prefix, "--ignore-scripts", "--offline", hostTarball, metaPath],
+        { cwd: root, stdout: "pipe", stderr: "pipe" },
+      )
+      if (install.exitCode !== 0) {
+        violations.push("offline host install")
+      } else {
+        const consumer = resolve(root, "consumer")
+        mkdirSync(consumer)
+        const env = {
+          ...Bun.env,
+          PATH: `${resolve(prefix, "bin")}:${Bun.env.PATH ?? ""}`,
+          npm_config_prefix: prefix,
+        }
+        const direct = Bun.spawnSync([resolve(prefix, "bin", "bharatcode"), "--version"], {
+          cwd: consumer,
+          env,
+          stdout: "pipe",
+          stderr: "pipe",
+        })
+        const npx = Bun.spawnSync(["npx", "--no-install", "bharatcode", "--version"], {
+          cwd: consumer,
+          env,
+          stdout: "pipe",
+          stderr: "pipe",
+        })
+        if (direct.exitCode !== 0 || direct.stdout.toString().trim() !== version) {
+          violations.push("global bharatcode execution")
+        }
+        if (npx.exitCode !== 0 || npx.stdout.toString().trim() !== version) {
+          violations.push("npx --no-install execution")
+        }
+      }
+    }
+    return violations
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+}
+
 function minimalNativeBytes(os: string, arch: string) {
   const bytes = Buffer.alloc(os === "win32" ? 128 : 64)
   if (os === "linux") {
@@ -624,6 +765,29 @@ function nativeBuildViolations(value: string) {
     ...(steps[preflight]?.if === undefined ? [] : ["disabled preflight"]),
     ...(preflightRun.startsWith("set -euo pipefail\nbun --eval '\n") ? [] : ["preflight enclosure"]),
   ]
+}
+
+function metaPackageBuildViolations(run: string) {
+  const required = [
+    'import { lstatSync, realpathSync } from "node:fs"',
+    'import { resolve, sep } from "node:path"',
+    "await Bun.$`mkdir -p ${metaRoot}/bin ${metaRoot}/script`",
+    "realpathSync(metaRoot) !== metaRoot || lstatSync(metaRoot).isSymbolicLink()",
+    '{ source: resolve("packages/opencode/bin/bharatcode.mjs"), target: resolve(metaRoot, "bin/bharatcode.mjs"), packagePath: "package/bin/bharatcode.mjs" }',
+    '{ source: resolve("packages/opencode/script/distribution.mjs"), target: resolve(metaRoot, "script/distribution.mjs"), packagePath: "package/script/distribution.mjs" }',
+    "realpathSync(binding.source) !== binding.source || lstatSync(binding.source).isSymbolicLink()",
+    "!binding.target.startsWith(`${metaRoot}${sep}`)",
+    "realpathSync(binding.target) !== binding.target || lstatSync(binding.target).isSymbolicLink()",
+    "sourceBytes.length !== targetBytes.length || digest(sourceBytes) !== digest(targetBytes)",
+    'type: "module"',
+    'files: ["bin", "script/distribution.mjs"]',
+    'JSON.stringify(Object.keys(writtenManifest).sort()) !== JSON.stringify(["bin", "cpu", "files", "name", "optionalDependencies", "os", "type", "version"])',
+    "JSON.stringify(writtenManifest) !== JSON.stringify(metaManifest)",
+    'const expectedEntries = ["package/bin/bharatcode.mjs", "package/package.json", "package/script/distribution.mjs"]',
+    "sourceBytes.length !== extracted.stdout.length || digest(sourceBytes) !== digest(extracted.stdout)",
+    "manifestBytes.length !== extractedManifest.stdout.length || digest(manifestBytes) !== digest(extractedManifest.stdout)",
+  ]
+  return required.filter((fragment) => !run.includes(fragment))
 }
 
 function runOnePackagingViolations(value: string) {
@@ -955,6 +1119,30 @@ describe("lean next-beta candidate workflow", () => {
     expect(preflight).not.toContain("node_modules/.bun")
     expect(script).toBeDefined()
     expect(nativePreflightExecutionViolations(script)).toEqual([])
+  })
+
+  test("packs the complete meta launcher import graph and executes it through global and npx acceptance", async () => {
+    const value = await source()
+    const build = runStep(value, "build-cli", "Build and pack the exact CLI cohort and Desktop WSL runtime")
+    const assembly = bunEvalScripts(build)[0]
+    expect(assembly).toBeDefined()
+    expect(metaPackageBuildViolations(assembly)).toEqual([])
+    expect(await runWorkflowMetaPackageFixture(assembly)).toEqual([])
+    const missingDistribution = assembly.replace(
+      '    { source: resolve("packages/opencode/script/distribution.mjs"), target: resolve(metaRoot, "script/distribution.mjs"), packagePath: "package/script/distribution.mjs" },\n',
+      "",
+    )
+    expect(missingDistribution).not.toBe(assembly)
+    expect(await runWorkflowMetaPackageFixture(missingDistribution)).toContain("workflow meta assembly")
+    expect(metaPackageBuildViolations(assembly.replace('type: "module", ', ""))).not.toEqual([])
+    expect(
+      metaPackageBuildViolations(
+        assembly.replace(
+          "sourceBytes.length !== targetBytes.length || digest(sourceBytes) !== digest(targetBytes)",
+          "false",
+        ),
+      ),
+    ).not.toEqual([])
   })
 
   test("binds Run-1 Linux and macOS package evidence to the real AppRun target and protected signer identity", async () => {
