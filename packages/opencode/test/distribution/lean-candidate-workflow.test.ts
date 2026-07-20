@@ -25,7 +25,24 @@ const reviewedSecurityStepSha256 = {
   windowsPreflight: "89f6c8b0d43faf38a3cadc4e31505bc820be2a90ffd19060c22153aa45d460e2",
   windowsAuthenticode: "20c44131417eff06359c17cfdcd81fa45a4f4bdd73cea224ce88e0ac2ce08db1",
 } as const
-const acceptedWslSha = "a30c6923f2f532258de58d84b65445198be1b351"
+const previousAcceptedWslSha = "a30c6923f2f532258de58d84b65445198be1b351"
+const acceptedWslSha = "f223e2c6b53f567667491f6f1e5667c42fb73fa0"
+const frozenWslPaths = [
+  "packages/desktop/electron-builder.config.ts",
+  "packages/desktop/scripts/stage-wsl-runtime.ts",
+  "packages/desktop/scripts/wsl-windows-acceptance.mjs",
+  "packages/desktop/src/main/index.ts",
+  "packages/desktop/src/main/ipc.ts",
+  "packages/desktop/src/main/server.ts",
+  "packages/desktop/src/main/windows.ts",
+  "packages/desktop/src/main/wsl-*",
+  "packages/desktop/src/preload/index.ts",
+  "packages/desktop/src/preload/types.ts",
+  "packages/desktop/src/renderer/index.tsx",
+  "packages/opencode/script/build.ts",
+  "packages/opencode/src/cli/cmd/serve.ts",
+  "packages/opencode/src/server/wsl-desktop-transport.ts",
+] as const
 const currentBetaFixture = "packages/desktop/test/fixtures/current-beta-windows-x64.json"
 const canonicalAppRunGzip =
   "H4sIAAAAAAAAA61W72/aSBD9vn/FdOOrklOMIfclR+RTncMhlpIcAlfiFEXWYg94hVm7u0tCSvnfq/WPFIfeNZX6BezlzXtvZ3ZnOHrnzLhwZkylRKEGGwnhc7iHd2B/BmoN/MuPQwoPcAE6RUEAUDwSgBK7IXNOSHgdTFxqdSk5glTrou84SrN4mT+inGf5UyfOV86nNSrNc6GcP3p/ds975w5hcqHcY2p9oCfk7uPtpT+O/rmKvPHQsB3R2kfpwhuNBsG4ZeMIrrhIzBt4RTHgsgOBBq7KlYRLjHUun0GnTEOcC824UAY5XotOGR6mXAFTar1CE8Q0aLOiYskLDRIVT1ABF+Z7TwZyCQzUevaiUdEF81Y8VyDXoglnwkQHK7bA03IDDWG5ZJCarxAyvsTsGVKmgGUSWfJc5rnePgEomE5dah0nXAq2QqDWsYFlXCzBngO1tqYYO3pCTygBeEp5hnB/D9QykRTeuUApvH9vqov1qmP1KDw8XECSE4Baw9qar9+c33cEIMkFEoDKhVtzlaXHTZFLDSMvvHapta0Qu/7Lk7NW0lEzLvrW1oB2tAmZDobRwAu9aBCMJy7tOCplEp1+FVE+L0S+wmohy2OWfQfSt7Ytom/8N4PoJrgce+N/o1fuKkI+61vbV6D/dPcSS/e16YH4gXvn/+03csOJH4bB3XASTf6+9m9LuteOa9aMz+yzTtdRcYorpvrW9nvBO0rIZXDnNjfHmaVMMh3nCdoz1Oz15QpuvaEf+dMgjLyr0B9Hwd0k9G5uWjdOS1YA07jhGgy0PAFc+euMeXGMhcbE7RFSIY5PyJYAlCpWGwSuC7194gbWbgJg4yfotnEAuMEYqHUZ3JkDDoCZwsOfzE0w7eX+w8Ouws05KT92hKCUudz3Z2+gTLFphJ9RcP3cVj04SxRqmG2XZGDbGjfaqPZ2FM7+chJ8dMQ6y0y/zA5ElglnWb74oUqDs+2VWszyzZsFpm8UmL5RoM4xxmleQ6psmqRzDT2T1mdUIq/TGgbhje9aPfPoT0PXOvsVuW5miEk31xm61CqFaJ1/8+5Pw5Z9+PKl8tj9VaUopWFPutw4NNo/0Pv5yhzoxRkyeaDb68J595V6q2xVGk+bnZy+SKy4UlwsOjBZ8qLgYgH1GOnUV6whrK5PnGK8jBIs6loP/FFV6aajWMdPKY/T8s/DiJ60t1ofoYE/MiPyJ6UPe1arQTWL39peNe8N1xGIXJtBK4zKXOYreOI65WJ/Nl9AiiJGWBtTzYgerwXMcwn+BmO37HlfAZCxA8c0CQAA"
@@ -756,7 +773,15 @@ describe("lean next-beta candidate workflow", () => {
     expect(value).toContain("ref: ${{ inputs.source_sha }}")
     expect(value).toContain("next-beta-${source_sha:0:12}")
     expect(value).toContain(acceptedWslSha)
+    expect(value).not.toContain(previousAcceptedWslSha)
     expect(value).toContain("git merge-base --is-ancestor")
+    const admission = runStep(value, "admit-source", "Admit immutable source and source-derived versions")
+    for (const path of frozenWslPaths) expect(admission).toContain(path)
+    const root = resolve(import.meta.dir, "../../../..")
+    const git = (...args: string[]) => Bun.spawnSync(["git", ...args], { cwd: root, stdout: "pipe", stderr: "pipe" })
+    expect(git("merge-base", "--is-ancestor", previousAcceptedWslSha, acceptedWslSha).exitCode).toBe(0)
+    expect(git("diff", "--quiet", acceptedWslSha, "HEAD", "--", ...frozenWslPaths).exitCode).toBe(0)
+    expect(git("diff", "--quiet", previousAcceptedWslSha, "HEAD", "--", ...frozenWslPaths).exitCode).not.toBe(0)
   })
 
   test("pins every action and Bun while denying publication and overwrite authority", async () => {
