@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { lstat, mkdir, readFile, symlink, truncate, writeFile } from "node:fs/promises"
+import { lstat, mkdir, readFile, readdir, symlink, truncate, writeFile } from "node:fs/promises"
 import path from "node:path"
 
 import {
@@ -144,6 +144,150 @@ describe("migration capture", () => {
     sealed.close()
   })
 
+  test("physically removes every sanitized capability byte from a pinned-beta SQLite snapshot", async () => {
+    await using tmp = await tmpdir()
+    const data = path.join(tmp.path, "legacy-data")
+    await mkdir(data, { recursive: true })
+    const legacyDatabase = path.join(data, "opencode.db")
+    const writer = new Database(legacyDatabase, { create: true })
+    writer.run("PRAGMA journal_mode = WAL")
+    await applyPinnedBetaSchema(writer)
+    const secrets = {
+      accountAccess: sentinel("account-access", 7),
+      accountRefresh: sentinel("account-refresh", 79),
+      controlAccess: sentinel("control-access", 19),
+      controlRefresh: sentinel("control-refresh", 131),
+      shareSecret: sentinel("share-secret", 11),
+      shareUrl: sentinel("share-url", 67),
+      projectCommands: sentinel("project-commands", 23),
+      projectIcon: sentinel("project-icon", 71),
+      projectOverride: sentinel("project-override", 29),
+      sessionShare: sentinel("session-share", 73),
+      sessionPermission: sentinel("session-permission", 31),
+      sessionAgent: sentinel("session-agent", 83),
+      sessionModel: sentinel("session-model", 37),
+      workspaceExtra: sentinel("workspace-extra", 89),
+      permissionData: sentinel("permission-data", 41),
+      eventData: sentinel("event-data", 97),
+      eventOwner: sentinel("event-owner", 43),
+      migrationName: sentinel("migration-name", 101),
+      messageProvider: sentinel("message-provider", 47),
+      partCommand: sentinel("part-command", 103),
+    }
+    writer.run(
+      "INSERT INTO project (id, worktree, name, icon_url, icon_url_override, time_created, time_updated, sandboxes, commands) VALUES (?, ?, ?, ?, ?, 1, 1, '[]', ?)",
+      [
+        "project_1",
+        "/workspace/project",
+        "retained project",
+        secrets.projectIcon,
+        secrets.projectOverride,
+        secrets.projectCommands,
+      ],
+    )
+    writer.run(
+      "INSERT INTO workspace (id, type, name, extra, project_id, time_used) VALUES (?, 'local', 'retained workspace', ?, ?, 1)",
+      ["workspace_1", secrets.workspaceExtra, "project_1"],
+    )
+    writer.run(
+      "INSERT INTO session (id, project_id, workspace_id, slug, directory, title, version, share_url, permission, agent, model, time_created, time_updated, cost, tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write) VALUES (?, ?, ?, 'slug', '/workspace/project', 'retained session', '1', ?, ?, ?, ?, 1, 1, 0, 0, 0, 0, 0, 0)",
+      [
+        "session_1",
+        "project_1",
+        "workspace_1",
+        secrets.sessionShare,
+        secrets.sessionPermission,
+        secrets.sessionAgent,
+        secrets.sessionModel,
+      ],
+    )
+    writer.run("INSERT INTO account VALUES (?, ?, ?, ?, ?, NULL, 1, 1)", [
+      "account_1",
+      "account@example.test",
+      "https://account.invalid",
+      secrets.accountAccess,
+      secrets.accountRefresh,
+    ])
+    writer.run("INSERT INTO account_state VALUES (1, ?, NULL)", ["account_1"])
+    writer.run("INSERT INTO control_account VALUES (?, ?, ?, ?, NULL, 1, 1, 1)", [
+      "control@example.test",
+      "https://control.invalid",
+      secrets.controlAccess,
+      secrets.controlRefresh,
+    ])
+    writer.run("INSERT INTO session_share VALUES (?, 'share_1', ?, ?, 1, 1)", [
+      "session_1",
+      secrets.shareSecret,
+      secrets.shareUrl,
+    ])
+    writer.run("INSERT INTO permission VALUES (?, 1, 1, ?)", ["project_1", secrets.permissionData])
+    writer.run("INSERT INTO event_sequence VALUES ('aggregate_1', 1, ?)", [secrets.eventOwner])
+    writer.run("INSERT INTO event VALUES ('event_1', 'aggregate_1', 1, 'capability', ?)", [secrets.eventData])
+    writer.run("INSERT INTO data_migration VALUES (?, 1)", [secrets.migrationName])
+    writer.run("INSERT INTO message VALUES (?, ?, 1, 1, ?)", [
+      "message_1",
+      "session_1",
+      JSON.stringify({ role: "assistant", text: "retained transcript", provider: secrets.messageProvider }),
+    ])
+    writer.run("INSERT INTO part VALUES (?, ?, ?, 1, 1, ?)", [
+      "part_1",
+      "message_1",
+      "session_1",
+      JSON.stringify({ type: "text", text: "retained answer", command: secrets.partCommand }),
+    ])
+    const sourceMain = await readFile(legacyDatabase)
+    const sourceWal = await readFile(`${legacyDatabase}-wal`)
+
+    const captured = await captureMigrationSource(
+      {
+        id: "pinned-beta-database",
+        label: "Existing BharatCode data · opencode-cli · 00000000",
+        kind: "opencode-cli",
+        roots: { data },
+      },
+      target(tmp.path),
+    )
+    const outputDirectory = path.join(captured.snapshotDirectory, "records", "database")
+    expect(await readdir(outputDirectory)).toEqual(["main.sqlite"])
+    const output = await readFile(path.join(outputDirectory, "main.sqlite"))
+    expect(
+      Object.entries(secrets)
+        .filter(([, value]) => output.includes(Buffer.from(value)))
+        .map(([name]) => name),
+    ).toEqual([])
+    expect(await readFile(legacyDatabase)).toEqual(sourceMain)
+    expect(await readFile(`${legacyDatabase}-wal`)).toEqual(sourceWal)
+    writer.close()
+
+    const sealed = new Database(path.join(outputDirectory, "main.sqlite"), { readonly: true })
+    expect(sealed.query("SELECT name, commands, icon_url, icon_url_override FROM project").get()).toEqual({
+      name: "retained project",
+      commands: null,
+      icon_url: null,
+      icon_url_override: null,
+    })
+    expect(sealed.query("SELECT title, share_url, permission, agent, model FROM session").get()).toEqual({
+      title: "retained session",
+      share_url: null,
+      permission: null,
+      agent: null,
+      model: null,
+    })
+    expect(sealed.query("SELECT data FROM message").get()).toEqual({
+      data: '{"role":"assistant","text":"retained transcript"}',
+    })
+    expect(sealed.query("SELECT data FROM part").get()).toEqual({
+      data: '{"type":"text","text":"retained answer"}',
+    })
+    for (const table of ["account", "account_state", "control_account", "session_share"]) {
+      expect(() => sealed.query(`SELECT * FROM ${table}`).all()).toThrow()
+    }
+    for (const table of ["permission", "event", "event_sequence", "data_migration"]) {
+      expect(sealed.query(`SELECT count(*) AS count FROM ${table}`).get()).toEqual({ count: 0 })
+    }
+    sealed.close()
+  })
+
   test("fails closed for an unknown SQLite capability location", async () => {
     await using tmp = await tmpdir()
     const data = path.join(tmp.path, "legacy-data")
@@ -229,4 +373,15 @@ function target(root: string): MigrationDestination {
     database: path.join(root, "destination", "data", "bharatcode.db"),
     storage: path.join(root, "destination", "data", "storage"),
   }
+}
+
+async function applyPinnedBetaSchema(database: Database) {
+  database.run('CREATE TABLE "__drizzle_migrations" (id INTEGER PRIMARY KEY, hash text NOT NULL, created_at numeric)')
+  for (const name of (await readdir(path.join(import.meta.dir, "../../migration"))).toSorted()) {
+    database.run(await readFile(path.join(import.meta.dir, "../../migration", name, "migration.sql"), "utf8"))
+  }
+}
+
+function sentinel(name: string, size: number) {
+  return `CP3-${name}-${"X".repeat(size)}-END`
 }
