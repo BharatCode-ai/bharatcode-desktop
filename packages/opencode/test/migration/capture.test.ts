@@ -292,7 +292,7 @@ describe("migration capture", () => {
     sealed.close()
   })
 
-  test("excludes only associated SQLite sidecars and preserves every source byte", async () => {
+  test("excludes associated SQLite sidecars while preserving main and durable sidecar bytes", async () => {
     await using tmp = await tmpdir()
     const data = path.join(tmp.path, "legacy-data")
     await mkdir(data, { recursive: true })
@@ -301,20 +301,22 @@ describe("migration capture", () => {
     database.run("CREATE TABLE session(id TEXT PRIMARY KEY, title TEXT, model TEXT)")
     database.run("INSERT INTO session VALUES ('session_1', 'retained', NULL)")
     database.close()
-    const sidecars = new Map([
+    const durableSidecars = new Map([
       [`${legacyDatabase}-journal`, Buffer.concat([Buffer.alloc(512), Buffer.from(sentinel("journal-secret", 91))])],
-      [`${legacyDatabase}-shm`, Buffer.from(sentinel("shm-secret", 37))],
       [`${legacyDatabase}-mjDEADBEEF`, Buffer.from(sentinel("super-journal-secret", 53))],
     ])
-    for (const [file, bytes] of sidecars) await writeFile(file, bytes)
+    for (const [file, bytes] of durableSidecars) await writeFile(file, bytes)
+    const shm = `${legacyDatabase}-shm`
+    await writeFile(shm, Buffer.from(sentinel("ephemeral-shm", 37)))
     const sourceMain = await readFile(legacyDatabase)
-    const sourceSidecars = await Promise.all([...sidecars.keys()].map((file) => readFile(file)))
+    const sourceSidecars = await Promise.all([...durableSidecars.keys()].map((file) => readFile(file)))
 
     const captured = await captureMigrationSource(databaseSource(data, "sidecar-source"), target(tmp.path))
 
     expect(await snapshotRecordFiles(captured.snapshotDirectory)).toEqual(["database/main.sqlite"])
     expect(await readFile(legacyDatabase)).toEqual(sourceMain)
-    expect(await Promise.all([...sidecars.keys()].map((file) => readFile(file)))).toEqual(sourceSidecars)
+    expect(await Promise.all([...durableSidecars.keys()].map((file) => readFile(file)))).toEqual(sourceSidecars)
+    expect(await Bun.file(shm).exists()).toBe(true)
   })
 
   test("fails closed for an unexplained database-adjacent sidecar", async () => {
@@ -367,6 +369,126 @@ describe("migration capture", () => {
     )
   })
 
+  test.each([
+    [
+      "API key",
+      { provider: { apiKey: "sk-proj-abcdefghijklmnopqrstuvwxyz123456" } },
+      "sk-proj-abcdefghijklmnopqrstuvwxyz123456",
+      "credential bytes",
+    ],
+    [
+      "opaque authorization",
+      { provider: { authorization: "opaqueCredentialValue0123456789" } },
+      "opaqueCredentialValue0123456789",
+      "credential bytes",
+    ],
+    [
+      "nested generic secret",
+      { provider: { accounts: [{ metadata: { secret: "opaqueSecretValue0123456789" } }] } },
+      "opaqueSecretValue0123456789",
+      "credential bytes",
+    ],
+    ["short key-defined credential", { provider: { apiKey: "tiny" } }, "tiny", "short credential"],
+  ])("rejects a retained credential collected from a removed JSON %s path", async (_name, removed, secret, failure) => {
+    await using tmp = await tmpdir()
+    const data = path.join(tmp.path, "legacy-data")
+    await mkdir(data, { recursive: true })
+    const database = new Database(path.join(data, "opencode.db"), { create: true })
+    database.run("CREATE TABLE message(id TEXT PRIMARY KEY, data TEXT NOT NULL)")
+    database.run("INSERT INTO message VALUES ('message_1', ?)", [
+      JSON.stringify({ role: "assistant", text: `retained ${secret}`, ...removed }),
+    ])
+    database.close()
+
+    await expect(captureMigrationSource(databaseSource(data, `json-${_name}`), target(tmp.path))).rejects.toThrow(
+      failure,
+    )
+  })
+
+  test("rejects an opaque authorization removed from permission JSON but retained in a title", async () => {
+    await using tmp = await tmpdir()
+    const data = path.join(tmp.path, "legacy-data")
+    await mkdir(data, { recursive: true })
+    const secret = "opaqueCredentialValue0123456789"
+    const database = new Database(path.join(data, "opencode.db"), { create: true })
+    database.run("CREATE TABLE session(id TEXT PRIMARY KEY, title TEXT, model TEXT)")
+    database.run("CREATE TABLE permission(project_id TEXT PRIMARY KEY, data TEXT NOT NULL)")
+    database.run("INSERT INTO session VALUES ('session_1', ?, NULL)", [`Retained ${secret}`])
+    database.run("INSERT INTO permission VALUES ('project_1', ?)", [JSON.stringify({ authorization: secret })])
+    database.close()
+
+    await expect(
+      captureMigrationSource(databaseSource(data, "permission-authorization"), target(tmp.path)),
+    ).rejects.toThrow("credential bytes")
+  })
+
+  test("does not classify benign prose or near-key JSON values as credentials", async () => {
+    await using tmp = await tmpdir()
+    const data = path.join(tmp.path, "legacy-data")
+    await mkdir(data, { recursive: true })
+    const database = new Database(path.join(data, "opencode.db"), { create: true })
+    database.run("CREATE TABLE message(id TEXT PRIMARY KEY, data TEXT NOT NULL)")
+    database.run("INSERT INTO message VALUES ('message_1', ?)", [
+      JSON.stringify({
+        role: "assistant",
+        text: "Use a password manager for safety",
+        passwordHint: "Use a password manager for safety",
+        tokenizer: "ordinary tokenizer prose",
+        commander: "ordinary command prose",
+      }),
+    ])
+    database.close()
+
+    const captured = await captureMigrationSource(databaseSource(data, "benign-json-prose"), target(tmp.path))
+    const sealed = new Database(path.join(captured.snapshotDirectory, "records", "database", "main.sqlite"), {
+      readonly: true,
+    })
+    expect(sealed.query("SELECT data FROM message").get()).toEqual({
+      data: '{"role":"assistant","text":"Use a password manager for safety"}',
+    })
+    sealed.close()
+  })
+
+  test("rejects non-UTF8 bytes discarded from a capability column when retained elsewhere", async () => {
+    await using tmp = await tmpdir()
+    const data = path.join(tmp.path, "legacy-data")
+    await mkdir(data, { recursive: true })
+    const bytes = Buffer.from([0xff, 0xfe, 0xfd, 0x00, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88])
+    const database = new Database(path.join(data, "opencode.db"), { create: true })
+    database.run("CREATE TABLE permission(project_id TEXT PRIMARY KEY, data TEXT NOT NULL)")
+    database.run(
+      "CREATE TABLE todo(session_id TEXT, content TEXT, status TEXT, priority TEXT, position INTEGER, time_created INTEGER, time_updated INTEGER)",
+    )
+    database.run("INSERT INTO permission VALUES ('project_1', ?)", [bytes])
+    database.run("INSERT INTO todo VALUES ('session_1', ?, 'pending', 'high', 1, 1, 1)", [bytes])
+    database.close()
+
+    await expect(captureMigrationSource(databaseSource(data, "binary-capability"), target(tmp.path))).rejects.toThrow(
+      "credential bytes",
+    )
+  })
+
+  test.each(["UTF-16le", "UTF-16be"])("rejects a %s SQLite source before credential verification", async (encoding) => {
+    await using tmp = await tmpdir()
+    const data = path.join(tmp.path, "legacy-data")
+    await mkdir(data, { recursive: true })
+    const legacyDatabase = path.join(data, "opencode.db")
+    const secret = "Bearer UTF16credentialabcdefghijklmnop"
+    const database = new Database(legacyDatabase, { create: true })
+    database.run(`PRAGMA encoding = '${encoding}'`)
+    database.run("CREATE TABLE session(id TEXT PRIMARY KEY, title TEXT, model TEXT)")
+    database.run("CREATE TABLE account(id TEXT PRIMARY KEY, access_token TEXT)")
+    database.run("INSERT INTO session VALUES ('session_1', ?, NULL)", [`Retained ${secret}`])
+    database.run("INSERT INTO account VALUES ('account_1', ?)", [secret])
+    database.close()
+    const sourceMain = await readFile(legacyDatabase)
+
+    await expect(
+      captureMigrationSource(databaseSource(data, `encoding-${encoding}`), target(tmp.path)),
+    ).rejects.toThrow("UTF-8")
+    expect(await readFile(legacyDatabase)).toEqual(sourceMain)
+  })
+
   test("preserves an ordinary retained substring that also appeared in noncredential dropped metadata", async () => {
     await using tmp = await tmpdir()
     const data = path.join(tmp.path, "legacy-data")
@@ -417,6 +539,32 @@ describe("migration capture", () => {
     expect(await snapshotRecordFiles(captured.snapshotDirectory)).toEqual(["database/main.sqlite"])
   }, 30_000)
 
+  test.each([
+    ["count", 10_001, 20],
+    ["bytes", 600, 900],
+  ])(
+    "enforces the incremental credential %s budget",
+    async (_kind, rows, payloadBytes) => {
+      await using tmp = await tmpdir()
+      const data = path.join(tmp.path, "legacy-data")
+      await mkdir(data, { recursive: true })
+      const database = new Database(path.join(data, "opencode.db"), { create: true })
+      database.run("CREATE TABLE account(id TEXT PRIMARY KEY, access_token TEXT)")
+      const insert = database.prepare("INSERT INTO account VALUES (?, ?)")
+      database.transaction(() => {
+        for (let index = 0; index < rows; index++) {
+          insert.run(`account_${index}`, `Bearer ${index.toString().padStart(5, "0")}-${"X".repeat(payloadBytes)}`)
+        }
+      })()
+      database.close()
+
+      await expect(
+        captureMigrationSource(databaseSource(data, `candidate-${_kind}-budget`), target(tmp.path)),
+      ).rejects.toThrow("credential verification budget")
+    },
+    30_000,
+  )
+
   test("serializes WAL-visible rows without source mutation or SQLite temp spill", async () => {
     await using tmp = await tmpdir()
     const data = path.join(tmp.path, "legacy-data")
@@ -430,6 +578,7 @@ describe("migration capture", () => {
     writer.run("INSERT INTO session VALUES ('wal_session', 'WAL-visible retained row', NULL)")
     const sourceMain = await readFile(legacyDatabase)
     const sourceWal = await readFile(`${legacyDatabase}-wal`)
+    const sourceShm = await readFile(`${legacyDatabase}-shm`)
     const events: string[] = []
     const watcher = watch(monitoredTemp, (_event, name) => events.push(String(name)))
 
@@ -446,17 +595,82 @@ describe("migration capture", () => {
     )
     expect(await child.exited).toBe(0)
     watcher.close()
+    const captured = JSON.parse(await new Response(child.stdout).text()) as {
+      snapshotDigest: string
+      snapshotDirectory: string
+    }
+    const second = await captureMigrationSource(
+      databaseSource(data, "wal-worker"),
+      target(path.join(tmp.path, "second")),
+    )
     expect(events).toEqual([])
     expect(await readFile(legacyDatabase)).toEqual(sourceMain)
     expect(await readFile(`${legacyDatabase}-wal`)).toEqual(sourceWal)
+    expect(sourceShm.byteLength).toBeGreaterThan(0)
+    expect((await readFile(`${legacyDatabase}-shm`)).byteLength).toBeGreaterThan(0)
+    expect(second.snapshotDigest).toBe(captured.snapshotDigest)
+    expect(await readFile(path.join(second.snapshotDirectory, "records", "database", "main.sqlite"))).toEqual(
+      await readFile(path.join(captured.snapshotDirectory, "records", "database", "main.sqlite")),
+    )
+    expect(databaseHealth(writer, "session")).toEqual({ integrity_check: "ok", rows: 1 })
     writer.close()
-    const captured = JSON.parse(await new Response(child.stdout).text()) as { snapshotDirectory: string }
     const sealed = new Database(path.join(captured.snapshotDirectory, "records", "database", "main.sqlite"), {
       readonly: true,
     })
     expect(sealed.query("SELECT title FROM session").get()).toEqual({ title: "WAL-visible retained row" })
     sealed.close()
+    const reopened = new Database(legacyDatabase, { readonly: true })
+    expect(databaseHealth(reopened, "session")).toEqual({ integrity_check: "ok", rows: 1 })
+    reopened.close()
   })
+
+  test("rejects a WAL-backed over-cap logical image before serialization with bounded child RSS", async () => {
+    await using tmp = await tmpdir()
+    const data = path.join(tmp.path, "legacy-data")
+    const monitoredTemp = path.join(tmp.path, "sqlite-temp")
+    const serializeMarker = path.join(tmp.path, "serialize-called")
+    await mkdir(data, { recursive: true })
+    await mkdir(monitoredTemp, { recursive: true })
+    const legacyDatabase = path.join(data, "opencode.db")
+    const writer = new Database(legacyDatabase, { create: true })
+    writer.run("PRAGMA journal_mode = WAL")
+    writer.run("PRAGMA wal_autocheckpoint = 0")
+    writer.run("CREATE TABLE payload(id INTEGER PRIMARY KEY, bytes BLOB NOT NULL)")
+    writer.run("INSERT INTO payload VALUES (1, zeroblob(?))", [33 * 1024 * 1024])
+    const sourceMain = await readFile(legacyDatabase)
+    const sourceWal = await readFile(`${legacyDatabase}-wal`)
+
+    const child = Bun.spawn(
+      [
+        process.execPath,
+        "test/fixture/migration-capture-worker.ts",
+        JSON.stringify({
+          source: databaseSource(data, "wal-over-cap"),
+          destination: target(tmp.path),
+          observeSerialize: serializeMarker,
+          reportFailure: true,
+        }),
+      ],
+      { cwd: path.join(import.meta.dir, "../.."), env: { ...process.env, TMPDIR: monitoredTemp }, stderr: "pipe" },
+    )
+    expect(await child.exited).toBe(0)
+    const report = JSON.parse(await new Response(child.stdout).text()) as {
+      error: string
+      rssBefore: number
+      rssAfter: number
+    }
+    expect(report.error).toContain("capture budget")
+    expect(report.rssAfter - report.rssBefore).toBeLessThan(16 * 1024 * 1024)
+    expect(await Bun.file(serializeMarker).exists()).toBe(false)
+    expect(await readdir(monitoredTemp)).toEqual([])
+    expect(await readFile(legacyDatabase)).toEqual(sourceMain)
+    expect(await readFile(`${legacyDatabase}-wal`)).toEqual(sourceWal)
+    expect(databaseHealth(writer, "payload")).toEqual({ integrity_check: "ok", rows: 1 })
+    writer.close()
+    const reopened = new Database(legacyDatabase, { readonly: true })
+    expect(databaseHealth(reopened, "payload")).toEqual({ integrity_check: "ok", rows: 1 })
+    reopened.close()
+  }, 30_000)
 
   test.each(["pre-sanitize", "post-sanitize"])(
     "leaves no credential-bearing filesystem orphan after a %s process exit",
@@ -611,4 +825,10 @@ async function applyPinnedBetaSchema(database: Database) {
 
 function sentinel(name: string, size: number) {
   return `CP3-${name}-${"X".repeat(size)}-END`
+}
+
+function databaseHealth(database: Database, table: "payload" | "session") {
+  const integrity = database.query("PRAGMA integrity_check").get() as { integrity_check: string }
+  const rows = database.query(`SELECT count(*) AS rows FROM ${table}`).get() as { rows: number }
+  return { integrity_check: integrity.integrity_check, rows: rows.rows }
 }

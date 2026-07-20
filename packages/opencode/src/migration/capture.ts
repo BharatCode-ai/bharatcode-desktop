@@ -37,9 +37,28 @@ const MAX_SQLITE_IMAGE_BYTES = 32 * 1024 * 1024
 const MAX_SENSITIVE_VALUES = 10_000
 const MAX_SENSITIVE_VALUE_BYTES = 512 * 1024
 const DROPPED_SQLITE_TABLES = new Set(["session_share", "account_state", "account", "control_account"])
+const RETAINED_JSON_SQLITE_TABLES = new Set(["message", "part", "session_entry", "session_message"])
 const CREDENTIAL_VALUE =
-  /(?:bearer\s+[a-z0-9._-]{12,}|(?:access|refresh|id)[-_ ]?token|api[-_ ]?key|client[-_ ]?secret|password|private[-_ ]?key|\beyJ[a-z0-9_-]{12,})/i
+  /(?:bearer\s+[a-z0-9._~+/-]{12,}|\b(?:sk|pk|rk|ghp)[-_][a-z0-9_-]{12,}|\bgithub_pat_[a-z0-9_]{12,}|\beyJ[a-z0-9_-]{12,})/i
 const CREDENTIAL_COLUMN = /(?:^|_)(?:token|secret|password|authorization|private_key)(?:$|_)/i
+const CREDENTIAL_JSON_KEYS = new Set([
+  "access_token",
+  "api_key",
+  "apikey",
+  "auth_token",
+  "authorization",
+  "bearer",
+  "client_secret",
+  "credential",
+  "credentials",
+  "id_token",
+  "password",
+  "private_key",
+  "refresh_token",
+  "secret",
+  "session_secret",
+  "token",
+])
 const SQLITE_COLUMNS: Readonly<Record<string, ReadonlySet<string>>> = Object.fromEntries(
   Object.entries({
     __drizzle_migrations: ["id", "hash", "created_at"],
@@ -315,12 +334,37 @@ function snapshotDatabase(file: string) {
   const source = new Database(file, { readonly: true })
   let logical: Uint8Array
   try {
-    logical = standaloneSQLiteImage(source.serialize())
+    source.run("BEGIN")
+    const encoding = source.query("PRAGMA encoding").get() as { encoding?: string } | null
+    if (encoding?.encoding !== "UTF-8") {
+      throw new MigrationCaptureError("The migration database encoding was not UTF-8.")
+    }
+    const pageCount = source.query("PRAGMA page_count").get() as { page_count?: number } | null
+    const pageSize = source.query("PRAGMA page_size").get() as { page_size?: number } | null
+    const pages = pageCount?.page_count ?? 0
+    const bytesPerPage = pageSize?.page_size ?? 0
+    const logicalBytes = pages * bytesPerPage
+    if (
+      !Number.isSafeInteger(pages) ||
+      !Number.isSafeInteger(bytesPerPage) ||
+      !Number.isSafeInteger(logicalBytes) ||
+      pages <= 0 ||
+      bytesPerPage <= 0 ||
+      logicalBytes > MAX_SQLITE_IMAGE_BYTES
+    ) {
+      throw new MigrationCaptureError("The migration database exceeded its capture budget.")
+    }
+    const serialized = source.serialize()
+    if (serialized.byteLength > MAX_SQLITE_IMAGE_BYTES) {
+      throw new MigrationCaptureError("The migration database exceeded its capture budget.")
+    }
+    logical = standaloneSQLiteImage(serialized)
   } finally {
-    source.close()
-  }
-  if (logical.byteLength > MAX_SQLITE_IMAGE_BYTES) {
-    throw new MigrationCaptureError("The migration database exceeded its capture budget.")
+    try {
+      if (source.inTransaction) source.run("ROLLBACK")
+    } finally {
+      source.close()
+    }
   }
   const database = Database.deserialize(logical)
   let sensitiveValues: readonly Uint8Array[] = []
@@ -379,9 +423,24 @@ function standaloneSQLiteImage(serialized: Uint8Array) {
 }
 
 function collectSensitiveRemovedSQLiteValues(database: Database) {
-  const removed = new Map<string, Uint8Array>()
-  for (const table of [...DROPPED_SQLITE_TABLES, "permission", "event", "event_sequence", "data_migration"]) {
-    collectSQLiteValues(database, table, undefined, removed)
+  const sensitive = new SensitiveSQLiteValues()
+  for (const table of DROPPED_SQLITE_TABLES) {
+    if (!hasTable(database, table)) continue
+    const columns = sqliteColumns(database, table)
+    const credentialColumns = new Set(
+      columns.filter((column) => CREDENTIAL_COLUMN.test(column) || (table === "session_share" && column === "url")),
+    )
+    visitSQLiteValues(database, table, columns, (column, value) => {
+      if (value instanceof Uint8Array) {
+        sensitive.add(value, true)
+        return
+      }
+      if (!credentialColumns.has(column) || value === null) return
+      if (typeof value !== "string") {
+        throw new MigrationCaptureError("The migration database contained an unsupported credential value.")
+      }
+      sensitive.add(new TextEncoder().encode(value), true)
+    })
   }
   for (const [table, columns] of [
     ["project", ["commands", "icon_url", "icon_url_override", "sandboxes"]],
@@ -394,81 +453,149 @@ function collectSensitiveRemovedSQLiteValues(database: Database) {
     ["permission", ["data"]],
     ["event", ["data"]],
   ] as const) {
-    collectSQLiteValues(database, table, columns, removed)
+    collectDiscardedSQLiteColumns(database, table, columns, sensitive)
   }
-  const sensitive = new Map<string, Uint8Array>()
-  for (const value of removed.values()) {
-    if (credentialShaped(value)) collectBytes(value, sensitive)
-  }
-  for (const table of DROPPED_SQLITE_TABLES) {
+  for (const table of ["permission", "event", "event_sequence", "data_migration"]) {
     if (!hasTable(database, table)) continue
-    const columns = (database.query(`PRAGMA table_info(${quoteSql(table)})`).all() as { name: string }[])
-      .map((column) => column.name)
-      .filter((column) => CREDENTIAL_COLUMN.test(column) || (table === "session_share" && column === "url"))
-    const explicit = new Map<string, Uint8Array>()
-    collectSQLiteValues(database, table, columns, explicit)
-    for (const value of explicit.values()) {
-      if (value.byteLength < 8) {
-        throw new MigrationCaptureError("The migration database contained a short credential value.")
-      }
-      collectBytes(value, sensitive)
-    }
+    visitSQLiteValues(database, table, sqliteColumns(database, table), (_column, value) => {
+      if (value instanceof Uint8Array) sensitive.add(value, true)
+    })
   }
-  const values = [...sensitive.values()]
-  const bytes = values.reduce((total, value) => total + value.byteLength, 0)
-  if (values.length > MAX_SENSITIVE_VALUES || bytes > MAX_SENSITIVE_VALUE_BYTES) {
-    throw new MigrationCaptureError("The migration database exceeded its credential verification budget.")
-  }
-  return values.toSorted((left, right) => Buffer.compare(left, right))
+  return sensitive.values()
 }
 
-function collectSQLiteValues(
+function collectDiscardedSQLiteColumns(
   database: Database,
   table: string,
-  columns: readonly string[] | undefined,
-  values: Map<string, Uint8Array>,
+  columns: readonly string[],
+  sensitive: SensitiveSQLiteValues,
 ) {
   if (!hasTable(database, table)) return
-  const selected = columns?.filter((column) => hasColumn(database, table, column))
-  if (selected?.length === 0) return
-  const projection = selected?.map(quoteIdentifier).join(", ") ?? "*"
-  for (const row of database.query(`SELECT ${projection} FROM ${quoteIdentifier(table)}`).all() as Record<
-    string,
-    unknown
-  >[]) {
-    for (const value of Object.values(row)) {
-      if (typeof value === "string") {
-        collectBytes(new TextEncoder().encode(value), values)
-        if (selected?.includes("data")) collectJsonStrings(value, values)
-        continue
-      }
-      if (value instanceof Uint8Array) collectBytes(value, values)
+  const selected = columns.filter((column) => hasColumn(database, table, column))
+  visitSQLiteValues(database, table, selected, (_column, value) => {
+    if (value instanceof Uint8Array) {
+      sensitive.add(value, true)
+      return
     }
-  }
+    if (typeof value !== "string" || value.length === 0) return
+    if (jsonCapabilityColumn(table, _column)) {
+      collectJsonCredentials(value, sensitive, !RETAINED_JSON_SQLITE_TABLES.has(table))
+      return
+    }
+    const bytes = new TextEncoder().encode(value)
+    if (credentialShaped(bytes)) sensitive.add(bytes, true)
+  })
 }
 
-function collectJsonStrings(value: string, values: Map<string, Uint8Array>) {
-  const visit = (item: unknown): void => {
+function collectJsonCredentials(value: string, sensitive: SensitiveSQLiteValues, rootCapability: boolean) {
+  const visit = (item: unknown, credential: boolean, capability: boolean): void => {
     if (typeof item === "string") {
-      collectBytes(new TextEncoder().encode(item), values)
+      const bytes = new TextEncoder().encode(item)
+      if (credential || (capability && credentialShaped(bytes))) sensitive.add(bytes, true)
       return
     }
     if (Array.isArray(item)) {
-      item.forEach(visit)
+      item.forEach((child) => visit(child, credential, capability))
       return
     }
-    if (item && typeof item === "object") Object.values(item).forEach(visit)
+    if (!item || typeof item !== "object") {
+      if (credential && item !== null) {
+        throw new MigrationCaptureError("The migration database contained an unsupported credential value.")
+      }
+      return
+    }
+    for (const [key, child] of Object.entries(item)) {
+      const normalized = normalizeJsonKey(key)
+      const childCredential = credential || credentialJsonKey(normalized)
+      const childCapability = capability || activeJsonCapabilityKey(normalized)
+      visit(child, childCredential, childCapability)
+    }
   }
+  let parsed: unknown
   try {
-    visit(JSON.parse(value) as unknown)
+    parsed = JSON.parse(value) as unknown
   } catch {
-    // Deleted capability tables may contain legacy plain text; the raw bytes are already collected.
+    sensitive.add(new TextEncoder().encode(value), true)
+    return
+  }
+  visit(parsed, false, rootCapability)
+}
+
+function visitSQLiteValues(
+  database: Database,
+  table: string,
+  columns: readonly string[],
+  visit: (column: string, value: unknown) => void,
+) {
+  if (columns.length === 0) return
+  const projection = columns.map(quoteIdentifier).join(", ")
+  for (const row of database.query(`SELECT ${projection} FROM ${quoteIdentifier(table)}`).iterate() as Iterable<
+    Record<string, unknown>
+  >) {
+    for (const column of columns) visit(column, row[column])
   }
 }
 
-function collectBytes(value: Uint8Array, values: Map<string, Uint8Array>) {
-  if (value.byteLength === 0) return
-  values.set(Buffer.from(value).toString("base64"), value)
+function sqliteColumns(database: Database, table: string) {
+  return (database.query(`PRAGMA table_info(${quoteSql(table)})`).all() as { name: string }[]).map(
+    (column) => column.name,
+  )
+}
+
+function jsonCapabilityColumn(table: string, column: string) {
+  return (
+    column === "data" ||
+    (table === "project" && ["commands", "sandboxes"].includes(column)) ||
+    (table === "workspace" && ["extra", "config"].includes(column)) ||
+    (table === "session" && column === "permission")
+  )
+}
+
+function normalizeJsonKey(value: string) {
+  return value
+    .normalize("NFKC")
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/[^a-zA-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toLowerCase()
+}
+
+function credentialJsonKey(value: string) {
+  return (
+    CREDENTIAL_JSON_KEYS.has(value) ||
+    /(?:^|_)(?:token|secret|password|authorization)$/.test(value) ||
+    /(?:^|_)(?:api|private)_key$/.test(value)
+  )
+}
+
+function activeJsonCapabilityKey(value: string) {
+  return /(?:^|_)(?:provider|model|plugin|mcp|skill|share|update|command|exec|executable|argv|binary|launcher|server|url|baseurl|host|origin|endpoint|schema|runtime|fallback|token|secret|password|authorization)(?:$|_)/i.test(
+    value,
+  )
+}
+
+class SensitiveSQLiteValues {
+  #values = new Map<string, Uint8Array>()
+  #bytes = 0
+
+  add(value: Uint8Array, rejectShort: boolean) {
+    if (value.byteLength === 0) return
+    if (rejectShort && value.byteLength < 8) {
+      throw new MigrationCaptureError("The migration database contained a short credential value.")
+    }
+    const copy = Buffer.from(value)
+    const key = copy.toString("base64")
+    if (this.#values.has(key)) return
+    if (this.#values.size + 1 > MAX_SENSITIVE_VALUES || this.#bytes + copy.byteLength > MAX_SENSITIVE_VALUE_BYTES) {
+      throw new MigrationCaptureError("The migration database exceeded its credential verification budget.")
+    }
+    this.#values.set(key, copy)
+    this.#bytes += copy.byteLength
+  }
+
+  values() {
+    return [...this.#values.values()].toSorted((left, right) => Buffer.compare(left, right))
+  }
 }
 
 function credentialShaped(value: Uint8Array) {
