@@ -2634,10 +2634,12 @@ function parseWindowsChromiumSwitches(commandLine) {
     if (!prefix || argument.length === prefix.length) continue
     const equals = argument.indexOf("=")
     const rawName = argument.slice(prefix.length, equals < 0 ? undefined : equals)
+    const name = asciiLower(rawName)
+    requireValue(name !== "single-argument", "Owned Windows command line uses the forbidden single-argument switch")
     switches.push({
       prefix,
       rawName,
-      name: asciiLower(rawName),
+      name,
       hasValueSeparator: equals >= 0,
       value: equals >= 0 ? argument.slice(equals + 1) : "",
     })

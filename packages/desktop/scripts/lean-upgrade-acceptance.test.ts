@@ -609,6 +609,21 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
         requireNetworkService: true,
       }),
     ).toEqual({ rootPid: 4100, utilityPid: 4101, networkServicePid: 4102, pids: [4100, 4101, 4102] })
+    const terminatedRecords = records.map((record) => ({
+      ...record,
+      command_line:
+        record.process_id === 4100 || record.process_id === 4102
+          ? `${record.command_line} -- "--single-argument quoted positional remainder"`
+          : record.command_line,
+    }))
+    expect(
+      acceptance.validateOwnedProcessTree(terminatedRecords, {
+        rootPid: 4100,
+        executable,
+        addressSpaceOverrideArguments: override,
+        requireNetworkService: true,
+      }),
+    ).toEqual({ rootPid: 4100, utilityPid: 4101, networkServicePid: 4102, pids: [4100, 4101, 4102] })
     for (const hostile of [
       records.slice(0, 2),
       [...records, { ...records[2], process_id: 4103 }],
@@ -686,9 +701,49 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
           ? { ...record, command_line: `${record.command_line} /proxy-server "http://127.0.0.1:9999"` }
           : record,
       ),
+      ...["--single-argument", "-single-argument", "/single-argument", "--SiNgLe-ArGuMeNt"].map((single) =>
+        records.map((record) =>
+          record.process_id === 4100 ? { ...record, command_line: `${record.command_line} ${single}` } : record,
+        ),
+      ),
+      records.map((record) =>
+        record.process_id === 4100
+          ? { ...record, command_line: `${record.command_line} --single-argument "quoted remainder"` }
+          : record,
+      ),
+      records.map((record) =>
+        record.process_id === 4100
+          ? { ...record, command_line: `${record.command_line} --single-argument -- "--proxy-server=hidden"` }
+          : record,
+      ),
+      records.map((record) =>
+        record.process_id === 4101
+          ? { ...record, command_line: `${record.command_line} /single-argument "quoted child remainder"` }
+          : record,
+      ),
       records.map((record) =>
         record.process_id === 4102
           ? { ...record, command_line: record.command_line.replace(` ${override[0]}`, "") }
+          : record,
+      ),
+      ...["--single-argument", "-single-argument", "/single-argument", "--SiNgLe-ArGuMeNt"].map((single) =>
+        records.map((record) =>
+          record.process_id === 4102
+            ? {
+                ...record,
+                command_line: `"${executable}" ${single} --type=utility --utility-sub-type=network.mojom.NetworkService ${override[0]} --no-proxy-server`,
+              }
+            : record,
+        ),
+      ),
+      records.map((record) =>
+        record.process_id === 4102
+          ? { ...record, command_line: `${record.command_line} --single-argument "quoted child remainder"` }
+          : record,
+      ),
+      records.map((record) =>
+        record.process_id === 4102
+          ? { ...record, command_line: `${record.command_line} /single-argument -- "--type=renderer hidden"` }
           : record,
       ),
       records.map((record) =>
