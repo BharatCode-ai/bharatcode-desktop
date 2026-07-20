@@ -17,13 +17,13 @@ function translator(options?: {
     calls.push({ executable, args })
     if (options?.fail) throw new Error("wslpath failed")
     if (args.includes("/usr/bin/findmnt")) return { stdout: options?.mount ?? "/mnt/c 9p\n" }
-    if (args.includes("--unix")) {
+    if (args.includes("-u")) {
       unixCalls += 1
       return {
         stdout: `${unixCalls === 1 ? (options?.linux ?? "/mnt/c/Users/Alice/Project") : (options?.roundTripLinux ?? "/home/alice/project")}\n`,
       }
     }
-    if (args.includes("--windows")) {
+    if (args.includes("-w")) {
       windowsCalls += 1
       return {
         stdout: `${windowsCalls === 1 ? (options?.windows ?? "C:\\Users\\Alice\\Project") : (options?.roundTripWindows ?? "C:\\Users\\Alice\\Project")}\r\n`,
@@ -51,7 +51,7 @@ describe("shell-free selected-distro wslpath translation", () => {
       "Ubuntu 24.04",
       "--exec",
       "/usr/bin/wslpath",
-      "--unix",
+      "-u",
       "--",
       "C:\\Users\\Alice\\Project",
     ])

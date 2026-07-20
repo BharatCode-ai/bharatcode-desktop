@@ -38,7 +38,7 @@ export function createWslPathTranslator(input: {
         await input.execute(input.wslExecutable, [
           ...prefix,
           "/usr/bin/wslpath",
-          mode === "linux" ? "--unix" : "--windows",
+          mode === "linux" ? "-u" : "-w",
           "--",
           path,
         ])

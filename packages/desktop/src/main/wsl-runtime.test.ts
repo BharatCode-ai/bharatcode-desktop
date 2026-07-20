@@ -115,10 +115,10 @@ async function runtimeInput(options?: {
   const harness = childHarness(options?.records, options?.stderr, options?.exitOnStop)
   const runtimeWindowsPath = `C:\\Program Files\\BharatCode\\resources\\wsl-runtime\\${filename}`
   const execute = async (_executable: string, args: readonly string[]) => {
-    if (args.includes("/usr/bin/wslpath") && args.includes("--unix")) {
+    if (args.includes("/usr/bin/wslpath") && args.includes("-u")) {
       return { stdout: `/mnt/c/Program Files/BharatCode/resources/wsl-runtime/${filename}\n` }
     }
-    if (args.includes("/usr/bin/wslpath") && args.includes("--windows")) return { stdout: `${runtimeWindowsPath}\r\n` }
+    if (args.includes("/usr/bin/wslpath") && args.includes("-w")) return { stdout: `${runtimeWindowsPath}\r\n` }
     if (args.includes("/usr/bin/findmnt")) return { stdout: "/mnt/c 9p\n" }
     if (args.includes("/usr/bin/sha256sum")) return { stdout: `${executableSha256} *${installedPath}\n` }
     if (args.includes("/usr/bin/stat")) return { stdout: `${executable.byteLength}\n` }
@@ -163,8 +163,8 @@ describe("selected-distro WSL runtime", () => {
     const calls: readonly string[][] = []
     const execute = async (_executable: string, args: readonly string[]) => {
       ;(calls as string[][]).push([...args])
-      if (args.includes("--user")) return { stdout: "1000\n" }
-      if (args.includes("--un")) return { stdout: "alice\n" }
+      if (args.includes("-u")) return { stdout: "1000\n" }
+      if (args.includes("-un")) return { stdout: "alice\n" }
       return { stdout: "alice:x:1000:1000:Alice:/home/alice:/bin/bash\n" }
     }
     expect(
@@ -175,8 +175,8 @@ describe("selected-distro WSL runtime", () => {
       }),
     ).toEqual({ user: "alice", uid: 1000, home: "/home/alice" })
     expect(calls).toEqual([
-      ["--distribution", "Ubuntu 24.04", "--exec", "/usr/bin/id", "--user"],
-      ["--distribution", "Ubuntu 24.04", "--exec", "/usr/bin/id", "--un"],
+      ["--distribution", "Ubuntu 24.04", "--exec", "/usr/bin/id", "-u"],
+      ["--distribution", "Ubuntu 24.04", "--exec", "/usr/bin/id", "-un"],
       ["--distribution", "Ubuntu 24.04", "--exec", "/usr/bin/getent", "passwd", "alice"],
     ])
     expect(JSON.stringify(calls)).not.toMatch(/\/bin\/(?:ba)?sh|-c/)
@@ -185,7 +185,7 @@ describe("selected-distro WSL runtime", () => {
       resolveWslLaunchIdentity({
         wslExecutable: "C:\\Windows\\System32\\wsl.exe",
         selectedDisplayName: "Ubuntu 24.04",
-        execute: async (_executable, args) => ({ stdout: args.includes("--user") ? "0\n" : "root\n" }),
+        execute: async (_executable, args) => ({ stdout: args.includes("-u") ? "0\n" : "root\n" }),
       }),
     ).rejects.toThrow("non-root")
   })

@@ -41,11 +41,11 @@ export async function resolveWslLaunchIdentity(input: {
 }) {
   if (!isSafeWslDisplayName(input.selectedDisplayName)) throw new Error("Invalid selected WSL distribution")
   const prefix = ["--distribution", input.selectedDisplayName, "--exec"] as const
-  const uidText = closedLine((await input.execute(input.wslExecutable, [...prefix, "/usr/bin/id", "--user"])).stdout)
+  const uidText = closedLine((await input.execute(input.wslExecutable, [...prefix, "/usr/bin/id", "-u"])).stdout)
   if (!/^(?:0|[1-9]\d*)$/u.test(uidText)) throw new Error("Selected WSL UID is invalid")
   const uid = Number(uidText)
   if (!Number.isSafeInteger(uid) || uid <= 0) throw new Error("Selected WSL user must be non-root")
-  const user = closedLine((await input.execute(input.wslExecutable, [...prefix, "/usr/bin/id", "--un"])).stdout)
+  const user = closedLine((await input.execute(input.wslExecutable, [...prefix, "/usr/bin/id", "-un"])).stdout)
   if (!/^[a-z_][a-z0-9_-]{0,31}$/u.test(user)) throw new Error("Selected WSL username is invalid")
   const passwd = closedLine(
     (await input.execute(input.wslExecutable, [...prefix, "/usr/bin/getent", "passwd", user])).stdout,
