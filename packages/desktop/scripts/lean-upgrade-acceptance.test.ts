@@ -598,7 +598,7 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
         process_id: 4102,
         parent_process_id: 4100,
         executable_path: executable,
-        command_line: `"${executable}" --type=utility --utility-sub-type=network.mojom.NetworkService`,
+        command_line: `"${executable}" --type=utility --utility-sub-type=network.mojom.NetworkService ${override[0]} --no-proxy-server`,
       },
     ]
     expect(
@@ -623,6 +623,74 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
             }
           : record,
       ),
+      records.map((record) =>
+        record.process_id === 4100 ? { ...record, command_line: `${record.command_line} ${override[0]}` } : record,
+      ),
+      records.map((record) =>
+        record.process_id === 4100
+          ? { ...record, command_line: record.command_line.replace(" --no-proxy-server", "") }
+          : record,
+      ),
+      records.map((record) =>
+        record.process_id === 4100 ? { ...record, command_line: `${record.command_line} --no-proxy-server` } : record,
+      ),
+      records.map((record) =>
+        record.process_id === 4100
+          ? {
+              ...record,
+              command_line: record.command_line.replace("--no-proxy-server", "--proxy-server=http://127.0.0.1:9999"),
+            }
+          : record,
+      ),
+      records.map((record) =>
+        record.process_id === 4100
+          ? { ...record, command_line: `${record.command_line} --proxy-server=http://127.0.0.1:9999` }
+          : record,
+      ),
+      records.map((record) =>
+        record.process_id === 4102
+          ? { ...record, command_line: record.command_line.replace(` ${override[0]}`, "") }
+          : record,
+      ),
+      records.map((record) =>
+        record.process_id === 4102
+          ? {
+              ...record,
+              command_line: record.command_line.replace(
+                `${override[0]} --no-proxy-server`,
+                "--ip-address-space-overrides=0.0.0.0/0=private --proxy-server=http://127.0.0.1:9999",
+              ),
+            }
+          : record,
+      ),
+      records.map((record) =>
+        record.process_id === 4102 ? { ...record, command_line: `${record.command_line} ${override[0]}` } : record,
+      ),
+      records.map((record) =>
+        record.process_id === 4102 ? { ...record, command_line: `${record.command_line} --no-proxy-server` } : record,
+      ),
+      records.map((record) =>
+        record.process_id === 4102
+          ? { ...record, command_line: record.command_line.replace(" --no-proxy-server", "") }
+          : record,
+      ),
+      records.map((record) =>
+        record.process_id === 4102
+          ? {
+              ...record,
+              command_line: record.command_line.replace("--no-proxy-server", "--proxy-server=http://127.0.0.1:9999"),
+            }
+          : record,
+      ),
+      records.map((record) =>
+        record.process_id === 4102
+          ? { ...record, command_line: `${record.command_line} --proxy-server=http://127.0.0.1:9999` }
+          : record,
+      ),
+      records.map((record) =>
+        record.process_id === 4102 ? { ...record, executable_path: "C:\\hostile\\substituted.exe" } : record,
+      ),
+      records.map((record) => (record.process_id === 4102 ? { ...record, parent_process_id: 9999 } : record)),
     ]) {
       expect(() =>
         acceptance.validateOwnedProcessTree(hostile, {
@@ -685,9 +753,9 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
       URL_REQUEST_FAILED: 3,
     }
     const events = [
-      { source: { id: 10 }, type: 1, phase: 0, params: { url: controls.rendererBefore } },
+      { source: { id: 10 }, type: 1, phase: 0, params: { method: "GET", url: controls.rendererBefore } },
       { source: { id: 10 }, type: 2, phase: 0, params: { headers: ["HTTP/1.1 204 No Content"] } },
-      { source: { id: 20 }, type: 1, phase: 0, params: { url: controls.rendererBlocked } },
+      { source: { id: 20 }, type: 1, phase: 0, params: { method: "GET", url: controls.rendererBlocked } },
       { source: { id: 20 }, type: 3, phase: 0, params: { net_error: -118 } },
     ]
     const bytes = Buffer.from(JSON.stringify({ constants: { logEventTypes: eventTypes }, events }))
@@ -720,6 +788,25 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
           events: events.map((event) =>
             event.type === 2 ? { ...event, params: { headers: ["HTTP/1.1 200 OK", "x-control: 204"] } } : event,
           ),
+        }),
+      ),
+      Buffer.from(
+        JSON.stringify({
+          constants: { logEventTypes: eventTypes },
+          events: events.map((event) =>
+            event.source.id === 10 && event.type === 1
+              ? { ...event, params: { ...event.params, method: "OPTIONS" } }
+              : event,
+          ),
+        }),
+      ),
+      Buffer.from(
+        JSON.stringify({
+          constants: { logEventTypes: eventTypes },
+          events: [
+            ...events,
+            { source: { id: 30 }, type: 1, phase: 0, params: { method: "OPTIONS", url: controls.rendererBefore } },
+          ],
         }),
       ),
     ]) {
@@ -792,7 +879,7 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
       requests_after: 3,
     }
     expect(acceptance.validateBlockedEgressObservation(egress, firewall)).toBeTrue()
-    expect(
+    expect(() =>
       acceptance.validateBlockedEgressObservation(
         {
           ...egress,
@@ -806,7 +893,7 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
         },
         firewall,
       ),
-    ).toBeTrue()
+    ).toThrow()
     for (const hostile of [
       { ...egress, renderer_origin: "https://hostile.example" },
       { ...egress, control_urls: { ...controls, rendererBefore: controls.harnessBefore } },

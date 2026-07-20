@@ -179,9 +179,11 @@ export function validateOwnedProcessTree(records, expected) {
   )
   if (expected.requireNetworkService) {
     requireValue(networkService.length === 1, "Owned Chromium NetworkService is missing or ambiguous")
-    requireValue(
-      (root[0].command_line.match(/--no-proxy-server\b/gu) ?? []).length === 1,
-      "Candidate did not disable proxying exactly",
+    validateCandidateNetworkSwitches(root[0].command_line, expected.addressSpaceOverrideArguments ?? [], "root")
+    validateCandidateNetworkSwitches(
+      networkService[0].command_line,
+      expected.addressSpaceOverrideArguments ?? [],
+      "NetworkService",
     )
   } else {
     requireValue(networkService.length <= 1, "Owned Chromium NetworkService is ambiguous")
@@ -458,7 +460,13 @@ export function validateCandidateEgressNetLogBytes(bytes, controls) {
     parsed.events.filter((event) => names.get(event?.type) === "URL_REQUEST_START_JOB" && event?.params?.url === url)
   const before = starts(controls.rendererBefore)
   const blocked = starts(controls.rendererBlocked)
-  requireValue(before.length === 1 && blocked.length === 1, "candidate egress netlog request identity is incomplete")
+  requireValue(
+    before.length === 1 &&
+      before[0]?.params?.method === "GET" &&
+      blocked.length === 1 &&
+      blocked[0]?.params?.method === "GET",
+    "candidate egress netlog request identity is incomplete or contains a preflight",
+  )
   requireValue(
     parsed.events.indexOf(before[0]) < parsed.events.indexOf(blocked[0]),
     "candidate egress netlog request chronology changed",
@@ -643,14 +651,12 @@ export function validateBlockedEgressObservation(value, firewall) {
   const controls = validateEgressControlUrls(value.control_urls, profile.control_address)
   validateReachableEgressControl(value.reachable_control, controls.rendererBefore)
   validateHarnessEgressControl(value.post_boundary_control, controls.harnessAfter)
-  const expectedSequence = value.preflight_observed
-    ? ["harness-before", "renderer-preflight", "renderer-before"]
-    : ["harness-before", "renderer-before"]
+  const expectedSequence = ["harness-before", "renderer-before"]
   const expectedFinalSequence = [...expectedSequence, "harness-after"]
   requireValue(
     value.schema === "bharatcode-candidate-egress-control-v1" &&
       value.renderer_origin === "oc://renderer" &&
-      typeof value.preflight_observed === "boolean" &&
+      value.preflight_observed === false &&
       sameStringSequence(value.request_sequence_before, expectedSequence) &&
       sameStringSequence(value.request_sequence_blocked, expectedSequence) &&
       sameStringSequence(value.request_sequence_after, expectedFinalSequence) &&
@@ -1728,8 +1734,7 @@ function startLocalEgressControl(controlAddress) {
     },
     markRendererReachable() {
       requireValue(
-        sameStringSequence(requestSequence, ["harness-before", "renderer-before"]) ||
-          sameStringSequence(requestSequence, ["harness-before", "renderer-preflight", "renderer-before"]),
+        sameStringSequence(requestSequence, ["harness-before", "renderer-before"]),
         "Candidate renderer did not uniquely reach the firewall egress control",
       )
       requestSequenceBefore = [...requestSequence]
@@ -2569,6 +2574,17 @@ function sameStringSequence(left, right) {
     left.length === right.length &&
     left.every((value, index) => typeof value === "string" && value === right[index])
   )
+}
+
+function validateCandidateNetworkSwitches(commandLine, expectedAddressSpaceArguments, label) {
+  requireValue(typeof commandLine === "string", `Candidate ${label} command line is invalid`)
+  const addressSpaceArguments = commandLine.match(/--ip-address-space-overrides=[^\s"]+/gu) ?? []
+  const proxyArguments = commandLine.match(/--(?:no-)?proxy(?:-[A-Za-z0-9-]+)*(?:=[^\s"]+)?/gu) ?? []
+  requireValue(
+    sameStringSequence(addressSpaceArguments, expectedAddressSpaceArguments),
+    `Candidate ${label} Chromium address-space override changed`,
+  )
+  requireValue(sameStringSequence(proxyArguments, ["--no-proxy-server"]), `Candidate ${label} proxy boundary changed`)
 }
 
 function networkSourceDependencies(value) {
