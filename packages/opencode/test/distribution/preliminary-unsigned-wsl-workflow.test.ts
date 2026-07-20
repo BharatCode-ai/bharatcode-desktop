@@ -12,6 +12,8 @@ import {
 const root = resolve(import.meta.dir, "../../../..")
 const workflowPath = resolve(root, ".github/workflows/bharatcode-preliminary-unsigned-wsl.yml")
 const finalWorkflowPath = resolve(root, ".github/workflows/bharatcode-next-beta-candidate.yml")
+const namespaceHelperPath = resolve(root, "packages/desktop/scripts/wsl-windows-preliminary-controller.ps1")
+const namespaceTestPath = resolve(root, "packages/desktop/scripts/wsl-windows-preliminary-controller.test.ps1")
 const acceptedWslSha = "f223e2c6b53f567667491f6f1e5667c42fb73fa0"
 const finalWorkflowSha256 = "79b4843c8249c820d0c58306aa2d39bddd0e8f52cc39ede627acf1ff9be9459f"
 const label = "bharatcode-acceptance-${{ github.run_id }}-${{ github.run_attempt }}"
@@ -113,6 +115,7 @@ function receipt() {
     result: "PRELIMINARY_UNSIGNED",
     signature_status: "PRELIMINARY_UNSIGNED",
     provenance_status: "PRELIMINARY_UNSIGNED",
+    cleanup_complete: true,
     promotable: false,
     composable: false,
     repository: "BharatCode-ai/bharatcode-desktop",
@@ -152,14 +155,9 @@ function installedAcceptanceViolations(value: string) {
     "Upload same-run unsigned TEST-only package inputs",
   )
   const uploadPath = String(uploadStep.with?.path ?? "")
-  const install =
-    step(value, "accept-preliminary-unsigned-wsl", "Install unsigned NSIS into an atomically reserved root").run ?? ""
   const acceptance =
-    step(
-      value,
-      "accept-preliminary-unsigned-wsl",
-      "Run installed Desktop through the real WSL contract and write preliminary evidence",
-    ).run ?? ""
+    step(value, "accept-preliminary-unsigned-wsl", "Run one handle-bound installed Desktop preliminary transaction")
+      .run ?? ""
   return [
     ...(build.env?.BHARATCODE_ALLOW_UNSIGNED_WINDOWS === "1" ? [] : ["explicit unsigned build authority"]),
     ...(buildRun.includes("electron-builder --win nsis --x64") ? [] : ["NSIS build"]),
@@ -172,12 +170,11 @@ function installedAcceptanceViolations(value: string) {
     uploadPath.includes("bharatcode-runtime-linux-x64-glibc")
       ? []
       : ["adjacent raw runtime inputs"]),
-    ...(install.includes('"/S"') && install.includes('"/D=$installRoot"') ? [] : ["create-only isolated NSIS install"]),
-    ...(install.includes('Join-Path $installRoot "BharatCode Beta.exe"') &&
-    install.includes("INSTALLED_DESKTOP_EXE") &&
-    install.includes("Installed preliminary Desktop version drift")
+    ...(acceptance.includes("Invoke-PreliminaryController") &&
+    acceptance.includes("-Installer $installer") &&
+    acceptance.includes("-ExpectedVersion")
       ? []
-      : ["installed Desktop resolution"]),
+      : ["one controller-owned NSIS install"]),
     ...(acceptance.includes('"--desktop-exe", process.env.INSTALLED_DESKTOP_EXE') &&
     !acceptance.includes('"--desktop-exe", process.env.UNSIGNED_INSTALLER_PATH')
       ? []
@@ -194,134 +191,104 @@ function installedAcceptanceViolations(value: string) {
     !acceptance.includes("harness_sha256: bindings.harness_sha256, authority: result.authority")
       ? []
       : ["preliminary-only harness authority"]),
+    ...(acceptance.includes("cleanup_complete: true") ? [] : ["cleanup-bound receipt"]),
   ]
 }
 
-function reservationViolations(value: string) {
-  const run =
-    step(value, "accept-preliminary-unsigned-wsl", "Install unsigned NSIS into an atomically reserved root").run ?? ""
-  const reserve = run.indexOf("CreateDirectoryW")
-  const install = run.indexOf("Start-Process -FilePath $installer")
-  return [
-    ...(run.includes("^[1-9][0-9]*$") &&
-    run.includes('"bharatcode-preliminary-unsigned-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"') &&
-    run.includes("[IO.Path]::GetDirectoryName($installRoot)") &&
-    run.includes("[IO.Path]::GetFileName($installRoot)")
-      ? []
-      : ["closed run-attempt root"]),
-    ...(run.includes('EntryPoint = "CreateDirectoryW"') &&
-    run.includes("SetLastError = true") &&
-    run.includes("if (-not [PreliminaryNativeDirectory]::CreateDirectory") &&
-    !run.includes("if (Test-Path $installRoot)")
-      ? []
-      : ["atomic create-only reservation"]),
-    ...(run.includes("[IO.FileAttributes]::ReparsePoint") && run.includes("Preliminary install root is a reparse point")
-      ? []
-      : ["reparse refusal"]),
-    ...(run.includes("[Security.Principal.WindowsIdentity]::GetCurrent().Owner.Value") &&
-    run.includes("Preliminary install root owner drift") &&
-    run.includes("[IO.FileMode]::CreateNew") &&
-    run.includes(".bharatcode-preliminary-owner") &&
-    run.includes("Preliminary install ownership record drift")
-      ? []
-      : ["owned root"]),
-    ...(run.includes("Get-ChildItem -LiteralPath $installRoot -Force") &&
-    run.includes("Preliminary install root is not empty")
-      ? []
-      : ["empty reservation"]),
-    ...(reserve >= 0 && install > reserve ? [] : ["reservation before install"]),
-  ]
-}
-
-function cleanupViolations(value: string) {
-  const workflow = parse(value)
-  const steps = workflow.jobs["accept-preliminary-unsigned-wsl"].steps ?? []
-  const installIndex = steps.findIndex((item) => item.name === "Install unsigned NSIS into an atomically reserved root")
-  const acceptanceIndex = steps.findIndex(
-    (item) => item.name === "Run installed Desktop through the real WSL contract and write preliminary evidence",
+async function namespaceAuthorityViolations(value: string) {
+  const helper = (await Bun.file(namespaceHelperPath).exists()) ? await Bun.file(namespaceHelperPath).text() : ""
+  const tests = (await Bun.file(namespaceTestPath).exists()) ? await Bun.file(namespaceTestPath).text() : ""
+  const windowsTests = step(
+    value,
+    "package-preliminary-unsigned-windows",
+    "Run Windows namespace authority hostile tests",
   )
-  const cleanupIndex = steps.findIndex((item) => item.name === "Clean preliminary install namespace")
-  const attestIndex = steps.findIndex((item) => item.name === "Attest preliminary unsigned evidence")
-  const cleanup = steps[cleanupIndex]
-  const run = cleanup?.run ?? ""
+  const transaction = step(
+    value,
+    "accept-preliminary-unsigned-wsl",
+    "Run one handle-bound installed Desktop preliminary transaction",
+  )
+  const absence = step(value, "accept-preliminary-unsigned-wsl", "Prove preliminary namespace absence")
+  const transactionRun = transaction.run ?? ""
+  const absenceRun = absence.run ?? ""
   return [
-    ...(cleanup?.if === "${{ always() }}" &&
-    cleanupIndex > installIndex &&
-    cleanupIndex > acceptanceIndex &&
-    attestIndex > cleanupIndex
+    ...(windowsTests.shell === "pwsh" &&
+    windowsTests.run?.includes("wsl-windows-preliminary-controller.test.ps1") &&
+    tests.includes("nonce collision") &&
+    tests.includes("after-create") &&
+    tests.includes("after-dacl") &&
+    tests.includes("after-file-id") &&
+    tests.includes("ancestor junction") &&
+    tests.includes("leaf junction collision") &&
+    tests.includes("dangling reparse") &&
+    tests.includes("held root replacement") &&
+    tests.includes("stale file ID") &&
+    tests.includes("stale final path") &&
+    tests.includes("DACL drift") &&
+    tests.includes("prefix-lookalike foreign process") &&
+    tests.includes("harness child/grandchild did not enter the job") &&
+    tests.includes("pinned harness overwrite") &&
+    tests.includes("pinned harness delete") &&
+    tests.includes("junction target was traversed") &&
+    tests.includes("malicious uninstaller was executed") &&
+    tests.includes("controller crash did not leave the documented orphan") &&
+    ["after-install", "after-app-open", "after-harness", "after-receipt-construction"].every((boundary) =>
+      tests.includes(boundary),
+    )
       ? []
-      : ["independent failure cleanup"]),
-    ...(run.includes("^[1-9][0-9]*$") &&
-    run.includes('"bharatcode-preliminary-unsigned-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"') &&
-    run.includes("[IO.Path]::GetDirectoryName($installRoot)") &&
-    run.includes("[IO.Path]::GetFileName($installRoot)") &&
-    !run.includes("PRELIMINARY_INSTALL_ROOT") &&
-    !run.includes("PRELIMINARY_UNINSTALLER")
+      : ["executable Windows hostile suite"]),
+    ...(helper.includes("NtCreateFile") &&
+    helper.includes("FILE_CREATE") &&
+    helper.includes("FILE_DIRECTORY_FILE") &&
+    helper.includes("SafeFileHandle") &&
+    helper.includes("RandomNumberGenerator") &&
+    helper.includes("^[0-9a-f]{64}$") &&
+    helper.includes("GetDriveTypeW") &&
+    helper.includes("DRIVE_FIXED") &&
+    helper.includes("GetFinalPathNameByHandleW") &&
+    helper.includes("VolumeSerialNumber") &&
+    helper.includes("FILE_ID_INFO") &&
+    helper.includes("AreAccessRulesProtected") &&
+    helper.includes("LocalSystemSid") &&
+    helper.includes("CREATE_SUSPENDED") &&
+    helper.includes("AssignProcessToJobObject") &&
+    helper.includes("JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE") &&
+    helper.includes("JOB_OBJECT_BASIC_PROCESS_ID_LIST") &&
+    helper.includes("JobProcessIds") &&
+    helper.includes("ContentIdentity") &&
+    helper.includes("GENERIC_READ") &&
+    helper.includes("NtSetInformationFile") &&
+    helper.includes("FILE_OPEN_REPARSE_POINT") &&
+    !helper.includes(".bharatcode-preliminary-owner") &&
+    !helper.includes("CREATE_BREAKAWAY_FROM_JOB") &&
+    !helper.includes("JOB_OBJECT_LIMIT_BREAKAWAY_OK") &&
+    !helper.includes("NamedPipe") &&
+    !helper.match(/Start-Process[^\n]*[Uu]ninstall/u) &&
+    !helper.match(/Remove-Item[^\n]*-Recurse/u)
       ? []
-      : ["independent exact root derivation"]),
-    ...(run.includes("Win32_Process") &&
-    run.includes("ExecutablePath") &&
-    run.includes("Test-OwnedPreliminaryExecutable") &&
-    run.includes("StartsWith($installPrefix, [StringComparison]::OrdinalIgnoreCase)") &&
-    run.includes("Stop-Process -Id $owned.ProcessId") &&
-    !run.match(/Get-Process[^\n]*(Name|bharatcode|electron)/iu)
+      : ["handle-bound unguessable authority"]),
+    ...(transaction.shell === "pwsh" &&
+    transactionRun.includes("wsl-windows-preliminary-controller.ps1") &&
+    transactionRun.includes("Invoke-PreliminaryController") &&
+    transactionRun.includes("runPreliminaryWindowsAcceptance(argv)") &&
+    transactionRun.includes("canonicalPreliminaryUnsignedWslJson(receipt, bindings)") &&
+    transactionRun.includes("cleanup_complete: true") &&
+    transactionRun.includes('ReceiptPath "bharatcode-wsl-preliminary-unsigned.json"')
       ? []
-      : ["root-contained process cleanup"]),
-    ...(run.includes("[IO.FileAttributes]::ReparsePoint") &&
-    run.includes("Preliminary cleanup refused a reparse root") &&
-    run.includes("install root owner drift") &&
-    run.includes("install root ownership record missing") &&
-    run.includes("install root ownership record drift")
+      : ["one live authority transaction"]),
+    ...(absence.if === "${{ always() }}" &&
+    absence.shell === "pwsh" &&
+    absenceRun.includes("Assert-PreliminaryNamespacePrefixAbsent") &&
+    !absenceRun.includes("Remove-Item") &&
+    !absenceRun.includes("Test-Path")
       ? []
-      : ["cleanup reparse refusal"]),
-    ...(run.includes('Join-Path $installRoot "Uninstall BharatCode Beta.exe"') &&
-    run.includes("Remove-Item -LiteralPath $installRoot -Recurse -Force")
-      ? []
-      : ["uninstall and namespace removal"]),
-    ...(run.includes("Preliminary install namespace survived cleanup") &&
-    run.includes("Preliminary processes survived cleanup")
-      ? []
-      : ["cleanup absence proof"]),
+      : ["non-authoritative always absence verifier"]),
+    ...(["Install unsigned NSIS into an atomically reserved root", "Clean preliminary install namespace"].some((name) =>
+      parse(value).jobs["accept-preliminary-unsigned-wsl"].steps?.some((item) => item.name === name),
+    )
+      ? ["legacy split authority steps"]
+      : []),
   ]
-}
-
-function failureBoundaryCleanupViolations(value: string) {
-  const workflow = parse(value)
-  const steps = workflow.jobs["accept-preliminary-unsigned-wsl"].steps ?? []
-  const cleanupIndex = steps.findIndex((item) => item.name === "Clean preliminary install namespace")
-  const cleanup = steps[cleanupIndex]
-  const boundaries = [
-    {
-      name: "install",
-      step: "Install unsigned NSIS into an atomically reserved root",
-      marker: "Start-Process -FilePath $installer",
-    },
-    {
-      name: "harness",
-      step: "Run installed Desktop through the real WSL contract and write preliminary evidence",
-      marker: "runPreliminaryWindowsAcceptance(argv)",
-    },
-    {
-      name: "canonicalization",
-      step: "Run installed Desktop through the real WSL contract and write preliminary evidence",
-      marker: "canonicalPreliminaryUnsignedWslJson(receipt, bindings)",
-    },
-    {
-      name: "evidence",
-      step: "Run installed Desktop through the real WSL contract and write preliminary evidence",
-      marker: 'open("bharatcode-wsl-preliminary-unsigned.json", "wx", 0o444)',
-    },
-  ]
-  return boundaries.flatMap((boundary) => {
-    const boundaryIndex = steps.findIndex((item) => item.name === boundary.step)
-    const run = steps[boundaryIndex]?.run ?? ""
-    return cleanup?.if === "${{ always() }}" &&
-      boundaryIndex >= 0 &&
-      cleanupIndex > boundaryIndex &&
-      run.includes(boundary.marker)
-      ? []
-      : [boundary.name]
-  })
 }
 
 function sourceAdmissionViolations(value: string) {
@@ -438,7 +405,7 @@ describe("preliminary unsigned Windows/WSL acceptance workflow", () => {
       value.replace('BHARATCODE_ALLOW_UNSIGNED_WINDOWS: "1"', 'BHARATCODE_ALLOW_UNSIGNED_WINDOWS: "0"'),
       value.replace("electron-builder --win nsis --x64", "electron-builder --win dir --x64"),
       value.replace('Status -ne "NotSigned"', 'Status -ne "Valid"'),
-      value.replace('"/D=$installRoot"', '"/D=C:\\\\Program Files\\\\BharatCode"'),
+      value.replace("Invoke-PreliminaryController `", "Start-Process `"),
       value.replace(
         '"--desktop-exe", process.env.INSTALLED_DESKTOP_EXE',
         '"--desktop-exe", process.env.UNSIGNED_INSTALLER_PATH',
@@ -450,56 +417,16 @@ describe("preliminary unsigned Windows/WSL acceptance workflow", () => {
         "const result = await runWindowsAcceptance(argv)",
       ),
       value.replace("authority: result.harness_authority", "authority: result.authority"),
+      value.replace("cleanup_complete: true", "cleanup_complete: false"),
     ]) {
       expect(hostile).not.toBe(value)
       expect(installedAcceptanceViolations(hostile)).not.toEqual([])
     }
   })
 
-  test("atomically reserves an empty owned root and cleans the exact namespace after every failure boundary", async () => {
+  test("keeps one unguessable handle-bound namespace authority through evidence and runs executable Windows hostile tests", async () => {
     const value = await source()
-    expect(reservationViolations(value)).toEqual([])
-    expect(cleanupViolations(value)).toEqual([])
-    expect(failureBoundaryCleanupViolations(value)).toEqual([])
-    for (const [name, hostile] of [
-      ["atomic reservation", value.replace("[PreliminaryNativeDirectory]::CreateDirectory", "Test-Path")],
-      ["reparse refusal", value.replaceAll("[IO.FileAttributes]::ReparsePoint", "[IO.FileAttributes]::Hidden")],
-      ["empty root", value.replace("Get-ChildItem -LiteralPath $installRoot -Force", "@()")],
-      ["ownership record", value.replace("[IO.FileMode]::CreateNew", "[IO.FileMode]::OpenOrCreate")],
-      ["always cleanup", value.replace("if: ${{ always() }}", "if: ${{ success() }}")],
-      [
-        "path drift",
-        value.replaceAll(
-          '"bharatcode-preliminary-unsigned-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"',
-          "$env:PRELIMINARY_INSTALL_ROOT",
-        ),
-      ],
-      ["process identity", value.replaceAll("ExecutablePath", "Name")],
-      [
-        "root removal",
-        value.replace("Remove-Item -LiteralPath $installRoot -Recurse -Force", "Remove-Item $installRoot"),
-      ],
-      [
-        "absence proof",
-        value.replace("Preliminary install namespace survived cleanup", "Preliminary cleanup complete"),
-      ],
-    ]) {
-      expect(hostile).not.toBe(value)
-      expect([...reservationViolations(hostile), ...cleanupViolations(hostile)], name).not.toEqual([])
-    }
-    for (const marker of [
-      "Start-Process -FilePath $installer",
-      "runPreliminaryWindowsAcceptance(argv)",
-      "canonicalPreliminaryUnsignedWslJson(receipt, bindings)",
-      'open("bharatcode-wsl-preliminary-unsigned.json", "wx", 0o444)',
-    ]) {
-      const hostile = value.replace(marker, 'throw new Error("simulated boundary failure")')
-      expect(hostile).not.toBe(value)
-      expect(failureBoundaryCleanupViolations(hostile)).not.toEqual([])
-      expect(step(hostile, "accept-preliminary-unsigned-wsl", "Clean preliminary install namespace").if).toBe(
-        "${{ always() }}",
-      )
-    }
+    expect(await namespaceAuthorityViolations(value)).toEqual([])
   })
 
   test("validates one closed non-promotable receipt and final consumers reject it", () => {
@@ -512,6 +439,8 @@ describe("preliminary unsigned Windows/WSL acceptance workflow", () => {
       { ...value, result: "PASS" },
       { ...value, signature_status: "NotSigned" },
       { ...value, provenance_status: "SLSA" },
+      { ...value, cleanup_complete: false },
+      Object.fromEntries(Object.entries(value).filter(([key]) => key !== "cleanup_complete")),
       { ...value, promotable: true },
       { ...value, composable: true },
       { ...value, source_sha: "8".repeat(40) },

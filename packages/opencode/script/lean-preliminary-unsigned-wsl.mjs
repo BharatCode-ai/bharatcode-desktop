@@ -23,6 +23,7 @@ export function validatePreliminaryUnsignedWslReceipt(value, bindings) {
     value,
     [
       "completed_at",
+      "cleanup_complete",
       "composable",
       "evidence_class",
       "github",
@@ -48,6 +49,7 @@ export function validatePreliminaryUnsignedWslReceipt(value, bindings) {
   for (const field of ["evidence_class", "result", "signature_status", "provenance_status"]) {
     requireValue(value[field] === CLASSIFICATION, `preliminary WSL ${field} is invalid`)
   }
+  requireValue(value.cleanup_complete === true, "preliminary WSL cleanup must be complete")
   requireValue(value.promotable === false, "preliminary WSL evidence must not be promotable")
   requireValue(value.composable === false, "preliminary WSL evidence must not be composable")
   requireValue(value.repository === "BharatCode-ai/bharatcode-desktop", "preliminary WSL repository is invalid")

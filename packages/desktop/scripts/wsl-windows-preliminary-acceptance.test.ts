@@ -146,6 +146,7 @@ describe("preliminary unsigned WSL observation adapter", () => {
       result: result.authority,
       signature_status: result.authority,
       provenance_status: result.authority,
+      cleanup_complete: true,
       promotable: false,
       composable: false,
       repository: env.GITHUB_REPOSITORY,
