@@ -713,7 +713,44 @@ jobs:
           native="$(find candidate-input -type f -name "${{ matrix.package }}-${CLI_VERSION}.tgz" -print -quit)"
           [[ -n "$meta" && -n "$native" ]]
           npm install --global --prefix "$prefix" --ignore-scripts --offline "$native" "$meta"
-          export PATH="$prefix/bin:$prefix:$PATH"
+          fail_layout() {
+            printf '%s\n' "native CLI acceptance layout validation failed" >&2
+            exit 1
+          }
+          # Run 29722640762 job 88289107783 proved a raw drive-letter PATH redirects npm's Git Bash shim to A:\_temp.
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            command -v cygpath >/dev/null || fail_layout
+            prefix_path="$(cygpath -u "$prefix")"
+            [[ "$prefix_path" == /* && "$prefix_path" != *:* ]] || fail_layout
+            package_root="$prefix_path/node_modules/bharatcode"
+            native_root="$prefix_path/node_modules/${{ matrix.package }}"
+            shim_root="$prefix_path"
+            windows_suffix=".exe"
+            layout="windows-global"
+          else
+            prefix_path="$prefix"
+            package_root="$prefix/lib/node_modules/bharatcode"
+            native_root="$prefix/lib/node_modules/${{ matrix.package }}"
+            shim_root="$prefix/bin"
+            windows_suffix=""
+            layout="unix-global"
+          fi
+          [[ -f "$package_root/bin/bharatcode.mjs" ]] || fail_layout
+          [[ -f "$package_root/script/distribution.mjs" ]] || fail_layout
+          [[ -f "$native_root/bin/bharatcode${windows_suffix}" ]] || fail_layout
+          [[ -f "$shim_root/bharatcode" ]] || fail_layout
+          [[ "$RUNNER_OS" != "Windows" || -f "$shim_root/bharatcode.cmd" ]] || fail_layout
+          [[ "$RUNNER_OS" != "Windows" || -f "$shim_root/bharatcode.ps1" ]] || fail_layout
+          [[ "$RUNNER_OS" != "Windows" ]] || grep -F 'node_modules/bharatcode/bin/bharatcode.mjs' "$shim_root/bharatcode" >/dev/null || fail_layout
+          export PATH="$shim_root:$PATH"
+          [[ "$(command -v bharatcode)" == "$shim_root/bharatcode" ]] || fail_layout
+          export npm_config_prefix="$prefix"
+          export npm_config_offline=true
+          npx_cache="$prefix_path/.npx-cache"
+          [[ ! -e "$npx_cache" ]] || fail_layout
+          mkdir "$npx_cache"
+          export npm_config_cache="$npx_cache"
+          printf '%s\n' "native CLI layout verified: $layout"
           [[ "$(bharatcode --version)" == "$CLI_VERSION" ]]
           npx --no-install bharatcode --version | grep -Fx "$CLI_VERSION"
 

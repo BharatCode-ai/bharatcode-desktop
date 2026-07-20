@@ -429,10 +429,14 @@ async function runWorkflowMetaPackageFixture(script: string) {
         violations.push("offline host install")
       } else {
         const consumer = resolve(root, "consumer")
+        const npxCache = resolve(prefix, ".npx-cache")
         mkdirSync(consumer)
+        mkdirSync(npxCache)
         const env = {
           ...Bun.env,
           PATH: `${resolve(prefix, "bin")}:${Bun.env.PATH ?? ""}`,
+          npm_config_cache: npxCache,
+          npm_config_offline: "true",
           npm_config_prefix: prefix,
         }
         const direct = Bun.spawnSync([resolve(prefix, "bin", "bharatcode"), "--version"], {
@@ -456,6 +460,106 @@ async function runWorkflowMetaPackageFixture(script: string) {
       }
     }
     return violations
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+}
+
+function runWindowsGlobalAcceptanceFixture(run: string) {
+  const base = process.env.TMPDIR ?? tmpdir()
+  const root = mkdtempSync(resolve(base, "lean-windows-global-"))
+  const version = "0.0.0-run4-fixture.1"
+  try {
+    const prefix = resolve(root, "windows-prefix")
+    const shadowPrefix = resolve(root, String.raw`\a\_temp`, "bharatcode-cli-native")
+    const tools = resolve(root, "tools")
+    const launcher = resolve(prefix, "node_modules/bharatcode/bin/bharatcode.mjs")
+    const distribution = resolve(prefix, "node_modules/bharatcode/script/distribution.mjs")
+    const native = resolve(prefix, "node_modules/bharatcode-windows-x64/bin/bharatcode.exe")
+    for (const path of [dirname(launcher), dirname(distribution), dirname(native), shadowPrefix, tools]) {
+      mkdirSync(path, { recursive: true })
+    }
+    writeFileSync(launcher, '#!/usr/bin/env bash\n[[ "${1:-}" == "--version" ]]\nprintf "%s\\n" "$CLI_VERSION"\n')
+    writeFileSync(distribution, "export const fixture = true\n")
+    writeFileSync(native, "fixture Windows x64 binary\n")
+    chmodSync(launcher, 0o755)
+
+    const shim = `#!/usr/bin/env bash
+set -euo pipefail
+basedir=$(dirname "$(printf '%s\\n' "$0" | sed -e 's,\\\\,/,g')")
+basedir=$(cygpath -w "$basedir")
+target="$basedir/node_modules/bharatcode/bin/bharatcode.mjs"
+if [[ ! -f "$target" ]]; then
+  printf "Error: Cannot find module '%s'\\n" "$target" >&2
+  exit 1
+fi
+exec "$target" "$@"
+`
+    writeFileSync(resolve(prefix, "bharatcode"), shim)
+    writeFileSync(resolve(prefix, "bharatcode.cmd"), "fixture cmd shim\n")
+    writeFileSync(resolve(prefix, "bharatcode.ps1"), "fixture PowerShell shim\n")
+    cpSync(resolve(prefix, "bharatcode"), resolve(shadowPrefix, "bharatcode"))
+    chmodSync(resolve(prefix, "bharatcode"), 0o755)
+    chmodSync(resolve(shadowPrefix, "bharatcode"), 0o755)
+
+    writeFileSync(
+      resolve(tools, "cygpath"),
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == "-u" ]]; then
+  [[ "$2" == 'D:\\a\\_temp/bharatcode-cli-native' ]]
+  printf '%s\\n' "$WINDOWS_PREFIX_ROOT"
+  exit 0
+fi
+[[ "$1" == "-w" ]]
+if [[ "$2" == /a/_temp/* ]]; then
+  value="${"$"}{2#/a}"
+  printf 'A:%s\\n' "${"$"}{value//\//\\\\}"
+  exit 0
+fi
+printf '%s\\n' "$2"
+`,
+    )
+    writeFileSync(
+      resolve(tools, "npm"),
+      `#!/usr/bin/env bash
+set -euo pipefail
+[[ " $* " == *" --global "* ]]
+[[ " $* " == *" --prefix D:\\a\\_temp/bharatcode-cli-native "* ]]
+[[ " $* " == *" --ignore-scripts "* && " $* " == *" --offline "* ]]
+printf 'added 2 packages\\n'
+`,
+    )
+    writeFileSync(
+      resolve(tools, "npx"),
+      `#!/usr/bin/env bash
+set -euo pipefail
+[[ "$npm_config_prefix" == 'D:\\a\\_temp/bharatcode-cli-native' ]]
+[[ "$npm_config_offline" == "true" ]]
+[[ "$npm_config_cache" == "$WINDOWS_PREFIX_ROOT/.npx-cache" ]]
+[[ -d "$npm_config_cache" && -z "$(find "$npm_config_cache" -mindepth 1 -print -quit)" ]]
+[[ "$#" -eq 3 && "$1" == "--no-install" && "$2" == "bharatcode" && "$3" == "--version" ]]
+exec bharatcode --version
+`,
+    )
+    for (const name of ["cygpath", "npm", "npx"]) chmodSync(resolve(tools, name), 0o755)
+
+    mkdirSync(resolve(root, "candidate-input"))
+    writeFileSync(resolve(root, `candidate-input/bharatcode-${version}.tgz`), "fixture meta tarball\n")
+    writeFileSync(resolve(root, `candidate-input/bharatcode-windows-x64-${version}.tgz`), "fixture native tarball\n")
+    return Bun.spawnSync(["bash", "-c", run.replaceAll("${{ matrix.package }}", "bharatcode-windows-x64")], {
+      cwd: root,
+      env: {
+        ...Bun.env,
+        CLI_VERSION: version,
+        PATH: `${tools}:${Bun.env.PATH ?? ""}`,
+        RUNNER_OS: "Windows",
+        RUNNER_TEMP: String.raw`D:\a\_temp`,
+        WINDOWS_PREFIX_ROOT: prefix,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    })
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
@@ -788,6 +892,57 @@ function metaPackageBuildViolations(run: string) {
     "manifestBytes.length !== extractedManifest.stdout.length || digest(manifestBytes) !== digest(extractedManifest.stdout)",
   ]
   return required.filter((fragment) => !run.includes(fragment))
+}
+
+function nativeAcceptanceLayoutViolations(run: string) {
+  const required = [
+    "Run 29722640762 job 88289107783",
+    "printf '%s\\n' \"native CLI acceptance layout validation failed\" >&2",
+    'if [[ "$RUNNER_OS" == "Windows" ]]',
+    'prefix_path="$(cygpath -u "$prefix")"',
+    'package_root="$prefix_path/node_modules/bharatcode"',
+    'native_root="$prefix_path/node_modules/${{ matrix.package }}"',
+    'shim_root="$prefix_path"',
+    'package_root="$prefix/lib/node_modules/bharatcode"',
+    'native_root="$prefix/lib/node_modules/${{ matrix.package }}"',
+    'shim_root="$prefix/bin"',
+    '[[ -f "$package_root/bin/bharatcode.mjs" ]]',
+    '[[ -f "$package_root/script/distribution.mjs" ]]',
+    '[[ -f "$native_root/bin/bharatcode${windows_suffix}" ]]',
+    '[[ -f "$shim_root/bharatcode" ]]',
+    '[[ "$RUNNER_OS" != "Windows" || -f "$shim_root/bharatcode.cmd" ]]',
+    '[[ "$RUNNER_OS" != "Windows" || -f "$shim_root/bharatcode.ps1" ]]',
+    "grep -F 'node_modules/bharatcode/bin/bharatcode.mjs' \"$shim_root/bharatcode\"",
+    'export PATH="$shim_root:$PATH"',
+    '[[ "$(command -v bharatcode)" == "$shim_root/bharatcode" ]]',
+    'export npm_config_prefix="$prefix"',
+    "export npm_config_offline=true",
+    'npx_cache="$prefix_path/.npx-cache"',
+    '[[ ! -e "$npx_cache" ]] || fail_layout',
+    'mkdir "$npx_cache"',
+    'export npm_config_cache="$npx_cache"',
+    "printf '%s\\n' \"native CLI layout verified: $layout\"",
+  ]
+  const install = run.indexOf("npm install --global")
+  const layout = run.indexOf('if [[ "$RUNNER_OS" == "Windows" ]]')
+  const path = run.indexOf('export PATH="$shim_root:$PATH"')
+  const cache = run.indexOf('export npm_config_cache="$npx_cache"')
+  const diagnostic = run.indexOf("native CLI layout verified: $layout")
+  const direct = run.indexOf('[[ "$(bharatcode --version)" == "$CLI_VERSION" ]]')
+  const npx = run.indexOf("npx --no-install bharatcode --version")
+  return [
+    ...required.filter((fragment) => !run.includes(fragment)),
+    ...(run.includes('export PATH="$prefix/bin:$prefix:$PATH"') ? ["raw Windows prefix in PATH"] : []),
+    ...(install >= 0 &&
+    install < layout &&
+    layout < path &&
+    path < cache &&
+    cache < diagnostic &&
+    diagnostic < direct &&
+    direct < npx
+      ? []
+      : ["acceptance ordering"]),
+  ]
 }
 
 function runOnePackagingViolations(value: string) {
@@ -1143,6 +1298,34 @@ describe("lean next-beta candidate workflow", () => {
         ),
       ),
     ).not.toEqual([])
+  })
+
+  test("normalizes and validates the Windows npm global layout before direct and npx execution", async () => {
+    const value = await source()
+    const run = runStep(value, "accept-cli-native", "Install meta and platform tarballs globally, then execute npx")
+    const result = runWindowsGlobalAcceptanceFixture(run)
+    expect({ exitCode: result.exitCode, stderr: result.stderr.toString() }).toEqual({ exitCode: 0, stderr: "" })
+    expect(result.stdout.toString()).toContain("native CLI layout verified: windows-global")
+    expect(
+      result.stdout
+        .toString()
+        .split("\n")
+        .filter((line) => line === "0.0.0-run4-fixture.1"),
+    ).toHaveLength(1)
+    expect(nativeAcceptanceLayoutViolations(run)).toEqual([])
+    const rawPrefix = run.replace('prefix_path="$(cygpath -u "$prefix")"', 'prefix_path="$prefix"')
+    const hostile = runWindowsGlobalAcceptanceFixture(rawPrefix)
+    expect(hostile.exitCode).not.toBe(0)
+    expect(hostile.stderr.toString()).toBe("native CLI acceptance layout validation failed\n")
+    expect(nativeAcceptanceLayoutViolations(rawPrefix)).not.toEqual([])
+    const validationStart = run.indexOf("fail_layout() {")
+    const executionStart = run.indexOf('[[ "$(bharatcode --version)" == "$CLI_VERSION" ]]')
+    expect(validationStart).toBeGreaterThan(0)
+    expect(executionStart).toBeGreaterThan(validationStart)
+    const failOpen = `${run.slice(0, validationStart)}export PATH="$prefix/bin:$prefix:$PATH"\n${run.slice(executionStart)}`
+    const reproduced = runWindowsGlobalAcceptanceFixture(failOpen)
+    expect(reproduced.exitCode).not.toBe(0)
+    expect(reproduced.stderr.toString()).toContain("A:\\_temp\\bharatcode-cli-native")
   })
 
   test("binds Run-1 Linux and macOS package evidence to the real AppRun target and protected signer identity", async () => {
