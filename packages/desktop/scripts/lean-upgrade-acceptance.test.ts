@@ -485,6 +485,93 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
     }
   })
 
+  test("accepts only the exact optional Chromium private-network preflight contract", async () => {
+    const controlUrl = "http://10.20.30.40:43125/bharatcode-firewall-control"
+    const harness = acceptance.routeEgressControlRequest(new Request(controlUrl), controlUrl)
+    expect(harness.kind).toBe("harness-get")
+    expect(harness.response.status).toBe(204)
+    expect(Object.fromEntries(harness.response.headers)).toEqual({
+      "cache-control": "no-store",
+      connection: "close",
+      "x-bharatcode-egress-control": "active",
+    })
+    expect(await harness.response.text()).toBe("")
+
+    const preflight = acceptance.routeEgressControlRequest(
+      new Request(controlUrl, {
+        method: "OPTIONS",
+        headers: {
+          Origin: "oc://renderer",
+          "Access-Control-Request-Method": "GET",
+          "Access-Control-Request-Private-Network": "true",
+        },
+      }),
+      controlUrl,
+    )
+    expect(preflight.kind).toBe("renderer-preflight")
+    expect(preflight.response.status).toBe(204)
+    expect(Object.fromEntries(preflight.response.headers)).toEqual({
+      "access-control-allow-methods": "GET",
+      "access-control-allow-origin": "oc://renderer",
+      "access-control-allow-private-network": "true",
+      "access-control-max-age": "0",
+      "cache-control": "no-store",
+      connection: "close",
+    })
+    expect(await preflight.response.text()).toBe("")
+
+    const renderer = acceptance.routeEgressControlRequest(
+      new Request(controlUrl, { headers: { Origin: "oc://renderer" } }),
+      controlUrl,
+    )
+    expect(renderer.kind).toBe("renderer-get")
+    expect(renderer.response.status).toBe(204)
+    expect(Object.fromEntries(renderer.response.headers)).toEqual({
+      "access-control-expose-headers": "Cache-Control, X-BharatCode-Egress-Control",
+      "access-control-allow-origin": "oc://renderer",
+      "cache-control": "no-store",
+      connection: "close",
+      "x-bharatcode-egress-control": "active",
+    })
+    expect(await renderer.response.text()).toBe("")
+
+    for (const hostile of [
+      new Request(controlUrl, {
+        method: "OPTIONS",
+        headers: {
+          Origin: "https://hostile.example",
+          "Access-Control-Request-Method": "GET",
+          "Access-Control-Request-Private-Network": "true",
+        },
+      }),
+      new Request(controlUrl, {
+        method: "OPTIONS",
+        headers: { Origin: "oc://renderer", "Access-Control-Request-Method": "GET" },
+      }),
+      new Request(controlUrl, {
+        method: "OPTIONS",
+        headers: {
+          Origin: "oc://renderer",
+          "Access-Control-Request-Method": "GET",
+          "Access-Control-Request-Private-Network": "false",
+        },
+      }),
+      new Request(controlUrl, {
+        method: "OPTIONS",
+        headers: {
+          Origin: "oc://renderer",
+          "Access-Control-Request-Method": "POST",
+          "Access-Control-Request-Private-Network": "true",
+        },
+      }),
+      new Request(controlUrl, { headers: { Origin: "https://hostile.example" } }),
+      new Request(controlUrl, { method: "POST", headers: { Origin: "oc://renderer" } }),
+      new Request(`${controlUrl}/foreign`, { headers: { Origin: "oc://renderer" } }),
+    ]) {
+      expect(() => acceptance.routeEgressControlRequest(hostile, controlUrl)).toThrow()
+    }
+  })
+
   test("requires enabled active firewall profiles and effective candidate-process egress blocking", () => {
     const firewall = {
       schema: "bharatcode-windows-firewall-observation-v1",
@@ -520,22 +607,65 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
         body: "",
         url: "http://10.20.30.40:43125/bharatcode-firewall-control",
         redirected: false,
+        cache_control: "no-store",
+        control_header: "active",
+      },
+      post_boundary_control: {
+        status: 204,
+        body: "",
+        url: "http://10.20.30.40:43125/bharatcode-firewall-control",
+        redirected: false,
+        cache_control: "no-store",
+        connection: "close",
         control_header: "active",
       },
       request_failed: true,
+      preflight_observed: false,
+      request_sequence_before: ["harness-get", "renderer-get"],
+      request_sequence_blocked: ["harness-get", "renderer-get"],
+      request_sequence_after: ["harness-get", "renderer-get", "harness-get"],
       requests_before: 2,
-      requests_after: 2,
+      requests_blocked: 2,
+      requests_after: 3,
     }
     expect(acceptance.validateBlockedEgressObservation(egress, firewall)).toBeTrue()
+    expect(
+      acceptance.validateBlockedEgressObservation(
+        {
+          ...egress,
+          preflight_observed: true,
+          request_sequence_before: ["harness-get", "renderer-preflight", "renderer-get"],
+          request_sequence_blocked: ["harness-get", "renderer-preflight", "renderer-get"],
+          request_sequence_after: ["harness-get", "renderer-preflight", "renderer-get", "harness-get"],
+          requests_before: 3,
+          requests_blocked: 3,
+          requests_after: 4,
+        },
+        firewall,
+      ),
+    ).toBeTrue()
     for (const hostile of [
       { ...egress, renderer_origin: "https://hostile.example" },
       { ...egress, control_url: "http://127.0.0.1:43125/bharatcode-firewall-control" },
       { ...egress, control_url: "http://10.20.30.40:99999/bharatcode-firewall-control" },
       { ...egress, reachable_control: { ...egress.reachable_control, status: 0 } },
       { ...egress, reachable_control: { ...egress.reachable_control, control_header: null } },
-      { ...egress, requests_before: 1, requests_after: 1 },
+      { ...egress, reachable_control: { ...egress.reachable_control, cache_control: null } },
+      { ...egress, post_boundary_control: { ...egress.post_boundary_control, status: 0 } },
+      { ...egress, post_boundary_control: { ...egress.post_boundary_control, connection: "keep-alive" } },
+      { ...egress, preflight_observed: true },
+      { ...egress, request_sequence_before: ["harness-get", "renderer-get", "renderer-get"] },
+      {
+        ...egress,
+        request_sequence_blocked: ["harness-get", "renderer-get", "renderer-preflight"],
+        request_sequence_after: ["harness-get", "renderer-get", "renderer-preflight", "harness-get"],
+        requests_blocked: 3,
+        requests_after: 4,
+      },
+      { ...egress, request_sequence_after: ["harness-get", "renderer-get"], requests_after: 2 },
+      { ...egress, requests_before: 1, requests_blocked: 1, requests_after: 2 },
       { ...egress, request_failed: false },
-      { ...egress, requests_after: 3 },
+      { ...egress, requests_after: 4 },
     ]) {
       expect(() => acceptance.validateBlockedEgressObservation(hostile, firewall)).toThrow()
     }

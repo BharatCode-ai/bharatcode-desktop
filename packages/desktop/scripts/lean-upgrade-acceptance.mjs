@@ -477,11 +477,17 @@ export function validateBlockedEgressObservation(value, firewall) {
     value,
     [
       "control_url",
+      "post_boundary_control",
+      "preflight_observed",
       "reachable_control",
       "renderer_origin",
       "request_failed",
+      "request_sequence_after",
+      "request_sequence_before",
+      "request_sequence_blocked",
       "requests_after",
       "requests_before",
+      "requests_blocked",
       "schema",
     ],
     "candidate egress control observation",
@@ -495,6 +501,11 @@ export function validateBlockedEgressObservation(value, firewall) {
   }
   const port = Number(control.port)
   validateReachableEgressControl(value.reachable_control, value.control_url)
+  validateHarnessEgressControl(value.post_boundary_control, value.control_url)
+  const expectedSequence = value.preflight_observed
+    ? ["harness-get", "renderer-preflight", "renderer-get"]
+    : ["harness-get", "renderer-get"]
+  const expectedFinalSequence = [...expectedSequence, "harness-get"]
   requireValue(
     value.schema === "bharatcode-candidate-egress-control-v1" &&
       value.renderer_origin === "oc://renderer" &&
@@ -508,23 +519,109 @@ export function validateBlockedEgressObservation(value, firewall) {
       Number.isSafeInteger(port) &&
       port >= 1 &&
       port <= 65535 &&
+      typeof value.preflight_observed === "boolean" &&
+      sameStringSequence(value.request_sequence_before, expectedSequence) &&
+      sameStringSequence(value.request_sequence_blocked, expectedSequence) &&
+      sameStringSequence(value.request_sequence_after, expectedFinalSequence) &&
       value.request_failed === true &&
-      value.requests_before === 2 &&
-      value.requests_after === 2,
+      value.requests_before === expectedSequence.length &&
+      value.requests_blocked === expectedSequence.length &&
+      value.requests_after === expectedFinalSequence.length,
     "Candidate process did not prove enforced non-loopback egress blocking",
   )
   return true
 }
 
+export function routeEgressControlRequest(request, controlUrl) {
+  requireValue(request instanceof Request, "Firewall egress control request is invalid")
+  requireValue(typeof controlUrl === "string" && request.url === controlUrl, "Firewall egress control URL changed")
+  const origin = request.headers.get("origin")
+  const requestedMethod = request.headers.get("access-control-request-method")
+  const requestedPrivateNetwork = request.headers.get("access-control-request-private-network")
+  const requestedHeaders = request.headers.get("access-control-request-headers")
+  if (request.method === "OPTIONS") {
+    requireValue(
+      origin === "oc://renderer" &&
+        requestedMethod === "GET" &&
+        requestedPrivateNetwork === "true" &&
+        requestedHeaders === null,
+      "Firewall egress control preflight identity is invalid",
+    )
+    return {
+      kind: "renderer-preflight",
+      response: new Response(null, {
+        status: 204,
+        headers: {
+          "access-control-allow-methods": "GET",
+          "access-control-allow-origin": "oc://renderer",
+          "access-control-allow-private-network": "true",
+          "access-control-max-age": "0",
+          "cache-control": "no-store",
+          connection: "close",
+        },
+      }),
+    }
+  }
+  requireValue(
+    request.method === "GET" &&
+      requestedMethod === null &&
+      requestedPrivateNetwork === null &&
+      requestedHeaders === null &&
+      (origin === null || origin === "oc://renderer"),
+    "Firewall egress control request identity is invalid",
+  )
+  return {
+    kind: origin === null ? "harness-get" : "renderer-get",
+    response: new Response(null, {
+      status: 204,
+      headers: {
+        ...(origin === "oc://renderer"
+          ? {
+              "access-control-allow-origin": "oc://renderer",
+              "access-control-expose-headers": "Cache-Control, X-BharatCode-Egress-Control",
+            }
+          : {}),
+        "cache-control": "no-store",
+        connection: "close",
+        "x-bharatcode-egress-control": "active",
+      },
+    }),
+  }
+}
+
 function validateReachableEgressControl(value, controlUrl) {
-  requireRecord(value, ["body", "control_header", "redirected", "status", "url"], "reachable candidate egress control")
+  requireRecord(
+    value,
+    ["body", "cache_control", "control_header", "redirected", "status", "url"],
+    "reachable candidate egress control",
+  )
   requireValue(
     value.status === 204 &&
       value.body === "" &&
       value.url === controlUrl &&
       value.redirected === false &&
+      value.cache_control === "no-store" &&
       value.control_header === "active",
     "Candidate renderer did not reach the exact pre-boundary egress control",
+  )
+  return true
+}
+
+function validateHarnessEgressControl(value, controlUrl) {
+  requireRecord(
+    value,
+    ["body", "cache_control", "connection", "control_header", "redirected", "status", "url"],
+    "harness egress control observation",
+  )
+  requireValue(
+    value.status === 204 &&
+      value.body === "" &&
+      value.url === controlUrl &&
+      value.redirected === false &&
+      value.cache_control === "no-store" &&
+      value.connection === "close" &&
+      value.control_header === "active",
+    "Harness could not prove the exact firewall control remained reachable",
   )
   return true
 }
@@ -1289,6 +1386,11 @@ async function observeShareSurface(profile, desktop, remoteDebuggingPort, audit,
     ),
     7,
   )
+  const requestSequenceBlocked = egress.requestSequence
+  const requestsBlocked = egress.requests
+  const postBoundaryControl = await observeHarnessEgressControl(egress)
+  validateHarnessEgressControl(postBoundaryControl, egress.url)
+  egress.markPostBoundaryReachable()
   await delay(2_000)
   const afterRecords = await observeWindowsProcesses(profile.env)
   const after = validateOwnedProcessTree(afterRecords, {
@@ -1305,8 +1407,14 @@ async function observeShareSurface(profile, desktop, remoteDebuggingPort, audit,
       renderer_origin: evaluation.renderer_origin,
       control_url: egress.url,
       reachable_control: reachableControl,
+      post_boundary_control: postBoundaryControl,
       request_failed: evaluation.egress_request_failed,
+      preflight_observed: egress.preflightObserved,
+      request_sequence_before: egress.requestSequenceBefore,
+      request_sequence_blocked: requestSequenceBlocked,
+      request_sequence_after: egress.requestSequence,
       requests_before: egress.requestsBefore,
+      requests_blocked: requestsBlocked,
       requests_after: egress.requests,
     },
     firewall,
@@ -1369,40 +1477,63 @@ function startLocalShareAudit() {
 
 function startLocalEgressControl(controlAddress) {
   requireValue(isPrivateIpv4(controlAddress), "Firewall egress control address is invalid")
-  let requests = 0
-  let requestsBefore = 0
+  const requestSequence = []
+  let requestSequenceBefore = []
+  let controlUrl
   const server = Bun.serve({
     hostname: controlAddress,
     port: 0,
     fetch(request) {
-      requests += 1
-      if (new URL(request.url).pathname !== ACCEPTANCE_EGRESS_PATH || request.method !== "GET") {
-        return new Response("invalid", { status: 400 })
+      try {
+        const routed = routeEgressControlRequest(request, controlUrl)
+        requestSequence.push(routed.kind)
+        return routed.response
+      } catch {
+        requestSequence.push("invalid")
+        return new Response(null, { status: 403 })
       }
-      return new Response(null, {
-        status: 204,
-        headers: {
-          "access-control-allow-origin": "oc://renderer",
-          "x-bharatcode-egress-control": "active",
-        },
-      })
     },
   })
+  controlUrl = `http://${controlAddress}:${server.port}${ACCEPTANCE_EGRESS_PATH}`
   return {
-    url: `http://${controlAddress}:${server.port}${ACCEPTANCE_EGRESS_PATH}`,
+    url: controlUrl,
     get requestsBefore() {
-      return requestsBefore
+      return requestSequenceBefore.length
     },
     get requests() {
-      return requests
+      return requestSequence.length
+    },
+    get preflightObserved() {
+      return requestSequenceBefore.includes("renderer-preflight")
+    },
+    get requestSequenceBefore() {
+      return [...requestSequenceBefore]
+    },
+    get requestSequence() {
+      return [...requestSequence]
     },
     markReachable() {
-      requireValue(requests === 1, "Firewall egress control reachability request was not unique")
+      requireValue(
+        sameStringSequence(requestSequence, ["harness-get"]),
+        "Firewall egress control reachability request was not unique",
+      )
       return true
     },
     markRendererReachable() {
-      requireValue(requests === 2, "Candidate renderer did not uniquely reach the firewall egress control")
-      requestsBefore = requests
+      requireValue(
+        sameStringSequence(requestSequence, ["harness-get", "renderer-get"]) ||
+          sameStringSequence(requestSequence, ["harness-get", "renderer-preflight", "renderer-get"]),
+        "Candidate renderer did not uniquely reach the firewall egress control",
+      )
+      requestSequenceBefore = [...requestSequence]
+      return true
+    },
+    markPostBoundaryReachable() {
+      requireValue(
+        requestSequenceBefore.length > 0 &&
+          sameStringSequence(requestSequence, [...requestSequenceBefore, "harness-get"]),
+        "Post-boundary harness control sequence is invalid",
+      )
       return true
     },
     stop: async (force) => {
@@ -1413,16 +1544,23 @@ function startLocalEgressControl(controlAddress) {
 }
 
 async function proveEgressControlReachability(egress) {
+  const observation = await observeHarnessEgressControl(egress)
+  validateHarnessEgressControl(observation, egress.url)
+  egress.markReachable()
+  return observation
+}
+
+async function observeHarnessEgressControl(egress) {
   const response = await fetch(egress.url, { redirect: "error", signal: AbortSignal.timeout(5_000) })
-  requireValue(
-    response.status === 204 &&
-      response.url === egress.url &&
-      response.redirected === false &&
-      response.headers.get("x-bharatcode-egress-control") === "active" &&
-      (await response.text()) === "",
-    "Harness-owned non-loopback egress control is not exactly reachable",
-  )
-  return egress.markReachable()
+  return {
+    status: response.status,
+    body: await response.text(),
+    url: response.url,
+    redirected: response.redirected,
+    cache_control: response.headers.get("cache-control"),
+    connection: response.headers.get("connection"),
+    control_header: response.headers.get("x-bharatcode-egress-control"),
+  }
 }
 
 async function observeFirewallProfiles(env) {
@@ -1513,6 +1651,7 @@ async function evaluateRendererEgressControl(webSocketDebuggerUrl, egressControl
         body: await response.text(),
         url: response.url,
         redirected: response.redirected,
+        cache_control: response.headers.get("cache-control"),
         control_header: response.headers.get("x-bharatcode-egress-control"),
       }
     })()
@@ -2205,6 +2344,15 @@ function samePidSet(left, right) {
     left.length === right.length &&
     left.every((pid, index) => Number.isSafeInteger(pid) && pid > 0 && pid === right[index]) &&
     left.every((pid, index) => index === 0 || left[index - 1] < pid)
+  )
+}
+
+function sameStringSequence(left, right) {
+  return (
+    Array.isArray(left) &&
+    Array.isArray(right) &&
+    left.length === right.length &&
+    left.every((value, index) => typeof value === "string" && value === right[index])
   )
 }
 
