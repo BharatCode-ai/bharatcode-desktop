@@ -405,6 +405,27 @@ describe("migration capture", () => {
     )
   })
 
+  test.each([
+    ["accessTokenValue", "opaqueAccessTokenValue0123456789", (secret: string) => secret],
+    ["access-token-value", "opaqueKebabTokenValue0123456789", (secret: string) => `prefix ${secret} suffix`],
+    ["authorizationHeader", "opaqueAuthorizationHeaderValue0123456789", (secret: string) => secret],
+    ["authorization_header", "opaqueSnakeAuthorizationHeader0123456789", (secret: string) => `prefix ${secret} suffix`],
+  ])("rejects a retained opaque credential from the closed %s key grammar", async (key, secret, retained) => {
+    await using tmp = await tmpdir()
+    const data = path.join(tmp.path, "legacy-data")
+    await mkdir(data, { recursive: true })
+    const database = new Database(path.join(data, "opencode.db"), { create: true })
+    database.run("CREATE TABLE message(id TEXT PRIMARY KEY, data TEXT NOT NULL)")
+    database.run("INSERT INTO message VALUES ('message_1', ?)", [
+      JSON.stringify({ role: "assistant", text: retained(secret), provider: { [key]: secret } }),
+    ])
+    database.close()
+
+    await expect(
+      captureMigrationSource(databaseSource(data, `credential-key-${key}`), target(tmp.path)),
+    ).rejects.toThrow("credential bytes")
+  })
+
   test("rejects an opaque authorization removed from permission JSON but retained in a title", async () => {
     await using tmp = await tmpdir()
     const data = path.join(tmp.path, "legacy-data")
@@ -431,10 +452,16 @@ describe("migration capture", () => {
     database.run("INSERT INTO message VALUES ('message_1', ?)", [
       JSON.stringify({
         role: "assistant",
-        text: "Use a password manager for safety",
+        text: "Use a password manager for safety; opaqueNearKeyValue0123456789 is harmless prose",
         passwordHint: "Use a password manager for safety",
         tokenizer: "ordinary tokenizer prose",
+        tokenCount: 42,
         commander: "ordinary command prose",
+        provider: {
+          passwordHint: "opaqueNearKeyValue0123456789",
+          tokenizer: "opaqueNearKeyValue0123456789",
+          tokenCount: "opaqueNearKeyValue0123456789",
+        },
       }),
     ])
     database.close()
@@ -444,7 +471,7 @@ describe("migration capture", () => {
       readonly: true,
     })
     expect(sealed.query("SELECT data FROM message").get()).toEqual({
-      data: '{"role":"assistant","text":"Use a password manager for safety"}',
+      data: '{"role":"assistant","text":"Use a password manager for safety; opaqueNearKeyValue0123456789 is harmless prose"}',
     })
     sealed.close()
   })
@@ -565,7 +592,7 @@ describe("migration capture", () => {
     30_000,
   )
 
-  test("serializes WAL-visible rows without source mutation or SQLite temp spill", async () => {
+  test("serializes WAL-visible rows with durable main/WAL preservation and no SQLite temp spill", async () => {
     await using tmp = await tmpdir()
     const data = path.join(tmp.path, "legacy-data")
     const monitoredTemp = path.join(tmp.path, "sqlite-temp")
@@ -669,6 +696,54 @@ describe("migration capture", () => {
     writer.close()
     const reopened = new Database(legacyDatabase, { readonly: true })
     expect(databaseHealth(reopened, "payload")).toEqual({ integrity_check: "ok", rows: 1 })
+    reopened.close()
+  }, 30_000)
+
+  test("rejects an oversized discarded BLOB before candidate copying or base64 identity allocation", async () => {
+    await using tmp = await tmpdir()
+    const data = path.join(tmp.path, "legacy-data")
+    const monitoredTemp = path.join(tmp.path, "sqlite-temp")
+    const base64Marker = path.join(tmp.path, "base64-called")
+    await mkdir(data, { recursive: true })
+    await mkdir(monitoredTemp, { recursive: true })
+    const legacyDatabase = path.join(data, "opencode.db")
+    const writer = new Database(legacyDatabase, { create: true })
+    writer.run("PRAGMA journal_mode = WAL")
+    writer.run("PRAGMA wal_autocheckpoint = 0")
+    writer.run("CREATE TABLE permission(project_id TEXT PRIMARY KEY, data TEXT NOT NULL)")
+    writer.run("INSERT INTO permission VALUES ('project_1', zeroblob(?))", [24 * 1024 * 1024])
+    const sourceMain = await readFile(legacyDatabase)
+    const sourceWal = await readFile(`${legacyDatabase}-wal`)
+
+    const child = Bun.spawn(
+      [
+        process.execPath,
+        "test/fixture/migration-capture-worker.ts",
+        JSON.stringify({
+          source: databaseSource(data, "candidate-copy-budget"),
+          destination: target(tmp.path),
+          observeBase64: base64Marker,
+          reportFailure: true,
+        }),
+      ],
+      { cwd: path.join(import.meta.dir, "../.."), env: { ...process.env, TMPDIR: monitoredTemp }, stderr: "pipe" },
+    )
+    expect(await child.exited).toBe(0)
+    const report = JSON.parse(await new Response(child.stdout).text()) as {
+      error: string
+      rssBefore: number
+      rssAfter: number
+    }
+    expect(report.error).toContain("credential verification budget")
+    expect(report.rssAfter - report.rssBefore).toBeLessThan(128 * 1024 * 1024)
+    expect(await Bun.file(base64Marker).exists()).toBe(false)
+    expect(await readdir(monitoredTemp)).toEqual([])
+    expect(await readFile(legacyDatabase)).toEqual(sourceMain)
+    expect(await readFile(`${legacyDatabase}-wal`)).toEqual(sourceWal)
+    expect(databaseHealth(writer, "permission")).toEqual({ integrity_check: "ok", rows: 1 })
+    writer.close()
+    const reopened = new Database(legacyDatabase, { readonly: true })
+    expect(databaseHealth(reopened, "permission")).toEqual({ integrity_check: "ok", rows: 1 })
     reopened.close()
   }, 30_000)
 
@@ -827,7 +902,7 @@ function sentinel(name: string, size: number) {
   return `CP3-${name}-${"X".repeat(size)}-END`
 }
 
-function databaseHealth(database: Database, table: "payload" | "session") {
+function databaseHealth(database: Database, table: "payload" | "permission" | "session") {
   const integrity = database.query("PRAGMA integrity_check").get() as { integrity_check: string }
   const rows = database.query(`SELECT count(*) AS rows FROM ${table}`).get() as { rows: number }
   return { integrity_check: integrity.integrity_check, rows: rows.rows }

@@ -75,9 +75,12 @@ They prove:
 
 - explicit opaque source selection and deterministic ambiguity;
 - stale-choice/source-mutation rejection before destination effects;
-- source byte preservation and retained session/config continuity, including
-  legacy global `opencode.json[c]` publication as canonical
-  `bharatcode.json[c]` with collision refusal;
+- durable source-content preservation: legacy records/config and SQLite main/WAL
+  bytes remain unchanged, with logical health and rows preserved across reopen;
+  SQLite may update ephemeral SHM coordination bytes during a read-only open;
+- retained session/config continuity, including legacy global
+  `opencode.json[c]` publication as canonical `bharatcode.json[c]` with collision
+  refusal;
 - removal of active provider, URL, command, account, and permission state while
   retaining harmless transcript text;
 - restart to the same ready state;

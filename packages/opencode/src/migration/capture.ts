@@ -563,8 +563,9 @@ function normalizeJsonKey(value: string) {
 function credentialJsonKey(value: string) {
   return (
     CREDENTIAL_JSON_KEYS.has(value) ||
-    /(?:^|_)(?:token|secret|password|authorization)$/.test(value) ||
-    /(?:^|_)(?:api|private)_key$/.test(value)
+    /(?:^|_)(?:access_token|api_key|auth_token|authorization|client_secret|credential|credentials|id_token|password|private_key|refresh_token|secret|session_secret|token)(?:_(?:header|value))?$/.test(
+      value,
+    )
   )
 }
 
@@ -575,7 +576,7 @@ function activeJsonCapabilityKey(value: string) {
 }
 
 class SensitiveSQLiteValues {
-  #values = new Map<string, Uint8Array>()
+  #values: Uint8Array[] = []
   #bytes = 0
 
   add(value: Uint8Array, rejectShort: boolean) {
@@ -583,18 +584,19 @@ class SensitiveSQLiteValues {
     if (rejectShort && value.byteLength < 8) {
       throw new MigrationCaptureError("The migration database contained a short credential value.")
     }
-    const copy = Buffer.from(value)
-    const key = copy.toString("base64")
-    if (this.#values.has(key)) return
-    if (this.#values.size + 1 > MAX_SENSITIVE_VALUES || this.#bytes + copy.byteLength > MAX_SENSITIVE_VALUE_BYTES) {
+    if (
+      value.byteLength > MAX_SENSITIVE_VALUE_BYTES ||
+      value.byteLength > MAX_SENSITIVE_VALUE_BYTES - this.#bytes ||
+      this.#values.length >= MAX_SENSITIVE_VALUES
+    ) {
       throw new MigrationCaptureError("The migration database exceeded its credential verification budget.")
     }
-    this.#values.set(key, copy)
-    this.#bytes += copy.byteLength
+    this.#values.push(Buffer.from(value))
+    this.#bytes += value.byteLength
   }
 
   values() {
-    return [...this.#values.values()].toSorted((left, right) => Buffer.compare(left, right))
+    return this.#values.toSorted((left, right) => Buffer.compare(left, right))
   }
 }
 
