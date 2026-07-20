@@ -586,7 +586,7 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
         process_id: 4100,
         parent_process_id: 1,
         executable_path: executable,
-        command_line: `"${executable}" ${override[0]} --no-proxy-server`,
+        command_line: `"${executable}" ${override[0]} --no-proxy-server "C:\\Acceptance Files\\--proxy-server=data.txt"`,
       },
       {
         process_id: 4101,
@@ -648,6 +648,45 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
           : record,
       ),
       records.map((record) =>
+        record.process_id === 4100
+          ? { ...record, command_line: `${record.command_line} -proxy-server=http://127.0.0.1:9999` }
+          : record,
+      ),
+      records.map((record) =>
+        record.process_id === 4100
+          ? { ...record, command_line: `${record.command_line} /IP-ADDRESS-SPACE-OVERRIDES=0.0.0.0/0=private` }
+          : record,
+      ),
+      records.map((record) =>
+        record.process_id === 4100
+          ? {
+              ...record,
+              command_line: record.command_line.replace(
+                override[0],
+                "/IP-ADDRESS-SPACE-OVERRIDES=10.20.30.40:43125=public",
+              ),
+            }
+          : record,
+      ),
+      records.map((record) =>
+        record.process_id === 4100 ? { ...record, command_line: `${record.command_line} /No-PrOxY-SeRvEr` } : record,
+      ),
+      records.map((record) =>
+        record.process_id === 4100
+          ? { ...record, command_line: record.command_line.replace("--no-proxy-server", "/No-PrOxY-SeRvEr") }
+          : record,
+      ),
+      records.map((record) =>
+        record.process_id === 4100
+          ? { ...record, command_line: `${record.command_line} /proxy-server="http://127.0.0.1:9999"` }
+          : record,
+      ),
+      records.map((record) =>
+        record.process_id === 4100
+          ? { ...record, command_line: `${record.command_line} /proxy-server "http://127.0.0.1:9999"` }
+          : record,
+      ),
+      records.map((record) =>
         record.process_id === 4102
           ? { ...record, command_line: record.command_line.replace(` ${override[0]}`, "") }
           : record,
@@ -688,9 +727,63 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
           : record,
       ),
       records.map((record) =>
+        record.process_id === 4102
+          ? { ...record, command_line: `${record.command_line} -PrOxY-SeRvEr=http://127.0.0.1:9999` }
+          : record,
+      ),
+      records.map((record) =>
+        record.process_id === 4102
+          ? { ...record, command_line: record.command_line.replace("--no-proxy-server", "/No-PrOxY-SeRvEr") }
+          : record,
+      ),
+      records.map((record) =>
+        record.process_id === 4102
+          ? { ...record, command_line: `${record.command_line} /proxy-server=http://127.0.0.1:9999` }
+          : record,
+      ),
+      records.map((record) =>
+        record.process_id === 4102
+          ? { ...record, command_line: `${record.command_line} /ip-address-space-overrides=0.0.0.0/0=private` }
+          : record,
+      ),
+      records.map((record) =>
+        record.process_id === 4102
+          ? { ...record, command_line: `${record.command_line} /IP-ADDRESS-SPACE-OVERRIDES=10.20.30.40:43125=public` }
+          : record,
+      ),
+      records.map((record) =>
+        record.process_id === 4102
+          ? {
+              ...record,
+              command_line: record.command_line.replace(
+                override[0],
+                "/IP-ADDRESS-SPACE-OVERRIDES=10.20.30.40:43125=public",
+              ),
+            }
+          : record,
+      ),
+      records.map((record) =>
+        record.process_id === 4102
+          ? { ...record, command_line: `${record.command_line} /ip-address-space-overrides="0.0.0.0/0=private"` }
+          : record,
+      ),
+      records.map((record) =>
+        record.process_id === 4102
+          ? { ...record, command_line: `${record.command_line} /ip-address-space-overrides "0.0.0.0/0=private"` }
+          : record,
+      ),
+      records.map((record) =>
         record.process_id === 4102 ? { ...record, executable_path: "C:\\hostile\\substituted.exe" } : record,
       ),
       records.map((record) => (record.process_id === 4102 ? { ...record, parent_process_id: 9999 } : record)),
+      records.map((record) =>
+        record.process_id === 4102
+          ? {
+              ...record,
+              command_line: `"${executable}" "C:\\Acceptance Files\\--type=utility --utility-sub-type=network.mojom.NetworkService" ${override[0]} --no-proxy-server`,
+            }
+          : record,
+      ),
     ]) {
       expect(() =>
         acceptance.validateOwnedProcessTree(hostile, {

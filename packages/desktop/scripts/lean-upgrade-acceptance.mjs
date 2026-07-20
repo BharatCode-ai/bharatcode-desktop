@@ -158,30 +158,31 @@ export function validateOwnedProcessTree(records, expected) {
     sameWindowsPath(root[0].executable_path, expected.executable),
     "Owned application process executable changed",
   )
-  const addressSpaceOverrideArguments = root[0].command_line.match(/--ip-address-space-overrides=[^\s"]+/gu) ?? []
-  requireValue(
-    sameStringSequence(addressSpaceOverrideArguments, expected.addressSpaceOverrideArguments ?? []),
-    "Owned application Chromium address-space override changed",
-  )
+  const rootSwitches = parseWindowsChromiumSwitches(root[0].command_line)
+  validateAddressSpaceSwitches(rootSwitches, expected.addressSpaceOverrideArguments ?? [], "root")
   const descendants = descendantProcesses(records, expected.rootPid)
-  const utility = descendants.filter(
+  const descendantObservations = descendants.map((item) => ({
+    ...item,
+    switches: parseWindowsChromiumSwitches(item.command_line),
+  }))
+  const utility = descendantObservations.filter(
     (item) =>
       sameWindowsPath(item.executable_path, expected.executable) &&
-      /--type=utility\b/iu.test(item.command_line) &&
-      /--utility-sub-type=node\.mojom\.NodeService\b/iu.test(item.command_line),
+      hasSingleEffectiveSwitch(item.switches, "type", "utility") &&
+      hasSingleEffectiveSwitch(item.switches, "utility-sub-type", "node.mojom.NodeService"),
   )
   requireValue(utility.length === 1, "Owned BharatCode utility sidecar is missing or ambiguous")
-  const networkService = descendants.filter(
+  const networkService = descendantObservations.filter(
     (item) =>
       sameWindowsPath(item.executable_path, expected.executable) &&
-      /--type=utility\b/iu.test(item.command_line) &&
-      /--utility-sub-type=network\.mojom\.NetworkService\b/iu.test(item.command_line),
+      hasSingleEffectiveSwitch(item.switches, "type", "utility") &&
+      hasSingleEffectiveSwitch(item.switches, "utility-sub-type", "network.mojom.NetworkService"),
   )
   if (expected.requireNetworkService) {
     requireValue(networkService.length === 1, "Owned Chromium NetworkService is missing or ambiguous")
-    validateCandidateNetworkSwitches(root[0].command_line, expected.addressSpaceOverrideArguments ?? [], "root")
+    validateCandidateNetworkSwitches(rootSwitches, expected.addressSpaceOverrideArguments ?? [], "root")
     validateCandidateNetworkSwitches(
-      networkService[0].command_line,
+      networkService[0].switches,
       expected.addressSpaceOverrideArguments ?? [],
       "NetworkService",
     )
@@ -2576,15 +2577,123 @@ function sameStringSequence(left, right) {
   )
 }
 
-function validateCandidateNetworkSwitches(commandLine, expectedAddressSpaceArguments, label) {
-  requireValue(typeof commandLine === "string", `Candidate ${label} command line is invalid`)
-  const addressSpaceArguments = commandLine.match(/--ip-address-space-overrides=[^\s"]+/gu) ?? []
-  const proxyArguments = commandLine.match(/--(?:no-)?proxy(?:-[A-Za-z0-9-]+)*(?:=[^\s"]+)?/gu) ?? []
+function validateCandidateNetworkSwitches(switches, expectedAddressSpaceArguments, label) {
+  validateAddressSpaceSwitches(switches, expectedAddressSpaceArguments, label)
+  const proxySwitches = switches.filter((item) => /^(?:no-)?proxy(?:-|$)/u.test(item.name))
   requireValue(
-    sameStringSequence(addressSpaceArguments, expectedAddressSpaceArguments),
+    proxySwitches.length === 1 &&
+      proxySwitches[0].prefix === "--" &&
+      proxySwitches[0].rawName === "no-proxy-server" &&
+      proxySwitches[0].hasValueSeparator === false,
+    `Candidate ${label} proxy boundary changed`,
+  )
+}
+
+function hasSingleEffectiveSwitch(switches, name, value) {
+  const matches = switches.filter((item) => item.name === name)
+  return matches.length === 1 && matches[0].hasValueSeparator === true && matches[0].value === value
+}
+
+function validateAddressSpaceSwitches(switches, expectedArguments, label) {
+  requireValue(Array.isArray(expectedArguments), `Candidate ${label} expected address-space override is invalid`)
+  const observed = switches.filter((item) => item.name === "ip-address-space-overrides")
+  if (expectedArguments.length === 0) {
+    requireValue(observed.length === 0, `Candidate ${label} Chromium address-space override changed`)
+    return
+  }
+  requireValue(
+    expectedArguments.length === 1 &&
+      /^--ip-address-space-overrides=[^\s"]+$/u.test(expectedArguments[0]) &&
+      observed.length === 1 &&
+      observed[0].prefix === "--" &&
+      observed[0].rawName === "ip-address-space-overrides" &&
+      observed[0].hasValueSeparator === true &&
+      `--ip-address-space-overrides=${observed[0].value}` === expectedArguments[0],
     `Candidate ${label} Chromium address-space override changed`,
   )
-  requireValue(sameStringSequence(proxyArguments, ["--no-proxy-server"]), `Candidate ${label} proxy boundary changed`)
+}
+
+function parseWindowsChromiumSwitches(commandLine) {
+  const argv = parseWindowsCommandLine(commandLine)
+  const switches = []
+  let parseSwitches = true
+  for (const rawArgument of argv.slice(1)) {
+    const argument = rawArgument.trim()
+    if (argument === "--") {
+      parseSwitches = false
+      continue
+    }
+    if (!parseSwitches) continue
+    const prefix = argument.startsWith("--")
+      ? "--"
+      : argument.startsWith("-")
+        ? "-"
+        : argument.startsWith("/")
+          ? "/"
+          : ""
+    if (!prefix || argument.length === prefix.length) continue
+    const equals = argument.indexOf("=")
+    const rawName = argument.slice(prefix.length, equals < 0 ? undefined : equals)
+    switches.push({
+      prefix,
+      rawName,
+      name: asciiLower(rawName),
+      hasValueSeparator: equals >= 0,
+      value: equals >= 0 ? argument.slice(equals + 1) : "",
+    })
+  }
+  return switches
+}
+
+function parseWindowsCommandLine(commandLine) {
+  requireValue(
+    typeof commandLine === "string" && commandLine.length >= 1 && commandLine.length <= 32_767,
+    "Owned Windows command line is invalid",
+  )
+  const argv = []
+  let index = 0
+  while (index < commandLine.length) {
+    while (commandLine[index] === " " || commandLine[index] === "\t") index += 1
+    if (index >= commandLine.length) break
+    let argument = ""
+    let quoted = false
+    while (index < commandLine.length) {
+      if (!quoted && (commandLine[index] === " " || commandLine[index] === "\t")) break
+      if (commandLine[index] === "\\") {
+        const start = index
+        while (commandLine[index] === "\\") index += 1
+        const count = index - start
+        if (commandLine[index] !== '"') {
+          argument += "\\".repeat(count)
+          continue
+        }
+        argument += "\\".repeat(Math.floor(count / 2))
+        if (count % 2 === 1) {
+          argument += '"'
+          index += 1
+        } else {
+          quoted = !quoted
+          index += 1
+        }
+        continue
+      }
+      if (commandLine[index] === '"') {
+        quoted = !quoted
+        index += 1
+        continue
+      }
+      argument += commandLine[index]
+      index += 1
+    }
+    requireValue(!quoted, "Owned Windows command line has an unterminated quote")
+    argv.push(argument)
+  }
+  requireValue(argv.length >= 1 && argv[0].length >= 1, "Owned Windows command line has no program")
+  return argv
+}
+
+function asciiLower(value) {
+  return value.replace(/[A-Z]/gu, (character) => character.toLowerCase())
 }
 
 function networkSourceDependencies(value) {
