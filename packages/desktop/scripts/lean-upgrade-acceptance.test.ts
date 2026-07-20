@@ -177,18 +177,53 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
 
   test("recognizes only the shipped post-initialization log and rejects premature or failed startup", () => {
     const prior = "[info] init step { step: { phase: 'done' } }\r\n"
-    expect(acceptance.parsePackagedReadinessLog(`[2026-07-20 10:00:00.000] ${prior}`)).toBeTrue()
+    const healthy =
+      "[info] sidecar connection started { url: 'http://127.0.0.1:43123' }\r\n" + `[2026-07-20 10:00:00.000] ${prior}`
+    expect(acceptance.parsePackagedReadinessLog(healthy)).toBeTrue()
     expect(() => acceptance.parsePackagedReadinessDelta(prior, `${prior}[info] app starting\r\n`)).toThrow()
-    expect(acceptance.parsePackagedReadinessDelta(prior, `${prior}${prior}`)).toBeTrue()
-    expect(() => acceptance.parsePackagedReadinessDelta(prior, `[info] truncated\r\n${prior}`)).toThrow()
+    expect(acceptance.parsePackagedReadinessDelta(prior, `${prior}${healthy}`)).toBeTrue()
+    expect(() => acceptance.parsePackagedReadinessDelta(prior, `[info] truncated\r\n${healthy}`)).toThrow()
     for (const hostile of [
       "[info] app starting { version: '1.2.3', packaged: true }\r\n",
       '[info] init step { step: { phase: "server_waiting" } }\r\n',
       "[info] init step { step: { phase: done } }\r\n",
       "[error] sidecar exited before ready\r\n",
+      `[error] sidecar health check failed Error: unavailable\r\n${healthy}`,
+      `[error] utility process error: spawn failed\r\n${healthy}`,
+      `[error] utility process gone reason=crashed\r\n${healthy}`,
+      `[error] sidecar exited { code: 1 }\r\n${healthy}`,
+      `[error] child process gone { reason: 'crashed' }\r\n${healthy}`,
     ]) {
       expect(() => acceptance.parsePackagedReadinessLog(hostile)).toThrow()
     }
+
+    const executable = "C:\\Program Files\\BharatCode Beta\\BharatCode Beta.exe"
+    const records = [
+      {
+        process_id: 4100,
+        parent_process_id: 1,
+        executable_path: executable,
+        command_line: `"${executable}" --remote-debugging-port=43124`,
+      },
+      {
+        process_id: 4101,
+        parent_process_id: 4100,
+        executable_path: executable,
+        command_line: `"${executable}" --type=utility --utility-sub-type=node.mojom.NodeService`,
+      },
+    ]
+    expect(
+      acceptance.validatePackagedReadinessObservation(
+        { log_delta: healthy, processes: records },
+        { rootPid: 4100, executable },
+      ),
+    ).toEqual({ rootPid: 4100, utilityPid: 4101, pids: [4100, 4101], sidecarOrigin: "http://127.0.0.1:43123" })
+    expect(() =>
+      acceptance.validatePackagedReadinessObservation(
+        { log_delta: healthy, processes: records.slice(0, 1) },
+        { rootPid: 4100, executable },
+      ),
+    ).toThrow(/utility|sidecar/i)
   })
 
   test("accepts only the exact legacy OpenCode recovery source and observation-derived preserved state", () => {
@@ -230,19 +265,21 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
         final_state: "ready",
         journal_sha256: "3".repeat(64),
         snapshot_verified: true,
+        sentinels_absent: true,
       },
       candidate: {
         database_quick_check: "ok",
         session,
         config: { snapshot: false },
         account_state: "signed-out",
-        auth_file_present: false,
-        secret_like_present: false,
+        credential_store_usable: false,
+        sentinel_present: false,
       },
       rollback: {
         database_quick_check: "ok",
         session,
         config: { snapshot: false },
+        legacy_account_intact: true,
       },
     }
     expect(acceptance.validateStateEvidence(evidence, session)).toEqual({
@@ -255,13 +292,33 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
       { ...evidence, source: { ...evidence.source, database_after_sha256: "3".repeat(64) } },
       { ...evidence, recovery: { ...evidence.recovery, actions: ["start-fresh"] } },
       { ...evidence, recovery: { ...evidence.recovery, snapshot_verified: false } },
+      { ...evidence, recovery: { ...evidence.recovery, sentinels_absent: false } },
       { ...evidence, recovery: { ...evidence.recovery, journal_sha256: "invalid" } },
       { ...evidence, candidate: { ...evidence.candidate, session: undefined } },
-      { ...evidence, candidate: { ...evidence.candidate, secret_like_present: true } },
+      { ...evidence, candidate: { ...evidence.candidate, credential_store_usable: true } },
+      { ...evidence, candidate: { ...evidence.candidate, sentinel_present: true } },
       { ...evidence, rollback: { ...evidence.rollback, database_quick_check: "corrupt" } },
+      { ...evidence, rollback: { ...evidence.rollback, legacy_account_intact: false } },
     ]) {
       expect(() => acceptance.validateStateEvidence(hostile, session)).toThrow()
     }
+
+    const sentinels = ["bharatcode-cp3-inert-access-sentinel", "bharatcode-cp3-inert-refresh-sentinel"]
+    expect(acceptance.observeCredentialStoreUsability([Buffer.from("{}"), Buffer.from(" \r\n")], sentinels)).toBeFalse()
+    expect(
+      acceptance.observeCredentialStoreUsability(
+        [Buffer.from(JSON.stringify({ bharatcode: { access: "candidate-credential" } }))],
+        sentinels,
+      ),
+    ).toBeTrue()
+    expect(() => acceptance.observeCredentialStoreUsability([Buffer.from("not-json")], sentinels)).toThrow()
+    expect(acceptance.observeCredentialSentinelPresence([Buffer.from("safe snapshot")], sentinels)).toBeFalse()
+    expect(
+      acceptance.observeCredentialSentinelPresence([Buffer.from(`snapshot:${sentinels[0]}`)], sentinels),
+    ).toBeTrue()
+    expect(
+      acceptance.observeCredentialSentinelPresence([Buffer.from(`snapshot:${sentinels[1]}`)], sentinels),
+    ).toBeTrue()
   })
 
   test("requires executed share/unshare refusal and complete nonempty network captures", () => {
@@ -289,13 +346,26 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
       expect(() => acceptance.validatePackagedNetLogBytes(hostile)).toThrow()
     }
 
+    const sidecarOrigin = "http://127.0.0.1:43123"
+    const response = {
+      status: 500,
+      content_type: "application/json",
+      body: '{"_tag":"InternalServerError"}',
+      url: `${sidecarOrigin}/session/${session.id}/share`,
+      redirected: false,
+    }
     const observation = {
-      schema: "bharatcode-share-surface-observation-v1",
-      session_status: 200,
-      share_status: 500,
-      unshare_status: 500,
+      schema: "bharatcode-live-electron-share-observation-v1",
+      renderer_origin: "oc://renderer",
+      sidecar_origin: sidecarOrigin,
+      target_id: "renderer-page",
+      root_pid: 4100,
+      utility_pid: 4101,
+      before_pids: [4100, 4101],
+      after_pids: [4100, 4101],
+      post: response,
+      delete: response,
       audit_requests: 0,
-      utility_process_observed: true,
     }
     expect(acceptance.validateShareSurfaceObservation(observation)).toEqual({
       sharenextAbsent: true,
@@ -303,12 +373,62 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
     })
     for (const hostile of [
       { help_only: true },
-      { ...observation, share_status: 200 },
-      { ...observation, unshare_status: 200 },
+      { ...observation, renderer_origin: "https://hostile.example" },
+      { ...observation, post: { ...response, status: 200 } },
+      { ...observation, delete: { ...response, status: 401 } },
+      { ...observation, post: { ...response, redirected: true } },
       { ...observation, audit_requests: 1 },
-      { ...observation, utility_process_observed: false },
+      { ...observation, after_pids: [4100] },
+      { ...observation, utility_pid: 4199 },
     ]) {
       expect(() => acceptance.validateShareSurfaceObservation(hostile)).toThrow()
+    }
+
+    const target = {
+      id: "renderer-page",
+      type: "page",
+      url: "oc://renderer/index.html",
+      webSocketDebuggerUrl: "ws://127.0.0.1:43124/devtools/page/renderer-page",
+    }
+    expect(acceptance.selectRendererCdpTarget([target], 43124)).toEqual(target)
+    for (const hostile of [
+      [],
+      [target, { ...target, id: "duplicate", webSocketDebuggerUrl: "ws://127.0.0.1:43124/devtools/page/duplicate" }],
+      [{ ...target, url: "https://hostile.example" }],
+      [{ ...target, webSocketDebuggerUrl: "ws://127.0.0.1:9222/devtools/page/renderer-page" }],
+    ]) {
+      expect(() => acceptance.selectRendererCdpTarget(hostile, 43124)).toThrow()
+    }
+
+    const cdp = { id: 7, result: { result: { type: "object", value: observation } } }
+    expect(acceptance.parseRendererShareEvaluation(cdp, 7)).toEqual(observation)
+    for (const hostile of [
+      { ...cdp, id: 8 },
+      { id: 7, result: { exceptionDetails: { text: "fetch failed" } } },
+      { id: 7, error: { message: "CDP disconnected" } },
+    ]) {
+      expect(() => acceptance.parseRendererShareEvaluation(hostile, 7)).toThrow()
+    }
+
+    const listeners = [
+      { local_address: "127.0.0.1", local_port: 43124, state: "Listen", owning_process: 4100 },
+      { local_address: "127.0.0.1", local_port: 43123, state: "Listen", owning_process: 4101 },
+    ]
+    expect(acceptance.validateLoopbackListenerOwner(listeners, { port: 43124, pid: 4100 })).toBeTrue()
+    expect(acceptance.validateLoopbackListenerOwner(listeners, { port: 43123, pid: 4101 })).toBeTrue()
+    for (const [hostile, expected] of [
+      [
+        listeners.map((item) => (item.local_port === 43124 ? { ...item, owning_process: 4999 } : item)),
+        { port: 43124, pid: 4100 },
+      ],
+      [listeners.filter((item) => item.local_port !== 43123), { port: 43123, pid: 4101 }],
+      [[...listeners, listeners[0]], { port: 43124, pid: 4100 }],
+      [
+        listeners.map((item) => (item.local_port === 43124 ? { ...item, local_address: "0.0.0.0" } : item)),
+        { port: 43124, pid: 4100 },
+      ],
+    ]) {
+      expect(() => acceptance.validateLoopbackListenerOwner(hostile, expected)).toThrow()
     }
   })
 
@@ -486,7 +606,23 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
       "verifyRecoveryEvidence",
       "lean-migration-v1.json",
       "migration-snapshots",
+      "INSERT INTO account (",
+      "ACCEPTANCE_ACCESS_SENTINEL",
+      "ACCEPTANCE_REFRESH_SENTINEL",
+      "legacyAccountIntact",
+      "observeCredentialStoreUsability",
+      "observeCredentialSentinelPresence",
+      "control_account",
       "validateShareSurfaceObservation",
+      "selectRendererCdpTarget",
+      "parseRendererShareEvaluation",
+      "validateLoopbackListenerOwner",
+      "Get-NetTCPConnection -State Listen",
+      "remote-debugging-port",
+      "BHARATCODE_SHARE_ACCESS_TOKEN",
+      "New-NetFirewallRule",
+      "RemoteAddress Internet",
+      "Remove-NetFirewallRule",
       "validatePackagedNetLogBytes",
       "Get-CimInstance Win32_Process",
       "initializeIsolatedProfile",
@@ -495,14 +631,30 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
       expect(source).toContain(required)
     }
     expect(source).not.toMatch(/extract|mock.*PASS|force.*PASS|app starting|recovery", "start-fresh/iu)
+    expect(source).not.toContain("SELECT COUNT(*) AS count FROM account")
+    expect(source).not.toContain('[runtime, "serve"')
+    expect(source).not.toContain("BHARATCODE_SERVER_PASSWORD")
+    expect(source).not.toContain("Authorization")
+    expect(source).not.toContain("Basic ")
     const betaStart = source.indexOf('profile, "current-beta", active')
     const candidateInstall = source.indexOf("runInstaller(input.candidate")
     const recovery = source.indexOf("completeCandidateRecovery(candidateRuntime, profile)")
     const candidateStart = source.indexOf('profile,\n      "candidate",')
+    const liveShareProbe = source.indexOf("observeShareSurface(profile, candidateStart")
+    const candidateCleanup = source.indexOf('finishDesktop(candidateStart, active, profile, "candidate")')
+    const networkBoundary = source.indexOf("installCandidateNetworkBoundary(")
+    const networkBoundaryCleanup = source.indexOf(
+      "removeCandidateNetworkBoundary(candidateInstalled.application.executable",
+    )
     expect(betaStart).toBeGreaterThan(-1)
     expect(candidateInstall).toBeGreaterThan(betaStart)
     expect(recovery).toBeGreaterThan(candidateInstall)
     expect(candidateStart).toBeGreaterThan(recovery)
+    expect(networkBoundary).toBeGreaterThan(recovery)
+    expect(candidateStart).toBeGreaterThan(networkBoundary)
+    expect(liveShareProbe).toBeGreaterThan(candidateStart)
+    expect(candidateCleanup).toBeGreaterThan(liveShareProbe)
+    expect(networkBoundaryCleanup).toBeGreaterThan(candidateCleanup)
     expect(basename(fixturePath)).toBe("current-beta-windows-x64.json")
   })
 })

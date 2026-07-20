@@ -18,9 +18,16 @@ const PACKAGED_EXECUTABLE_FILENAME = `${productNameForChannel("beta")}.exe`
 const PROCESS_TIMEOUT_MS = 300_000
 const STARTUP_TIMEOUT_MS = 120_000
 const MAX_PROCESS_OUTPUT = 1_048_576
+const MAX_CREDENTIAL_SCAN_BYTES = 67_108_864
 const ACCEPTANCE_PROJECT_ID = "proj_upgrade_acceptance"
 const ACCEPTANCE_SESSION = { id: "ses_upgrade_acceptance", title: "Preserved packaged beta session" }
 const ACCEPTANCE_TIME = 1_784_514_600_000
+const ACCEPTANCE_ACCOUNT_ID = "acc_upgrade_acceptance"
+const ACCEPTANCE_ACCESS_SENTINEL = "bharatcode-cp3-inert-access-sentinel"
+const ACCEPTANCE_REFRESH_SENTINEL = "bharatcode-cp3-inert-refresh-sentinel"
+const ACCEPTANCE_CREDENTIAL_SENTINELS = [ACCEPTANCE_ACCESS_SENTINEL, ACCEPTANCE_REFRESH_SENTINEL]
+const ACCEPTANCE_SHARE_TOKEN = "bharatcode-cp3-inert-share-audit-token"
+const ACCEPTANCE_FIREWALL_RULE = "BharatCode CP3 packaged share public-network block"
 const argumentNames = new Map([
   ["--fixture", "fixture"],
   ["--candidate", "candidate"],
@@ -174,10 +181,29 @@ export function validateOwnedProcessesGone(pids, records) {
 export function parsePackagedReadinessLog(value) {
   requireValue(typeof value === "string" && value.length <= MAX_PROCESS_OUTPUT, "Packaged readiness log is invalid")
   requireValue(
+    !/(?:sidecar health check failed|sidecar exited|utility process (?:error|gone)|child process gone|render process gone)/iu.test(
+      value,
+    ),
+    "Packaged application reported a sidecar or process startup failure",
+  )
+  requireValue(
     /(?:^|\r?\n)[^\r\n]*\binit step\b[^\r\n]*\bstep:\s*\{\s*phase:\s*['"]done['"]\s*\}/u.test(value),
     "Packaged application did not reach post-initialization readiness",
   )
   return true
+}
+
+export function validatePackagedReadinessObservation(value, expected) {
+  requireRecord(value, ["log_delta", "processes"], "packaged readiness observation")
+  parsePackagedReadinessLog(value.log_delta)
+  const origins = [
+    ...value.log_delta.matchAll(
+      /(?:^|\r?\n)[^\r\n]*\bsidecar connection started\b[^\r\n]*\burl:\s*['"](http:\/\/127\.0\.0\.1:[1-9][0-9]{0,4})['"]/gu,
+    ),
+  ].map((match) => match[1])
+  requireValue(origins.length === 1, "Packaged sidecar origin is missing or ambiguous")
+  requireLoopbackOrigin(origins[0], "Packaged sidecar origin")
+  return { ...validateOwnedProcessTree(value.processes, expected), sidecarOrigin: origins[0] }
 }
 
 export function parsePackagedReadinessDelta(previous, current) {
@@ -235,6 +261,7 @@ export function validateStateEvidence(value, expectedSession) {
       "journal_sha256",
       "selected_content_fingerprint",
       "selected_source_id",
+      "sentinels_absent",
       "snapshot_verified",
     ],
     "candidate recovery evidence",
@@ -247,6 +274,7 @@ export function validateStateEvidence(value, expectedSession) {
       value.recovery.actions.every((item) => ["choose-source", "retry", "repair-marker"].includes(item)) &&
       value.recovery.final_state === "ready" &&
       /^[0-9a-f]{64}$/u.test(value.recovery.journal_sha256) &&
+      value.recovery.sentinels_absent === true &&
       value.recovery.snapshot_verified === true,
     "Candidate recovery did not complete through the eligible source",
   )
@@ -257,7 +285,7 @@ export function validateStateEvidence(value, expectedSession) {
   )
   requireRecord(
     value.candidate,
-    ["account_state", "auth_file_present", "config", "database_quick_check", "secret_like_present", "session"],
+    ["account_state", "config", "credential_store_usable", "database_quick_check", "sentinel_present", "session"],
     "candidate migrated state",
   )
   requireValue(
@@ -266,16 +294,21 @@ export function validateStateEvidence(value, expectedSession) {
       value.candidate.config?.snapshot === false &&
       Object.keys(value.candidate.config).length === 1 &&
       value.candidate.account_state === "signed-out" &&
-      value.candidate.auth_file_present === false &&
-      value.candidate.secret_like_present === false,
+      value.candidate.credential_store_usable === false &&
+      value.candidate.sentinel_present === false,
     "Candidate did not observe the complete safe migrated state",
   )
-  requireRecord(value.rollback, ["config", "database_quick_check", "session"], "rollback state")
+  requireRecord(
+    value.rollback,
+    ["config", "database_quick_check", "legacy_account_intact", "session"],
+    "rollback state",
+  )
   requireValue(
     value.rollback.database_quick_check === "ok" &&
       sameSession(value.rollback.session, expectedSession) &&
       value.rollback.config?.snapshot === false &&
-      Object.keys(value.rollback.config).length === 1,
+      Object.keys(value.rollback.config).length === 1 &&
+      value.rollback.legacy_account_intact === true,
     "Rollback could not reopen the structurally valid legacy state",
   )
   return {
@@ -284,6 +317,43 @@ export function validateStateEvidence(value, expectedSession) {
     recoveryEvidencePreserved: true,
     rollbackStateStructurallyValid: true,
   }
+}
+
+export function observeCredentialStoreUsability(values, sentinels = ACCEPTANCE_CREDENTIAL_SENTINELS) {
+  requireValue(Array.isArray(values) && values.length <= 16, "Candidate credential store inventory is invalid")
+  if (observeCredentialSentinelPresence(values, sentinels)) return true
+  return values.some((bytes) => {
+    requireValue(
+      bytes instanceof Uint8Array && bytes.byteLength <= MAX_PROCESS_OUTPUT,
+      "Candidate credential store is invalid",
+    )
+    const text = Buffer.from(bytes).toString("utf8").trim()
+    if (!text) return false
+    const value = JSON.parse(text)
+    requireValue(
+      Array.isArray(value) || (value && typeof value === "object"),
+      "Candidate credential store JSON is invalid",
+    )
+    return Array.isArray(value) ? value.length > 0 : Object.keys(value).length > 0
+  })
+}
+
+export function observeCredentialSentinelPresence(values, sentinels = ACCEPTANCE_CREDENTIAL_SENTINELS) {
+  requireValue(
+    Array.isArray(values) &&
+      values.length <= 4096 &&
+      values.every((bytes) => bytes instanceof Uint8Array) &&
+      values.reduce((total, bytes) => total + bytes.byteLength, 0) <= MAX_CREDENTIAL_SCAN_BYTES,
+    "Credential sentinel scan is invalid or exceeds its bound",
+  )
+  requireValue(
+    Array.isArray(sentinels) &&
+      sentinels.length === 2 &&
+      sentinels.every((value) => typeof value === "string" && value.length >= 16),
+    "Credential sentinel identity is invalid",
+  )
+  const needles = sentinels.map((value) => Buffer.from(value))
+  return values.some((bytes) => needles.some((needle) => Buffer.from(bytes).includes(needle)))
 }
 
 export function validatePackagedNetLogBytes(bytes) {
@@ -307,19 +377,93 @@ export function validatePackagedNetLogBytes(bytes) {
 export function validateShareSurfaceObservation(value) {
   requireRecord(
     value,
-    ["audit_requests", "schema", "session_status", "share_status", "unshare_status", "utility_process_observed"],
+    [
+      "after_pids",
+      "audit_requests",
+      "before_pids",
+      "delete",
+      "post",
+      "renderer_origin",
+      "root_pid",
+      "schema",
+      "sidecar_origin",
+      "target_id",
+      "utility_pid",
+    ],
     "packaged share surface observation",
   )
+  requireLoopbackOrigin(value.sidecar_origin, "Packaged share sidecar origin")
   requireValue(
-    value.schema === "bharatcode-share-surface-observation-v1" &&
-      value.session_status === 200 &&
-      value.share_status === 500 &&
-      value.unshare_status === 500 &&
-      value.audit_requests === 0 &&
-      value.utility_process_observed === true,
-    "Packaged ShareNext surface or local network audit did not fail closed",
+    value.schema === "bharatcode-live-electron-share-observation-v1" &&
+      value.renderer_origin === "oc://renderer" &&
+      typeof value.target_id === "string" &&
+      /^[A-Za-z0-9._-]{1,128}$/u.test(value.target_id) &&
+      Number.isSafeInteger(value.root_pid) &&
+      Number.isSafeInteger(value.utility_pid) &&
+      value.root_pid > 0 &&
+      value.utility_pid > 0 &&
+      value.root_pid !== value.utility_pid &&
+      samePidSet(value.before_pids, value.after_pids) &&
+      value.before_pids.includes(value.root_pid) &&
+      value.before_pids.includes(value.utility_pid),
+    "Live Electron or utility sidecar identity changed during ShareNext observation",
   )
+  validateDisabledShareResponse(value.post, value.sidecar_origin)
+  validateDisabledShareResponse(value.delete, value.sidecar_origin)
+  requireValue(value.audit_requests === 0, "Packaged ShareNext surface or local network audit did not fail closed")
   return { sharenextAbsent: true, shareNetworkAttemptAbsent: true }
+}
+
+export function selectRendererCdpTarget(value, port) {
+  requireValue(Number.isSafeInteger(port) && port >= 1 && port <= 65535, "CDP port is invalid")
+  requireValue(Array.isArray(value), "CDP target inventory is invalid")
+  const targets = value.filter(
+    (item) =>
+      item?.type === "page" &&
+      typeof item.id === "string" &&
+      /^oc:\/\/renderer(?:\/|$)/u.test(item.url) &&
+      item.webSocketDebuggerUrl === `ws://127.0.0.1:${port}/devtools/page/${item.id}`,
+  )
+  requireValue(
+    value.length === 1 && targets.length === 1,
+    "Exact renderer CDP target is missing, foreign, or ambiguous",
+  )
+  return structuredClone(targets[0])
+}
+
+export function parseRendererShareEvaluation(value, id) {
+  requireValue(
+    Number.isSafeInteger(id) &&
+      value?.id === id &&
+      !Object.hasOwn(value, "error") &&
+      value.result &&
+      !Object.hasOwn(value.result, "exceptionDetails") &&
+      value.result.result?.type === "object" &&
+      value.result.result.value &&
+      typeof value.result.result.value === "object",
+    "Renderer CDP ShareNext evaluation failed or was substituted",
+  )
+  return structuredClone(value.result.result.value)
+}
+
+export function validateLoopbackListenerOwner(value, expected) {
+  requireValue(
+    Array.isArray(value) &&
+      Number.isSafeInteger(expected?.port) &&
+      expected.port >= 1 &&
+      expected.port <= 65535 &&
+      Number.isSafeInteger(expected?.pid) &&
+      expected.pid > 0,
+    "Loopback listener observation is invalid",
+  )
+  const listeners = value.filter(
+    (item) => item?.local_address === "127.0.0.1" && item.local_port === expected.port && item.state === "Listen",
+  )
+  requireValue(
+    listeners.length === 1 && listeners[0].owning_process === expected.pid,
+    "Loopback listener is missing, ambiguous, or owned by a stale process",
+  )
+  return true
 }
 
 export async function runLeanUpgradeAcceptance(argv, dependencies) {
@@ -382,8 +526,8 @@ async function executeProductionAcceptance(input) {
   const profile = isolatedProfile(input.acceptanceDirectory, input.environment)
   const active = new Map()
   const audit = startLocalShareAudit()
-  profile.env.BHARATCODE_SHARE_BASE_URL = audit.url
   let cleanupComplete = false
+  let networkBoundaryInstalled = false
   try {
     await initializeIsolatedProfile(profile)
     const prepared = await prepareProductionInputs(input)
@@ -400,16 +544,33 @@ async function executeProductionAcceptance(input) {
     )
     const candidateRuntime = await packagedRuntime(installDirectory)
     const recovery = await completeCandidateRecovery(candidateRuntime, profile)
+    const runtime = await verifyCandidateRuntime(candidateRuntime, profile)
+    const remoteDebuggingPort = await reserveLoopbackPort()
+    networkBoundaryInstalled = await installCandidateNetworkBoundary(
+      candidateInstalled.application.executable,
+      profile.env,
+    )
+    profile.env.BHARATCODE_SHARE_BASE_URL = audit.url
+    profile.env.BHARATCODE_SHARE_ACCESS_TOKEN = ACCEPTANCE_SHARE_TOKEN
     const candidateStart = await startDesktop(
       candidateInstalled.application,
       installDirectory,
       profile,
       "candidate",
       active,
+      { keepAlive: true, remoteDebuggingPort },
     )
+    const share = await observeShareSurface(profile, candidateStart, remoteDebuggingPort, audit)
+    await finishDesktop(candidateStart, active, profile, "candidate")
+    requireValue(audit.requests === 0, "ShareNext network audit changed before candidate cleanup completed")
+    requireValue(
+      await removeCandidateNetworkBoundary(candidateInstalled.application.executable, profile.env),
+      "Candidate public-network boundary cleanup failed",
+    )
+    networkBoundaryInstalled = false
+    delete profile.env.BHARATCODE_SHARE_BASE_URL
+    delete profile.env.BHARATCODE_SHARE_ACCESS_TOKEN
     const candidateState = await observeCandidateState(candidateRuntime, profile)
-    const runtime = await verifyCandidateRuntime(candidateRuntime, profile)
-    const share = await observeShareSurface(candidateRuntime, profile, candidateStart.processes, active, audit)
     await verifyPinnedInstaller(prepared.betaInstaller, input.currentBeta.assets[0])
     const rollbackInstalled = await runInstaller(prepared.betaInstaller, installDirectory, profile.env)
     requireValue(
@@ -474,9 +635,14 @@ async function executeProductionAcceptance(input) {
     }
   } finally {
     const processesClean = cleanupComplete || (await terminateOwnedProcesses(active, profile.env))
+    const boundaryClean =
+      !networkBoundaryInstalled ||
+      (await removeCandidateNetworkBoundary(join(installDirectory, PACKAGED_EXECUTABLE_FILENAME), profile.env).catch(
+        () => false,
+      ))
     await audit.stop(true)
-    if (!processesClean) {
-      throw new Error("Packaged upgrade process cleanup failed")
+    if (!processesClean || !boundaryClean) {
+      throw new Error("Packaged upgrade process or network-boundary cleanup failed")
     }
   }
 }
@@ -553,12 +719,20 @@ async function runInstaller(installer, installDirectory, env) {
   }
 }
 
-async function startDesktop(application, installDirectory, profile, phase, active) {
+async function startDesktop(application, installDirectory, profile, phase, active, options = {}) {
   const netLog = join(profile.netLogs, `${phase}.json`)
   const logRoot = join(profile.userData, "logs")
   const checkpoints = await textFileCheckpoints(logRoot)
   const child = Bun.spawn(
-    [application.executable, `--log-net-log=${netLog}`, "--net-log-capture-mode=Everything", "--disable-gpu"],
+    [
+      application.executable,
+      `--log-net-log=${netLog}`,
+      "--net-log-capture-mode=Everything",
+      "--disable-gpu",
+      ...(options.remoteDebuggingPort
+        ? ["--remote-debugging-address=127.0.0.1", `--remote-debugging-port=${options.remoteDebuggingPort}`]
+        : []),
+    ],
     {
       env: profile.env,
       cwd: installDirectory,
@@ -569,11 +743,23 @@ async function startDesktop(application, installDirectory, profile, phase, activ
   )
   active.set(child.pid, new Set([child.pid]))
   try {
-    await waitForDesktopStartup(logRoot, checkpoints, child)
+    const logDelta = await waitForDesktopStartup(logRoot, checkpoints, child)
     const records = await observeWindowsProcesses(profile.env)
     rememberOwnedProcesses(active, child.pid, records)
-    const processes = validateOwnedProcessTree(records, { rootPid: child.pid, executable: application.executable })
+    const processes = validatePackagedReadinessObservation(
+      { log_delta: logDelta, processes: records },
+      { rootPid: child.pid, executable: application.executable },
+    )
     processes.pids.forEach((pid) => active.get(child.pid).add(pid))
+    if (options.keepAlive) {
+      return {
+        ready: true,
+        executable: application.executable,
+        processes,
+        sidecarOrigin: processes.sidecarOrigin,
+        netLog,
+      }
+    }
     requireValue(await terminateTrackedProcess(child.pid, active, profile.env, true), `${phase} process cleanup failed`)
     validatePackagedNetLogBytes(await readStableFile(netLog, `${phase} complete Desktop network observation`))
     return {
@@ -589,6 +775,15 @@ async function startDesktop(application, installDirectory, profile, phase, activ
   }
 }
 
+async function finishDesktop(start, active, profile, phase) {
+  requireValue(
+    await terminateTrackedProcess(start.processes.rootPid, active, profile.env, true),
+    `${phase} process cleanup failed`,
+  )
+  validatePackagedNetLogBytes(await readStableFile(start.netLog, `${phase} complete Desktop network observation`))
+  return true
+}
+
 async function waitForDesktopStartup(logRoot, checkpoints, child) {
   const startedAt = Date.now()
   const deadline = Date.now() + STARTUP_TIMEOUT_MS
@@ -596,7 +791,17 @@ async function waitForDesktopStartup(logRoot, checkpoints, child) {
     const exited = await Promise.race([child.exited.then((code) => ({ code })), delay(500).then(() => undefined)])
     if (exited) throw new Error(`Desktop process exited before startup completed (${exited.code})`)
     const logs = await boundedTextFiles(logRoot, startedAt, checkpoints)
-    if (logs.some(hasPackagedReadiness)) return
+    requireValue(
+      !logs.some((value) =>
+        /(?:sidecar health check failed|sidecar exited|utility process (?:error|gone)|child process gone|render process gone)/iu.test(
+          value,
+        ),
+      ),
+      "Desktop reported a sidecar or process startup failure",
+    )
+    const ready = logs.filter(hasPackagedReadiness)
+    requireValue(ready.length <= 1, "Desktop readiness log is ambiguous")
+    if (ready.length === 1) return ready[0]
   }
   throw new Error("Desktop startup timed out")
 }
@@ -616,6 +821,17 @@ async function seedLegacyBetaState(profile) {
       "time_updated",
     ])
     requireDatabaseColumns(database, "account_state", ["id", "active_account_id"])
+    requireDatabaseColumns(database, "account", [
+      "id",
+      "email",
+      "url",
+      "access_token",
+      "refresh_token",
+      "token_expiry",
+      "selected_org_id",
+      "time_created",
+      "time_updated",
+    ])
     database.transaction(() => {
       database
         .query(
@@ -643,13 +859,27 @@ async function seedLegacyBetaState(profile) {
           ACCEPTANCE_TIME,
           ACCEPTANCE_TIME,
         )
-      database.query("INSERT OR REPLACE INTO account_state (id, active_account_id) VALUES (1, NULL)").run()
+      database
+        .query(
+          "INSERT INTO account (id, email, url, access_token, refresh_token, token_expiry, selected_org_id, time_created, time_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run(
+          ACCEPTANCE_ACCOUNT_ID,
+          "upgrade-acceptance@example.invalid",
+          "https://example.invalid",
+          ACCEPTANCE_ACCESS_SENTINEL,
+          ACCEPTANCE_REFRESH_SENTINEL,
+          ACCEPTANCE_TIME + 86_400_000,
+          null,
+          ACCEPTANCE_TIME,
+          ACCEPTANCE_TIME,
+        )
+      database
+        .query("INSERT OR REPLACE INTO account_state (id, active_account_id) VALUES (1, ?)")
+        .run(ACCEPTANCE_ACCOUNT_ID)
     })()
     requireValue(database.query("PRAGMA quick_check").get()?.quick_check === "ok", "legacy beta database is corrupt")
-    requireValue(
-      database.query("SELECT COUNT(*) AS count FROM account").get()?.count === 0,
-      "legacy beta account is not safe",
-    )
+    requireValue(legacyAccountIntact(database), "legacy beta inert account was not seeded exactly")
     requireValue(
       sameSession(
         database.query("SELECT id, title FROM session WHERE id = ?").get(ACCEPTANCE_SESSION.id),
@@ -710,6 +940,7 @@ async function completeCandidateRecovery(runtime, profile) {
     final_state: final.state,
     journal_sha256: evidence.journalSha256,
     snapshot_verified: evidence.snapshotVerified,
+    sentinels_absent: evidence.sentinelsAbsent,
   }
 }
 
@@ -754,13 +985,17 @@ async function verifyRecoveryEvidence(profile, source) {
       journal.artifacts[1] === `migration-staging/${journal.operationID}`,
     "Candidate migration journal identity or chronology is invalid",
   )
-  const snapshotVerified = await verifyMigrationSnapshot(
+  const snapshot = await verifyMigrationSnapshot(
     join(profile.state, "migration-snapshots", journal.snapshotDigest),
     journal.snapshotDigest,
     source.contentFingerprint,
   )
-  requireValue(snapshotVerified, "Candidate sealed migration snapshot is corrupt")
-  return { journalSha256: digest(journalBytes), snapshotVerified }
+  requireValue(snapshot.verified, "Candidate sealed migration snapshot is corrupt")
+  return {
+    journalSha256: digest(journalBytes),
+    snapshotVerified: snapshot.verified,
+    sentinelsAbsent: snapshot.sentinelsAbsent,
+  }
 }
 
 async function verifyMigrationSnapshot(root, expectedDigest, expectedContentFingerprint) {
@@ -783,6 +1018,7 @@ async function verifyMigrationSnapshot(root, expectedDigest, expectedContentFing
     "Candidate migration snapshot manifest identity is invalid",
   )
   const expected = []
+  const records = []
   for (const entry of manifest.entries) {
     requireRecord(entry, ["digest", "relative", "size"], "candidate migration snapshot record")
     requireValue(
@@ -798,6 +1034,7 @@ async function verifyMigrationSnapshot(root, expectedDigest, expectedContentFing
       bytes.byteLength === entry.size && digest(bytes) === entry.digest,
       "Candidate migration snapshot record changed",
     )
+    records.push(bytes)
     expected.push(entry.relative)
   }
   requireValue(
@@ -805,7 +1042,8 @@ async function verifyMigrationSnapshot(root, expectedDigest, expectedContentFing
     "Candidate migration snapshot records are not canonically ordered",
   )
   const actual = await relativeFiles(join(root, "records"))
-  return actual.length === expected.length && actual.every((value, index) => value === expected[index])
+  const verified = actual.length === expected.length && actual.every((value, index) => value === expected[index])
+  return { verified, sentinelsAbsent: !observeCredentialSentinelPresence(records) }
 }
 
 async function observeCandidateState(runtime, profile) {
@@ -821,20 +1059,25 @@ async function observeCandidateState(runtime, profile) {
   try {
     const forbidden = database
       .query(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('account', 'account_state', 'session_share')",
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('account', 'account_state', 'control_account', 'session_share')",
       )
       .all()
     requireValue(forbidden.length === 0, "candidate retained credential-bearing tables")
   } finally {
     database.close()
   }
+  const credentialStores = await existingStableFiles([
+    profile.candidateAuthFile,
+    join(profile.root, ".bharatcode", "credentials.json"),
+  ])
+  const destinationBytes = await boundedTreeBytes([profile.data, profile.config, profile.state])
   return {
     database_quick_check: exactQuickCheck(quickCheck),
     session: exactSessionRows(sessions),
     config: { snapshot: config.snapshot },
     account_state: /Signed out of BharatCode\./u.test(account.stdout) ? "signed-out" : "unknown",
-    auth_file_present: await Bun.file(profile.candidateAuthFile).exists(),
-    secret_like_present: await candidateSecretLikeStatePresent(profile),
+    credential_store_usable: observeCredentialStoreUsability(credentialStores),
+    sentinel_present: observeCredentialSentinelPresence(destinationBytes),
   }
 }
 
@@ -845,6 +1088,9 @@ async function observeRollbackState(runtime, profile) {
     ["db", `SELECT id, title FROM session WHERE id = '${ACCEPTANCE_SESSION.id}'`, "--format", "json"],
     profile.env,
   )
+  const database = new Database(profile.legacyDatabase, { readonly: true })
+  const legacyAccount = legacyAccountIntact(database)
+  database.close()
   return {
     database_quick_check: exactQuickCheck(quickCheck),
     session: exactSessionRows(sessions),
@@ -852,6 +1098,7 @@ async function observeRollbackState(runtime, profile) {
       snapshot: JSON.parse((await readStableFile(profile.legacyConfigFile, "rollback beta config")).toString("utf8"))
         .snapshot,
     },
+    legacy_account_intact: legacyAccount,
   }
 }
 
@@ -884,66 +1131,48 @@ async function verifyShareNetworkAbsence(netLogs) {
   return true
 }
 
-async function observeShareSurface(runtime, profile, desktopProcesses, active, audit) {
-  const reservation = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("reserved") })
-  const port = reservation.port
-  await reservation.stop(true)
-  const env = {
-    ...profile.env,
-    BHARATCODE_SERVER_USERNAME: "acceptance",
-    BHARATCODE_SERVER_PASSWORD: "loopback-only",
-  }
-  const child = Bun.spawn([runtime, "serve", "--hostname", "127.0.0.1", "--port", String(port), "--no-mdns"], {
-    env,
-    cwd: profile.projectDirectory,
-    stdout: "ignore",
-    stderr: "ignore",
-    windowsHide: true,
+async function observeShareSurface(profile, desktop, remoteDebuggingPort, audit) {
+  const beforeRecords = await observeWindowsProcesses(profile.env)
+  const before = validateOwnedProcessTree(beforeRecords, {
+    rootPid: desktop.processes.rootPid,
+    executable: desktop.executable,
   })
-  active.set(child.pid, new Set([child.pid]))
-  try {
-    const headers = {
-      Authorization: `Basic ${Buffer.from("acceptance:loopback-only").toString("base64")}`,
-      "x-opencode-directory": profile.projectDirectory,
-    }
-    const sessionUrl = `http://127.0.0.1:${port}/session/${ACCEPTANCE_SESSION.id}?directory=${encodeURIComponent(profile.projectDirectory)}`
-    const sessionStatus = await waitForHttpStatus(sessionUrl, headers, child)
-    const shareStatus = (
-      await fetch(sessionUrl.replace(/\?.*$/u, "/share"), {
-        method: "POST",
-        headers,
-        redirect: "error",
-        signal: AbortSignal.timeout(10_000),
-      })
-    ).status
-    const unshareStatus = (
-      await fetch(sessionUrl.replace(/\?.*$/u, "/share"), {
-        method: "DELETE",
-        headers,
-        redirect: "error",
-        signal: AbortSignal.timeout(10_000),
-      })
-    ).status
-    const records = await observeWindowsProcesses(profile.env)
-    rememberOwnedProcesses(active, child.pid, records)
-    requireValue(
-      await terminateTrackedProcess(child.pid, active, profile.env),
-      "Packaged share audit server cleanup failed",
-    )
-    return validateShareSurfaceObservation({
-      schema: "bharatcode-share-surface-observation-v1",
-      session_status: sessionStatus,
-      share_status: shareStatus,
-      unshare_status: unshareStatus,
-      audit_requests: audit.requests,
-      utility_process_observed:
-        Number.isSafeInteger(desktopProcesses.utilityPid) &&
-        desktopProcesses.pids.includes(desktopProcesses.utilityPid),
-    })
-  } catch (error) {
-    await terminateTrackedProcess(child.pid, active, profile.env)
-    throw error
-  }
+  requireValue(
+    before.utilityPid === desktop.processes.utilityPid && samePidSet(before.pids, desktop.processes.pids),
+    "Candidate Electron utility sidecar changed before ShareNext probe",
+  )
+  const sidecarPort = Number(new URL(desktop.sidecarOrigin).port)
+  const beforeListeners = await observeWindowsLoopbackListeners(profile.env, [remoteDebuggingPort, sidecarPort])
+  validateLoopbackListenerOwner(beforeListeners, { port: remoteDebuggingPort, pid: before.rootPid })
+  validateLoopbackListenerOwner(beforeListeners, { port: sidecarPort, pid: before.utilityPid })
+  const target = selectRendererCdpTarget(await waitForRendererTargets(remoteDebuggingPort), remoteDebuggingPort)
+  const evaluation = parseRendererShareEvaluation(
+    await evaluateRendererShareRequests(target.webSocketDebuggerUrl, desktop.sidecarOrigin, profile.projectDirectory),
+    7,
+  )
+  await delay(2_000)
+  const afterRecords = await observeWindowsProcesses(profile.env)
+  const after = validateOwnedProcessTree(afterRecords, {
+    rootPid: desktop.processes.rootPid,
+    executable: desktop.executable,
+  })
+  requireValue(after.utilityPid === before.utilityPid, "Candidate Electron utility sidecar died or was replaced")
+  const afterListeners = await observeWindowsLoopbackListeners(profile.env, [remoteDebuggingPort, sidecarPort])
+  validateLoopbackListenerOwner(afterListeners, { port: remoteDebuggingPort, pid: after.rootPid })
+  validateLoopbackListenerOwner(afterListeners, { port: sidecarPort, pid: after.utilityPid })
+  return validateShareSurfaceObservation({
+    schema: "bharatcode-live-electron-share-observation-v1",
+    renderer_origin: evaluation.renderer_origin,
+    sidecar_origin: evaluation.sidecar_origin,
+    target_id: target.id,
+    root_pid: before.rootPid,
+    utility_pid: before.utilityPid,
+    before_pids: before.pids,
+    after_pids: after.pids,
+    post: evaluation.post,
+    delete: evaluation.delete,
+    audit_requests: audit.requests,
+  })
 }
 
 function startLocalShareAudit() {
@@ -965,19 +1194,137 @@ function startLocalShareAudit() {
   }
 }
 
-async function waitForHttpStatus(url, headers, child) {
+async function installCandidateNetworkBoundary(executable, env) {
+  const name = powershellLiteral(ACCEPTANCE_FIREWALL_RULE)
+  const program = powershellLiteral(executable)
+  const result = await runProcess(
+    "powershell.exe",
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      `$ErrorActionPreference = 'Stop'; if (Get-NetFirewallRule -DisplayName '${name}' -ErrorAction SilentlyContinue) { throw 'pre-existing acceptance firewall rule' }; try { New-NetFirewallRule -DisplayName '${name}' -Direction Outbound -Action Block -Program '${program}' -RemoteAddress Internet -Profile Any | Out-Null; $rule = Get-NetFirewallRule -DisplayName '${name}'; $app = $rule | Get-NetFirewallApplicationFilter; $address = $rule | Get-NetFirewallAddressFilter; if ($rule.DisplayName -cne '${name}' -or $rule.Enabled.ToString() -cne 'True' -or $rule.Direction.ToString() -cne 'Outbound' -or $rule.Action.ToString() -cne 'Block' -or $rule.Profile.ToString() -cne 'Any' -or $app.Program -ine '${program}' -or @($address.RemoteAddress).Count -ne 1 -or @($address.RemoteAddress)[0] -cne 'Internet') { throw 'acceptance firewall rule identity changed' }; Write-Output 'BOUNDARY_INSTALLED' } catch { Remove-NetFirewallRule -DisplayName '${name}' -ErrorAction SilentlyContinue; throw }`,
+    ],
+    { env, timeout: 30_000 },
+  )
+  if (!/^BOUNDARY_INSTALLED\r?\n?$/u.test(result.stdout)) {
+    await removeCandidateNetworkBoundary(executable, env)
+    throw new Error("Candidate public-network boundary was not installed exactly")
+  }
+  return true
+}
+
+async function removeCandidateNetworkBoundary(executable, env) {
+  const name = powershellLiteral(ACCEPTANCE_FIREWALL_RULE)
+  const program = powershellLiteral(executable)
+  await runProcess(
+    "powershell.exe",
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      `$ErrorActionPreference = 'Stop'; $rules = @(Get-NetFirewallRule -DisplayName '${name}' -ErrorAction Stop); if ($rules.Count -ne 1) { throw 'acceptance firewall rule is missing or ambiguous' }; $app = $rules[0] | Get-NetFirewallApplicationFilter; if ($app.Program -ine '${program}') { throw 'acceptance firewall program identity changed' }; $rules[0] | Remove-NetFirewallRule; if (Get-NetFirewallRule -DisplayName '${name}' -ErrorAction SilentlyContinue) { throw 'acceptance firewall rule survived cleanup' }`,
+    ],
+    { env, timeout: 30_000 },
+  )
+  return true
+}
+
+async function reserveLoopbackPort() {
+  const reservation = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("reserved") })
+  const port = reservation.port
+  await reservation.stop(true)
+  return port
+}
+
+async function waitForRendererTargets(port) {
   const deadline = Date.now() + STARTUP_TIMEOUT_MS
   while (Date.now() < deadline) {
-    const exited = await Promise.race([child.exited.then((code) => ({ code })), delay(250).then(() => undefined)])
-    if (exited) throw new Error(`Packaged share audit server exited before readiness (${exited.code})`)
-    const response = await fetch(url, {
-      headers,
+    const response = await fetch(`http://127.0.0.1:${port}/json/list`, {
       redirect: "error",
       signal: AbortSignal.timeout(1_000),
     }).catch(() => undefined)
-    if (response?.status === 200) return response.status
+    if (response?.status === 200) {
+      const value = await response.json()
+      if (Array.isArray(value) && value.length > 0) return value
+    }
+    await delay(250)
   }
-  throw new Error("Packaged share audit server startup timed out")
+  throw new Error("Candidate Electron renderer CDP target timed out")
+}
+
+async function evaluateRendererShareRequests(webSocketDebuggerUrl, sidecarOrigin, projectDirectory) {
+  const shareUrl = `${sidecarOrigin}/session/${ACCEPTANCE_SESSION.id}/share`
+  const expression = `
+    (async () => {
+      if (location.origin !== "oc://renderer") throw new Error("renderer origin changed")
+      const request = async (method) => {
+        const response = await fetch(${JSON.stringify(shareUrl)}, {
+          method,
+          headers: { "x-opencode-directory": ${JSON.stringify(projectDirectory)} },
+          redirect: "error",
+        })
+        return {
+          status: response.status,
+          content_type: response.headers.get("content-type"),
+          body: await response.text(),
+          url: response.url,
+          redirected: response.redirected,
+        }
+      }
+      return {
+        renderer_origin: location.origin,
+        sidecar_origin: ${JSON.stringify(sidecarOrigin)},
+        post: await request("POST"),
+        delete: await request("DELETE"),
+      }
+    })()
+  `
+  const socket = new WebSocket(webSocketDebuggerUrl)
+  const response = await new Promise((resolveResponse, rejectResponse) => {
+    const timeout = setTimeout(() => {
+      socket.close()
+      rejectResponse(new Error("Renderer CDP ShareNext evaluation timed out"))
+    }, 15_000)
+    socket.addEventListener(
+      "open",
+      () =>
+        socket.send(
+          JSON.stringify({
+            id: 7,
+            method: "Runtime.evaluate",
+            params: { expression, awaitPromise: true, returnByValue: true },
+          }),
+        ),
+      { once: true },
+    )
+    socket.addEventListener(
+      "message",
+      (event) => {
+        try {
+          const value = JSON.parse(String(event.data))
+          if (value.id !== 7) return
+          clearTimeout(timeout)
+          socket.close()
+          resolveResponse(value)
+        } catch {
+          clearTimeout(timeout)
+          socket.close()
+          rejectResponse(new Error("Renderer CDP ShareNext response was invalid"))
+        }
+      },
+      { once: false },
+    )
+    socket.addEventListener(
+      "error",
+      () => {
+        clearTimeout(timeout)
+        rejectResponse(new Error("Renderer CDP ShareNext evaluation disconnected"))
+      },
+      { once: true },
+    )
+  })
+  return response
 }
 
 async function runJsonProcess(runtime, args, env, cwd) {
@@ -1007,11 +1354,57 @@ function exactSessionRows(value) {
   return { id: value[0].id, title: value[0].title }
 }
 
-async function candidateSecretLikeStatePresent(profile) {
+function legacyAccountIntact(database) {
+  const account = database
+    .query(
+      "SELECT id, email, url, access_token, refresh_token, token_expiry, selected_org_id, time_created, time_updated FROM account WHERE id = ?",
+    )
+    .get(ACCEPTANCE_ACCOUNT_ID)
+  const state = database.query("SELECT id, active_account_id FROM account_state WHERE id = 1").get()
   return (
-    (await Bun.file(profile.candidateAuthFile).exists()) ||
-    (await Bun.file(join(profile.root, ".bharatcode", "credentials.json")).exists())
+    account &&
+    Object.keys(account).length === 9 &&
+    account.id === ACCEPTANCE_ACCOUNT_ID &&
+    account.email === "upgrade-acceptance@example.invalid" &&
+    account.url === "https://example.invalid" &&
+    account.access_token === ACCEPTANCE_ACCESS_SENTINEL &&
+    account.refresh_token === ACCEPTANCE_REFRESH_SENTINEL &&
+    account.token_expiry === ACCEPTANCE_TIME + 86_400_000 &&
+    account.selected_org_id === null &&
+    account.time_created === ACCEPTANCE_TIME &&
+    account.time_updated === ACCEPTANCE_TIME &&
+    state &&
+    Object.keys(state).length === 2 &&
+    state.id === 1 &&
+    state.active_account_id === ACCEPTANCE_ACCOUNT_ID
   )
+}
+
+async function existingStableFiles(paths) {
+  const result = []
+  for (const path of paths) {
+    if (!(await Bun.file(path).exists())) continue
+    result.push(await readStableFile(path, "candidate credential store"))
+  }
+  return result
+}
+
+async function boundedTreeBytes(roots) {
+  const paths = []
+  for (const root of roots) {
+    const files = await relativeFiles(root)
+    files.forEach((file) => paths.push(join(root, file)))
+  }
+  requireValue(paths.length <= 4096, "Candidate destination inventory exceeds its bound")
+  const result = []
+  let total = 0
+  for (const path of paths) {
+    const bytes = await readStableFile(path, "candidate destination record")
+    total += bytes.byteLength
+    requireValue(total <= MAX_CREDENTIAL_SCAN_BYTES, "Candidate destination scan exceeds its byte bound")
+    result.push(bytes)
+  }
+  return result
 }
 
 function requireDatabaseColumns(database, table, required) {
@@ -1199,6 +1592,28 @@ async function observeWindowsProcesses(env) {
       typeof item.executable_path === "string" &&
       typeof item.command_line === "string",
   )
+}
+
+async function observeWindowsLoopbackListeners(env, ports) {
+  requireValue(
+    Array.isArray(ports) &&
+      ports.length === 2 &&
+      new Set(ports).size === 2 &&
+      ports.every((port) => Number.isSafeInteger(port) && port >= 1 && port <= 65535),
+    "Loopback listener port set is invalid",
+  )
+  const result = await runProcess(
+    "powershell.exe",
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      `$ports = @(${ports.join(",")}); Get-NetTCPConnection -State Listen | Where-Object { $_.LocalAddress -eq '127.0.0.1' -and $ports -contains $_.LocalPort } | Select-Object @{n='local_address';e={$_.LocalAddress}},@{n='local_port';e={$_.LocalPort}},@{n='state';e={$_.State.ToString()}},@{n='owning_process';e={$_.OwningProcess}} | ConvertTo-Json -Compress`,
+    ],
+    { env, timeout: 30_000 },
+  )
+  const value = JSON.parse(result.stdout.trim())
+  return Array.isArray(value) ? value : [value]
 }
 
 function rememberOwnedProcesses(active, rootPid, records) {
@@ -1409,6 +1824,46 @@ function positiveDecimal(value, label) {
 
 function safeIdentity(value) {
   return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u.test(value)
+}
+
+function powershellLiteral(value) {
+  requireValue(
+    typeof value === "string" && value.length > 0 && !/[\0\r\n]/u.test(value),
+    "PowerShell literal is invalid",
+  )
+  return value.replaceAll("'", "''")
+}
+
+function requireLoopbackOrigin(value, label) {
+  requireValue(
+    typeof value === "string" && /^http:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}$/u.test(value),
+    `${label} is invalid`,
+  )
+  const port = Number(new URL(value).port)
+  requireValue(Number.isSafeInteger(port) && port >= 1 && port <= 65535, `${label} port is invalid`)
+}
+
+function validateDisabledShareResponse(value, sidecarOrigin) {
+  requireRecord(value, ["body", "content_type", "redirected", "status", "url"], "disabled ShareNext response")
+  requireValue(
+    value.status === 500 &&
+      value.content_type === "application/json" &&
+      value.body === '{"_tag":"InternalServerError"}' &&
+      value.url === `${sidecarOrigin}/session/${ACCEPTANCE_SESSION.id}/share` &&
+      value.redirected === false,
+    "Packaged ShareNext endpoint did not return the exact disabled response",
+  )
+}
+
+function samePidSet(left, right) {
+  return (
+    Array.isArray(left) &&
+    Array.isArray(right) &&
+    left.length >= 2 &&
+    left.length === right.length &&
+    left.every((pid, index) => Number.isSafeInteger(pid) && pid > 0 && pid === right[index]) &&
+    left.every((pid, index) => index === 0 || left[index - 1] < pid)
+  )
 }
 
 function sameFile(left, right) {
