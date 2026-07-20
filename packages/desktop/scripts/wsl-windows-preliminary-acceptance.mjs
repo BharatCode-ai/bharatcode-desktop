@@ -43,6 +43,7 @@ export async function runPreliminaryWindowsAcceptance(argv, dependencies = {}) {
   }
   return {
     authority: "PRELIMINARY_UNSIGNED",
+    harness_authority: "DIAGNOSTIC",
     evidence: {
       source_sha: input.sourceSha,
       desktop_sha256: scenario9.desktop_sha256,

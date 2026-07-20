@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { createHash } from "node:crypto"
 
+import { validatePreliminaryUnsignedWslReceipt } from "../../opencode/script/lean-preliminary-unsigned-wsl.mjs"
 import { runPreliminaryWindowsAcceptance } from "./wsl-windows-preliminary-acceptance.mjs"
 
 const sourceSha = "9".repeat(40)
@@ -112,6 +113,7 @@ describe("preliminary unsigned WSL observation adapter", () => {
     const result = await runPreliminaryWindowsAcceptance(argv, dependencies())
     expect(result).toEqual({
       authority: "PRELIMINARY_UNSIGNED",
+      harness_authority: "DIAGNOSTIC",
       evidence: {
         source_sha: sourceSha,
         desktop_sha256: desktopSha256,
@@ -127,6 +129,51 @@ describe("preliminary unsigned WSL observation adapter", () => {
         completed_at: completedAt,
       },
     })
+    const bindings = {
+      source_sha: sourceSha,
+      run_id: env.GITHUB_RUN_ID,
+      run_attempt: env.GITHUB_RUN_ATTEMPT,
+      unsigned_installer_bytes: 4096,
+      unsigned_installer_sha256: "d".repeat(64),
+      installed_desktop_bytes: 8192,
+      installed_desktop_sha256: desktopSha256,
+      runtime_manifest_sha256: manifestSha256,
+      harness_sha256: "e".repeat(64),
+    }
+    const receipt = {
+      schema: "bharatcode-wsl-preliminary-unsigned-v1",
+      evidence_class: result.authority,
+      result: result.authority,
+      signature_status: result.authority,
+      provenance_status: result.authority,
+      promotable: false,
+      composable: false,
+      repository: env.GITHUB_REPOSITORY,
+      workflow: ".github/workflows/bharatcode-preliminary-unsigned-wsl.yml",
+      source_sha: result.evidence.source_sha,
+      github: { run_id: Number(env.GITHUB_RUN_ID), run_attempt: Number(env.GITHUB_RUN_ATTEMPT) },
+      unsigned_installer: {
+        filename: "bharatcode-desktop-preliminary-unsigned-test-win-x64.exe",
+        bytes: bindings.unsigned_installer_bytes,
+        sha256: bindings.unsigned_installer_sha256,
+      },
+      installed_desktop: {
+        filename: "BharatCode Beta.exe",
+        bytes: bindings.installed_desktop_bytes,
+        sha256: result.evidence.desktop_sha256,
+      },
+      runtime_manifest_sha256: result.evidence.runtime_manifest_sha256,
+      runtime: result.evidence.runtime,
+      harness: {
+        contract: "packages/desktop/scripts/wsl-windows-acceptance.mjs",
+        contract_sha256: bindings.harness_sha256,
+        authority: result.harness_authority,
+      },
+      identity: result.evidence.identity,
+      scenarios: result.evidence.scenarios,
+      completed_at: result.evidence.completed_at,
+    }
+    expect(validatePreliminaryUnsignedWslReceipt(receipt, bindings)).toEqual(receipt)
   })
 
   test("rejects foreign authority, non-diagnostic harness results, missing phases, and identity substitution", async () => {

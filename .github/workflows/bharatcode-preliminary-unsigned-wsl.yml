@@ -225,16 +225,57 @@ jobs:
           path: preliminary-input
           digest-mismatch: error
 
-      - name: Install unsigned NSIS into a create-only root
+      - name: Install unsigned NSIS into an atomically reserved root
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
           $installer = (Resolve-Path preliminary-input/bharatcode-desktop-preliminary-unsigned-test-win-x64.exe).Path
           $signature = Get-AuthenticodeSignature $installer
           if ($signature.Status -ne "NotSigned" -or $signature.SignerCertificate -or $signature.TimeStamperCertificate) {
             throw "Preliminary installer signature identity drift"
           }
-          $installRoot = Join-Path $env:RUNNER_TEMP "bharatcode-preliminary-unsigned-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
-          if (Test-Path $installRoot) { throw "Preliminary install root already exists" }
+          foreach ($identity in @($env:GITHUB_RUN_ID, $env:GITHUB_RUN_ATTEMPT)) {
+            if ($identity -notmatch '^[1-9][0-9]*$') { throw "Preliminary install identity is invalid" }
+            try { if ([long]::Parse($identity) -le 0) { throw "invalid" } }
+            catch { throw "Preliminary install identity is invalid" }
+          }
+          $runnerTemp = [IO.Path]::GetFullPath($env:RUNNER_TEMP).TrimEnd([char[]]@([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar))
+          $leaf = "bharatcode-preliminary-unsigned-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          $installRoot = [IO.Path]::GetFullPath([IO.Path]::Combine($runnerTemp, $leaf))
+          if ([IO.Path]::GetDirectoryName($installRoot) -cne $runnerTemp -or [IO.Path]::GetFileName($installRoot) -cne $leaf) {
+            throw "Preliminary install root identity drift"
+          }
+          Add-Type -TypeDefinition @'
+          using System;
+          using System.Runtime.InteropServices;
+          public static class PreliminaryNativeDirectory {
+            [DllImport("kernel32.dll", EntryPoint = "CreateDirectoryW", CharSet = CharSet.Unicode, SetLastError = true)]
+            [return: MarshalAs(UnmanagedType.Bool)]
+            public static extern bool CreateDirectory(string path, IntPtr securityAttributes);
+          }
+          '@
+          if (-not [PreliminaryNativeDirectory]::CreateDirectory($installRoot, [IntPtr]::Zero)) {
+            throw "Preliminary install root reservation failed"
+          }
+          $rootItem = Get-Item -LiteralPath $installRoot -Force
+          if (-not $rootItem.PSIsContainer -or ($rootItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw "Preliminary install root is a reparse point"
+          }
+          $actualOwnerSid = ([Security.Principal.NTAccount]::new((Get-Acl -LiteralPath $installRoot).Owner)).Translate([Security.Principal.SecurityIdentifier]).Value
+          if ($actualOwnerSid -cne [Security.Principal.WindowsIdentity]::GetCurrent().Owner.Value) {
+            throw "Preliminary install root owner drift"
+          }
+          if (@(Get-ChildItem -LiteralPath $installRoot -Force).Count -ne 0) {
+            throw "Preliminary install root is not empty"
+          }
+          $ownershipPath = Join-Path $installRoot ".bharatcode-preliminary-owner"
+          $ownershipBytes = [Text.UTF8Encoding]::new($false).GetBytes("BharatCode-ai/bharatcode-desktop`n$env:GITHUB_RUN_ID`n$env:GITHUB_RUN_ATTEMPT`n")
+          $ownership = [IO.File]::Open($ownershipPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+          try {
+            $ownership.Write($ownershipBytes, 0, $ownershipBytes.Length)
+            $ownership.Flush($true)
+          }
+          finally { $ownership.Dispose() }
           $process = Start-Process -FilePath $installer -ArgumentList @("/S", "/D=$installRoot") -PassThru
           try {
             Wait-Process -Id $process.Id -Timeout 180 -ErrorAction Stop
@@ -245,6 +286,15 @@ jobs:
           }
           $process.Refresh()
           if ($process.ExitCode -ne 0) { throw "Preliminary NSIS install failed" }
+          $rootItem = Get-Item -LiteralPath $installRoot -Force
+          if (-not $rootItem.PSIsContainer -or ($rootItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw "Preliminary install root changed after installation"
+          }
+          $ownershipItem = Get-Item -LiteralPath $ownershipPath -Force
+          if ($ownershipItem.PSIsContainer -or ($ownershipItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+            [Convert]::ToBase64String([IO.File]::ReadAllBytes($ownershipPath)) -cne [Convert]::ToBase64String($ownershipBytes)) {
+            throw "Preliminary install ownership record drift"
+          }
           $installed = Join-Path $installRoot "BharatCode Beta.exe"
           $admissible = @(Get-ChildItem $installRoot -File -Filter *.exe | Where-Object { $_.Name -notlike "Uninstall*" })
           if ($admissible.Count -ne 1 -or $admissible[0].FullName -cne $installed -or -not (Test-Path $installed -PathType Leaf)) {
@@ -266,8 +316,6 @@ jobs:
           attrib +R preliminary-input/bharatcode-runtime-linux-x64-glibc
           "UNSIGNED_INSTALLER_PATH=$installer" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "INSTALLED_DESKTOP_EXE=$installed" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "PRELIMINARY_INSTALL_ROOT=$installRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "PRELIMINARY_UNINSTALLER=$uninstaller" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Run installed Desktop through the real WSL contract and write preliminary evidence
         shell: bash
@@ -299,7 +347,7 @@ jobs:
               "--acceptance-dir", `${process.env.RUNNER_TEMP}\\bharatcode-wsl-preliminary-acceptance`,
             ]
             const result = await runPreliminaryWindowsAcceptance(argv)
-            if (result.authority !== "PRELIMINARY_UNSIGNED" || !result.evidence) throw new Error("Preliminary harness authority drift")
+            if (result.authority !== "PRELIMINARY_UNSIGNED" || result.harness_authority !== "DIAGNOSTIC" || !result.evidence) throw new Error("Preliminary harness authority drift")
             const digest = async (path) => createHash("sha256").update(await Bun.file(path).arrayBuffer()).digest("hex")
             const installerStat = await stat(process.env.UNSIGNED_INSTALLER_PATH)
             const installedStat = await stat(process.env.INSTALLED_DESKTOP_EXE)
@@ -331,7 +379,7 @@ jobs:
               installed_desktop: { filename: "BharatCode Beta.exe", bytes: bindings.installed_desktop_bytes, sha256: result.evidence.desktop_sha256 },
               runtime_manifest_sha256: result.evidence.runtime_manifest_sha256,
               runtime: result.evidence.runtime,
-              harness: { contract: harness, contract_sha256: bindings.harness_sha256, authority: result.authority },
+              harness: { contract: harness, contract_sha256: bindings.harness_sha256, authority: result.harness_authority },
               identity: result.evidence.identity,
               scenarios: result.evidence.scenarios,
               completed_at: result.evidence.completed_at,
@@ -348,24 +396,148 @@ jobs:
           test ! -e "$RUNNER_TEMP/bharatcode-wsl-preliminary-acceptance/scenarios-9-10.json"
           test ! -e "$RUNNER_TEMP/bharatcode-wsl-preliminary-acceptance/scenarios-9-10.json.sha256"
 
-      - name: Uninstall isolated preliminary Desktop
+      - name: Clean preliminary install namespace
+        if: ${{ always() }}
         shell: pwsh
         run: |
-          $installedFile = Get-Item $env:INSTALLED_DESKTOP_EXE
-          $installedFile.IsReadOnly = $false
-          $process = Start-Process -FilePath $env:PRELIMINARY_UNINSTALLER -ArgumentList @("/S") -PassThru
+          $ErrorActionPreference = "Stop"
+          foreach ($identity in @($env:GITHUB_RUN_ID, $env:GITHUB_RUN_ATTEMPT)) {
+            if ($identity -notmatch '^[1-9][0-9]*$') { throw "Preliminary cleanup identity is invalid" }
+            try { if ([long]::Parse($identity) -le 0) { throw "invalid" } }
+            catch { throw "Preliminary cleanup identity is invalid" }
+          }
+          $runnerTemp = [IO.Path]::GetFullPath($env:RUNNER_TEMP).TrimEnd([char[]]@([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar))
+          $leaf = "bharatcode-preliminary-unsigned-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          $installRoot = [IO.Path]::GetFullPath([IO.Path]::Combine($runnerTemp, $leaf))
+          if ([IO.Path]::GetDirectoryName($installRoot) -cne $runnerTemp -or [IO.Path]::GetFileName($installRoot) -cne $leaf) {
+            throw "Preliminary cleanup root identity drift"
+          }
+          $installPrefix = "$installRoot$([IO.Path]::DirectorySeparatorChar)"
+          $ownershipPath = Join-Path $installRoot ".bharatcode-preliminary-owner"
+          $ownershipBytes = [Text.UTF8Encoding]::new($false).GetBytes("BharatCode-ai/bharatcode-desktop`n$env:GITHUB_RUN_ID`n$env:GITHUB_RUN_ATTEMPT`n")
+          $failures = [Collections.Generic.List[string]]::new()
+          function Add-CleanupFailure([string]$category) {
+            if (-not $failures.Contains($category)) { [void]$failures.Add($category) }
+          }
+          function Test-OwnedPreliminaryExecutable([string]$path) {
+            try {
+              $candidate = [IO.Path]::GetFullPath($path)
+              if (-not $candidate.StartsWith($installPrefix, [StringComparison]::OrdinalIgnoreCase)) { return $false }
+              $item = Get-Item -LiteralPath $candidate -Force
+              if (-not $item.PSIsContainer -and ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+                Add-CleanupFailure "process executable reparse"
+                return $false
+              }
+              $cursor = $item.Directory
+              while ($cursor -and $cursor.FullName -cne $installRoot) {
+                if ($cursor.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                  Add-CleanupFailure "process directory reparse"
+                  return $false
+                }
+                $cursor = $cursor.Parent
+              }
+              if (-not $cursor) { Add-CleanupFailure "process path drift"; return $false }
+              return $true
+            }
+            catch { Add-CleanupFailure "process path validation"; return $false }
+          }
+          function Get-OwnedPreliminaryProcesses {
+            @(
+              Get-CimInstance -ClassName Win32_Process -ErrorAction Stop | ForEach-Object {
+                if (-not [string]::IsNullOrEmpty($_.ExecutablePath) -and (Test-OwnedPreliminaryExecutable $_.ExecutablePath)) { $_ }
+              }
+            )
+          }
+          function Stop-OwnedPreliminaryProcesses {
+            try { $ownedProcesses = @(Get-OwnedPreliminaryProcesses) }
+            catch { Add-CleanupFailure "process enumeration"; return }
+            foreach ($owned in $ownedProcesses) {
+              try {
+                $current = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $($owned.ProcessId)" -ErrorAction Stop
+                if (-not $current) { continue }
+                if (-not (Test-OwnedPreliminaryExecutable $current.ExecutablePath)) {
+                  Add-CleanupFailure "process identity drift"
+                  continue
+                }
+                Stop-Process -Id $owned.ProcessId -Force -ErrorAction Stop
+              }
+              catch { Add-CleanupFailure "process termination" }
+            }
+          }
+          $rootIsSafe = $false
           try {
-            Wait-Process -Id $process.Id -Timeout 180 -ErrorAction Stop
+            if (Test-Path -LiteralPath $installRoot) {
+              $rootItem = Get-Item -LiteralPath $installRoot -Force
+              if (-not $rootItem.PSIsContainer) {
+                Add-CleanupFailure "install root type"
+              }
+              elseif ($rootItem.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                Add-CleanupFailure "Preliminary cleanup refused a reparse root"
+                try { [IO.Directory]::Delete($installRoot, $false) }
+                catch { Add-CleanupFailure "reparse root removal" }
+              }
+              else {
+                $actualOwnerSid = ([Security.Principal.NTAccount]::new((Get-Acl -LiteralPath $installRoot).Owner)).Translate([Security.Principal.SecurityIdentifier]).Value
+                if ($actualOwnerSid -cne [Security.Principal.WindowsIdentity]::GetCurrent().Owner.Value) {
+                  Add-CleanupFailure "install root owner drift"
+                }
+                elseif (-not (Test-Path -LiteralPath $ownershipPath -PathType Leaf)) {
+                  Add-CleanupFailure "install root ownership record missing"
+                }
+                else {
+                  $ownershipItem = Get-Item -LiteralPath $ownershipPath -Force
+                  if (($ownershipItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+                    [Convert]::ToBase64String([IO.File]::ReadAllBytes($ownershipPath)) -cne [Convert]::ToBase64String($ownershipBytes)) {
+                    Add-CleanupFailure "install root ownership record drift"
+                  }
+                  else { $rootIsSafe = $true }
+                }
+              }
+            }
           }
-          catch {
-            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-            throw "Preliminary NSIS uninstall timed out"
+          catch { Add-CleanupFailure "install root inspection" }
+          if ($rootIsSafe) {
+            Stop-OwnedPreliminaryProcesses
+            $installed = Join-Path $installRoot "BharatCode Beta.exe"
+            $uninstaller = Join-Path $installRoot "Uninstall BharatCode Beta.exe"
+            try {
+              if (Test-Path -LiteralPath $installed -PathType Leaf) {
+                (Get-Item -LiteralPath $installed -Force).IsReadOnly = $false
+              }
+              if (Test-Path -LiteralPath $uninstaller -PathType Leaf) {
+                $uninstallerItem = Get-Item -LiteralPath $uninstaller -Force
+                if ($uninstallerItem.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                  Add-CleanupFailure "uninstaller identity"
+                }
+                else {
+                  $process = Start-Process -FilePath $uninstaller -ArgumentList @("/S") -PassThru
+                  if (-not $process.WaitForExit(180000)) {
+                    Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+                    Add-CleanupFailure "uninstall timeout"
+                  }
+                  elseif ($process.ExitCode -ne 0) { Add-CleanupFailure "uninstall result" }
+                }
+              }
+            }
+            catch { Add-CleanupFailure "uninstall execution" }
+            Stop-OwnedPreliminaryProcesses
+            try {
+              if (Test-Path -LiteralPath $installRoot) {
+                Remove-Item -LiteralPath $installRoot -Recurse -Force
+              }
+            }
+            catch { Add-CleanupFailure "install root removal" }
           }
-          $process.Refresh()
-          if ($process.ExitCode -ne 0) { throw "Preliminary NSIS uninstall failed" }
-          $deadline = [DateTime]::UtcNow.AddSeconds(30)
-          while ((Test-Path $env:INSTALLED_DESKTOP_EXE) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Seconds 1 }
-          if (Test-Path $env:INSTALLED_DESKTOP_EXE) { throw "Installed preliminary Desktop survived uninstall" }
+          if (Test-Path -LiteralPath $installRoot) { Add-CleanupFailure "Preliminary install namespace survived cleanup" }
+          try {
+            if (@(Get-OwnedPreliminaryProcesses).Count -ne 0) {
+              Add-CleanupFailure "Preliminary processes survived cleanup"
+            }
+          }
+          catch { Add-CleanupFailure "final process verification" }
+          if ($failures.Count -ne 0) {
+            throw "Preliminary cleanup failed: $($failures -join ', ')"
+          }
 
       - name: Attest preliminary unsigned evidence
         id: attest_preliminary
