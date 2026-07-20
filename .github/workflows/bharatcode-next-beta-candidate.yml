@@ -106,7 +106,91 @@ jobs:
           bun-version-file: package.json
 
       - name: Install exact dependencies
-        run: bun install --frozen-lockfile --linker hoisted
+        run: bun install --frozen-lockfile --linker hoisted --os='*' --cpu='*'
+
+      - name: Preflight exact cross-platform native dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun --eval '
+            import { realpathSync } from "node:fs"
+            import { dirname, resolve, sep } from "node:path"
+            import { PLATFORM_TARGETS } from "./packages/opencode/script/distribution.mjs"
+            const root = await Bun.file("package.json").json()
+            const opencode = await Bun.file("packages/opencode/package.json").json()
+            const opentui = [...new Set(PLATFORM_TARGETS.map((target) => `@opentui/core-${target.os}-${target.arch}`))].sort()
+            const watcher = [...new Set(PLATFORM_TARGETS.map((target) => `@parcel/watcher-${target.os}-${target.arch}${target.os === "linux" ? `-${target.abi ?? "glibc"}` : ""}`))].sort()
+            if (opentui.length !== 6 || watcher.length !== 8) throw new Error("native package target closure drift")
+            const versions = {
+              opentui: root.workspaces.catalog["@opentui/core"],
+              watcher: opencode.dependencies["@parcel/watcher"],
+            }
+            if (!/^\d+\.\d+\.\d+$/.test(versions.opentui) || !/^\d+\.\d+\.\d+$/.test(versions.watcher)) throw new Error("native package version is not exact")
+            const packageRoot = resolve("packages/opencode")
+            const workspaceRoot = realpathSync(resolve("."))
+            const approvedDependencyRoot = realpathSync(resolve(workspaceRoot, "node_modules/.bun"))
+            if (approvedDependencyRoot !== resolve(workspaceRoot, "node_modules/.bun")) throw new Error("native dependency store origin drift")
+            const opentuiManifestResolution = Bun.resolveSync("@opentui/core/package.json", packageRoot)
+            const opentuiManifestPath = realpathSync(opentuiManifestResolution)
+            if (opentuiManifestResolution !== opentuiManifestPath || !opentuiManifestPath.startsWith(`${approvedDependencyRoot}${sep}`)) throw new Error("OpenTUI base origin drift")
+            const opentuiManifest = await Bun.file(opentuiManifestPath).json()
+            if (opentuiManifest.name !== "@opentui/core" || opentuiManifest.version !== versions.opentui) throw new Error("OpenTUI base identity drift")
+            for (const name of opentui) if (opentuiManifest.optionalDependencies[name] !== versions.opentui) throw new Error(`OpenTUI optional provenance drift: ${name}`)
+            for (const name of watcher) if (opencode.devDependencies[name] !== versions.watcher) throw new Error(`Parcel direct provenance drift: ${name}`)
+            const payloads = {
+              "@opentui/core-linux-arm64": { file: "libopentui.so", bytes: 8313392, sha256: "33e1b1a7cceb0103a189161fe74606fc88034330201bd59049a88c86295b373a", os: "linux", arch: "arm64" },
+              "@opentui/core-linux-x64": { file: "libopentui.so", bytes: 8199928, sha256: "84f757983fe83bb47f4bc31bae73f5cafefbcd5bc891cf1b0aa8163dfbe6de2c", os: "linux", arch: "x64" },
+              "@opentui/core-darwin-arm64": { file: "libopentui.dylib", bytes: 1676080, sha256: "f5d966c54afd6969234b911460b8ce06085fbe287ce32a60554ff40b31c99a4f", os: "darwin", arch: "arm64" },
+              "@opentui/core-darwin-x64": { file: "libopentui.dylib", bytes: 1687295, sha256: "caa637b108a6c12d8a6287578f84de97c9db38df1500351ee8b19a40f4cd2968", os: "darwin", arch: "x64" },
+              "@opentui/core-win32-arm64": { file: "opentui.dll", bytes: 1662344, sha256: "20e901d69ead6c23181436592babfd000849ac15d84d592f9d9ed487d3e24eac", os: "win32", arch: "arm64" },
+              "@opentui/core-win32-x64": { file: "opentui.dll", bytes: 1851784, sha256: "3ddefc1a47f5f35aea1755b86f0d6f0f127b686a294a473c08234ae0b98e08cb", os: "win32", arch: "x64" },
+              "@parcel/watcher-linux-arm64-glibc": { file: "watcher.node", bytes: 457680, sha256: "a0bc8fc5f3e68e95218c2541b812dc07ba5fb8afd765b6252ab9e68ba5edb2aa", os: "linux", arch: "arm64" },
+              "@parcel/watcher-linux-arm64-musl": { file: "watcher.node", bytes: 469800, sha256: "21ffdef959a00016dca15757b31a2416db3bfcad21cd2ec93286b82c72b15c1e", os: "linux", arch: "arm64" },
+              "@parcel/watcher-linux-x64-glibc": { file: "watcher.node", bytes: 514960, sha256: "e58979069d4f71d2e36f7dc130d6dbc671e63666fe3943fd2ed481519cbf374c", os: "linux", arch: "x64" },
+              "@parcel/watcher-linux-x64-musl": { file: "watcher.node", bytes: 511160, sha256: "689df89fa2412de37604b44fe0223af61fa322f5cb12c3528a29cb2051b7fa1e", os: "linux", arch: "x64" },
+              "@parcel/watcher-darwin-arm64": { file: "watcher.node", bytes: 342608, sha256: "ea31618e251be57fdf7a8160bc2cb57d3131a430287681de2d321bbc3679e777", os: "darwin", arch: "arm64" },
+              "@parcel/watcher-darwin-x64": { file: "watcher.node", bytes: 346272, sha256: "5fc72d98675a3b98dd795ce8e533c8ee2ae73b850c541469dc5c0ba2ea42a2a1", os: "darwin", arch: "x64" },
+              "@parcel/watcher-win32-arm64": { file: "watcher.node", bytes: 548864, sha256: "805e3bdafc8b6f02b02955db024292652b0c92773a0918d1f78fdf2c8ff68769", os: "win32", arch: "arm64" },
+              "@parcel/watcher-win32-x64": { file: "watcher.node", bytes: 518144, sha256: "a8199cf7b6c5102267a5889f80321a4cc92e631d7504c474d32a35b4d440f315", os: "win32", arch: "x64" },
+            }
+            const required = [...opentui, ...watcher].sort()
+            if (JSON.stringify(Object.keys(payloads).sort()) !== JSON.stringify(required)) throw new Error("native payload closure drift")
+            for (const [name, version] of [...opentui.map((name) => [name, versions.opentui]), ...watcher.map((name) => [name, versions.watcher])]) {
+              const manifestResolution = Bun.resolveSync(`${name}/package.json`, packageRoot)
+              const manifestPath = realpathSync(manifestResolution)
+              if (manifestResolution !== manifestPath || !manifestPath.startsWith(`${approvedDependencyRoot}${sep}`)) throw new Error(`native package origin drift: ${name}`)
+              const manifest = await Bun.file(manifestPath).json()
+              if (manifest.name !== name || manifest.version !== version) throw new Error(`native package identity drift: ${name}`)
+              const packageDir = realpathSync(dirname(manifestPath))
+              if (!packageDir.startsWith(`${approvedDependencyRoot}${sep}`)) throw new Error(`native package directory origin drift: ${name}`)
+              const entryResolution = Bun.resolveSync(name, packageRoot)
+              const entry = realpathSync(entryResolution)
+              if (entryResolution !== entry || !entry.startsWith(`${approvedDependencyRoot}${sep}`) || (entry !== packageDir && !entry.startsWith(`${packageDir}${sep}`))) throw new Error(`native package entry drift: ${name}`)
+              const payload = payloads[name]
+              const payloadResolution = resolve(packageDir, payload.file)
+              const payloadPath = realpathSync(payloadResolution)
+              if (payloadResolution !== payloadPath || !payloadPath.startsWith(`${approvedDependencyRoot}${sep}`) || !payloadPath.startsWith(`${packageDir}${sep}`)) throw new Error(`native payload path drift: ${name}`)
+              const bytes = new Uint8Array(await Bun.file(payloadPath).arrayBuffer())
+              if (payload.bytes !== bytes.length || new Bun.CryptoHasher("sha256").update(bytes).digest("hex") !== payload.sha256) throw new Error(`native payload digest drift: ${name}`)
+              const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+              if (payload.os === "linux") {
+                if (bytes.length < 20 || Buffer.from(bytes.subarray(0, 6)).toString("hex") !== "7f454c460201" || view.getUint16(18, true) !== (payload.arch === "arm64" ? 0xb7 : 0x3e)) throw new Error(`native ELF identity drift: ${name}`)
+                continue
+              }
+              if (payload.os === "darwin") {
+                if (bytes.length < 8 || view.getUint32(0, true) !== 0xfeedfacf || view.getUint32(4, true) !== (payload.arch === "arm64" ? 0x0100000c : 0x01000007)) throw new Error(`native Mach-O identity drift: ${name}`)
+                continue
+              }
+              const peOffset = bytes.length >= 0x40 ? view.getUint32(0x3c, true) : bytes.length
+              if (bytes[0] !== 0x4d || bytes[1] !== 0x5a || peOffset + 6 > bytes.length || view.getUint32(peOffset, true) !== 0x00004550 || view.getUint16(peOffset + 4, true) !== (payload.arch === "arm64" ? 0xaa64 : 0x8664)) throw new Error(`native PE identity drift: ${name}`)
+            }
+          '
+
+      - name: Prove dependency install kept exact build inputs clean
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "$(git status --porcelain=v1 -- package.json bun.lock packages/opencode/package.json)"
 
       - name: Build and pack the exact CLI cohort and Desktop WSL runtime
         shell: bash
@@ -213,6 +297,9 @@ jobs:
       id-token: write
       attestations: write
     env:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       AZURE_TRUSTED_SIGNING_ACCOUNT_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME }}
       AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE: ${{ secrets.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE }}
       AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
@@ -229,6 +316,39 @@ jobs:
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: package.json
+
+      - name: Preflight protected Windows signing identity
+        shell: pwsh
+        run: |
+          bun --eval '
+            const names = [
+              "AZURE_CLIENT_ID",
+              "AZURE_TENANT_ID",
+              "AZURE_SUBSCRIPTION_ID",
+              "AZURE_TRUSTED_SIGNING_ENDPOINT",
+              "AZURE_TRUSTED_SIGNING_ACCOUNT_NAME",
+              "AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE",
+              "EXPECTED_WINDOWS_PUBLISHER",
+            ]
+            const values = Object.fromEntries(names.map((name) => [name, process.env[name]]))
+            const invalid = () => { throw new Error("protected Windows signing input is missing or malformed") }
+            for (const value of Object.values(values)) {
+              if (typeof value !== "string" || value.length === 0 || value.trim() !== value || value.includes("\n") || value.includes("\r")) invalid()
+            }
+            const uuid = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/
+            if (!uuid.test(values.AZURE_CLIENT_ID) || !uuid.test(values.AZURE_TENANT_ID) || !uuid.test(values.AZURE_SUBSCRIPTION_ID)) invalid()
+            if (!/^https:\/\/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.codesigning\.azure\.net\/$/.test(values.AZURE_TRUSTED_SIGNING_ENDPOINT)) invalid()
+            const identifier = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9])?$/
+            if (!identifier.test(values.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME) || !identifier.test(values.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE)) invalid()
+            if (!/^[A-Za-z0-9][A-Za-z0-9 .,()&=+-]{0,255}$/.test(values.EXPECTED_WINDOWS_PUBLISHER)) invalid()
+          '
+
+      - name: Establish Azure CLI OIDC session
+        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Download same-run WSL runtime
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -321,7 +441,7 @@ jobs:
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
       CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
       CSC_LINK: ${{ secrets.CSC_LINK }}
-      EXPECTED_APPLE_DEVELOPER_ID: ${{ vars.BHARATCODE_APPLE_DEVELOPER_ID_APPLICATION }}
+      EXPECTED_APPLE_DEVELOPER_ID_SUBJECT: ${{ vars.BHARATCODE_EXPECTED_APPLE_DEVELOPER_ID_SUBJECT }}
     steps:
       - name: Checkout the exact candidate
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -355,6 +475,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          bun --eval '
+            const value = process.env.EXPECTED_APPLE_DEVELOPER_ID_SUBJECT
+            const team = process.env.APPLE_TEAM_ID
+            if (typeof value !== "string" || value.trim() !== value || value.includes("\n") || value.includes("\r") || !/^[A-Za-z0-9][A-Za-z0-9 .-]{0,127}$/.test(value)) throw new Error("protected Apple identity subject is missing or malformed")
+            if (typeof team !== "string" || !/^[A-Z0-9]{10}$/.test(team)) throw new Error("protected Apple team identity is missing or malformed")
+          '
           bun install --frozen-lockfile --linker hoisted
           bun run --cwd packages/desktop typecheck
           bun run --cwd packages/desktop build
@@ -364,9 +490,14 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "$app_path"
           spctl --assess --verbose --type exec "$app_path"
           xcrun stapler validate "$app_path"
-          [[ -n "$EXPECTED_APPLE_DEVELOPER_ID" ]]
+          # Run 29712784688 jobs 88259572335 and 88259572313 proved the former repository variable was absent.
+          expected_authority="Developer ID Application: ${EXPECTED_APPLE_DEVELOPER_ID_SUBJECT} (${APPLE_TEAM_ID})"
           signature="$(codesign -dv --verbose=4 "$app_path" 2>&1)"
-          grep -Fx "Authority=$EXPECTED_APPLE_DEVELOPER_ID" <<< "$signature"
+          [[ "$(grep -c '^Authority=' <<< "$signature")" -eq 3 ]]
+          grep -Fx "Authority=$expected_authority" <<< "$signature"
+          grep -Fx "Authority=Developer ID Certification Authority" <<< "$signature"
+          grep -Fx "Authority=Apple Root CA" <<< "$signature"
+          [[ "$(grep -c '^TeamIdentifier=' <<< "$signature")" -eq 1 ]]
           grep -Fx "TeamIdentifier=$APPLE_TEAM_ID" <<< "$signature"
           [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app_path/Contents/Info.plist")" == "${{ needs.admit-source.outputs.desktop_version }}" ]]
           executable="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app_path/Contents/Info.plist")"
@@ -446,7 +577,14 @@ jobs:
           chmod +x "$appimage"
           file "$appimage" | grep -F "x86-64"
           "$appimage" --appimage-extract > /dev/null
-          file squashfs-root/AppRun | grep -E "x86-64|symbolic link"
+          # Run 29712784688 job 88259572297 proved AppRun is a wrapper, not the packaged application ELF.
+          # Canonical false-EULA render: app-builder-bin v5.0.0-alpha.12 source 580c34f2e19347061bc2243fa6ab6e57e9bbd2a6, ExecutableName bharatcode-beta.
+          bash -n squashfs-root/AppRun
+          [[ "$(stat -c %s squashfs-root/AppRun)" -eq 2356 ]]
+          [[ "$(sha256sum squashfs-root/AppRun | cut -d ' ' -f 1)" == "897b7e36db7be71f3bf8a427cd24ece7d7fdd6763ecf79f9878e6e0a3f96b9d6" ]]
+          appimage_target="squashfs-root/$expected_package"
+          [[ -f "$appimage_target" && -x "$appimage_target" && ! -L "$appimage_target" ]]
+          file -L -b "$appimage_target" | grep -E '^ELF 64-bit LSB (pie )?executable, x86-64,'
           cp "$appimage" bharatcode-desktop-next-beta-linux-x64.AppImage
           cp "$deb" bharatcode-desktop-next-beta-linux-x64.deb
 
