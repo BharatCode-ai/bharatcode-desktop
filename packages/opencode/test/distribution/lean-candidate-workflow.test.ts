@@ -28,6 +28,7 @@ const reviewedSecurityStepSha256 = {
 } as const
 const previousAcceptedWslSha = "a30c6923f2f532258de58d84b65445198be1b351"
 const acceptedWslSha = "f223e2c6b53f567667491f6f1e5667c42fb73fa0"
+const wslRunnerLabel = "bharatcode-acceptance-${{ github.run_id }}-${{ github.run_attempt }}"
 const frozenWslPaths = [
   "packages/desktop/electron-builder.config.ts",
   "packages/desktop/scripts/stage-wsl-runtime.ts",
@@ -211,6 +212,59 @@ function parse(value: string) {
 
 function runStep(value: string, job: string, name: string) {
   return parse(value).jobs[job].steps?.find((step) => step.name === name)?.run ?? ""
+}
+
+function renderWslRunnerLabels(value: string, runId: string, runAttempt: string) {
+  if (!/^[1-9][0-9]*$/u.test(runId) || !/^[1-9][0-9]*$/u.test(runAttempt)) {
+    throw new Error("test run identity is invalid")
+  }
+  const labels = parse(value).jobs["accept-wsl"]["runs-on"]
+  if (!Array.isArray(labels)) throw new Error("WSL runner labels are not closed")
+  return labels.map((label) =>
+    label.replaceAll("${{ github.run_id }}", runId).replaceAll("${{ github.run_attempt }}", runAttempt),
+  )
+}
+
+function wslRunnerBindingViolations(value: string) {
+  const workflow = parse(value)
+  const labels = workflow.jobs["accept-wsl"]["runs-on"]
+  const labelList = Array.isArray(labels) ? labels : []
+  const expected = ["self-hosted", "windows", "x64", "wsl2", wslRunnerLabel]
+  const first = renderWslRunnerLabels(value, "29722640762", "1")
+  const second = renderWslRunnerLabels(value, "29722640762", "2")
+  const rendered = [first.at(-1), second.at(-1)]
+  const wslSteps = workflow.jobs["accept-wsl"].steps ?? []
+  const upload = wslSteps.find((step) => step.name === "Upload run-attempt-scoped WSL receipt")
+  const validation = wslSteps.find((step) => step.name === "Validate exact WSL receipt binding")?.run ?? ""
+  const assemble = workflow.jobs["assemble-cohort"]
+  const download = assemble.steps?.find((step) => step.name === "Download every same-run producer artifact")
+  const finalization = runStep(value, "assemble-cohort", "Rehash, close, and validate final manifest")
+  return [
+    ...(JSON.stringify(labels) === JSON.stringify(expected) ? [] : ["closed WSL runner labels"]),
+    ...(rendered.every((label) => /^bharatcode-acceptance-[1-9][0-9]*-[1-9][0-9]*$/u.test(label ?? ""))
+      ? []
+      : ["WSL runner label grammar"]),
+    ...(new Set(rendered).size === rendered.length ? [] : ["WSL runner label collision"]),
+    ...(labelList.includes("bharatcode-acceptance") ? ["static WSL runner fallback"] : []),
+    ...(labelList.some((label) => /inputs\.|vars\.|secrets\./u.test(label))
+      ? ["operator-selected WSL runner label"]
+      : []),
+    ...(assemble.needs?.includes("accept-wsl") ? [] : ["assemble WSL dependency"]),
+    ...(upload?.with?.name === "cp2-wsl-${{ github.run_id }}-${{ github.run_attempt }}"
+      ? []
+      : ["WSL upload run binding"]),
+    ...(download?.with?.pattern === "cp2-*-${{ github.run_id }}-${{ github.run_attempt }}"
+      ? []
+      : ["assemble download run binding"]),
+    ...(validation.includes("run_id: process.env.GITHUB_RUN_ID") &&
+    validation.includes("run_attempt: process.env.GITHUB_RUN_ATTEMPT")
+      ? []
+      : ["WSL receipt run binding"]),
+    ...(finalization.includes("run_id: process.env.GITHUB_RUN_ID") &&
+    finalization.includes("run_attempt: process.env.GITHUB_RUN_ATTEMPT")
+      ? []
+      : ["cohort manifest run binding"]),
+  ]
 }
 
 function sha256(value: string | Uint8Array) {
@@ -1101,6 +1155,33 @@ describe("lean next-beta candidate workflow", () => {
     expect(git("merge-base", "--is-ancestor", previousAcceptedWslSha, acceptedWslSha).exitCode).toBe(0)
     expect(git("diff", "--quiet", acceptedWslSha, "HEAD", "--", ...frozenWslPaths).exitCode).toBe(0)
     expect(git("diff", "--quiet", previousAcceptedWslSha, "HEAD", "--", ...frozenWslPaths).exitCode).not.toBe(0)
+  })
+
+  test("requires one immutable run-attempt-scoped WSL runner label through cohort finalization", async () => {
+    const value = await source()
+    const first = renderWslRunnerLabels(value, "29722640762", "1")
+    const second = renderWslRunnerLabels(value, "29722640762", "2")
+    expect(first).toEqual(["self-hosted", "windows", "x64", "wsl2", "bharatcode-acceptance-29722640762-1"])
+    expect(second).toEqual(["self-hosted", "windows", "x64", "wsl2", "bharatcode-acceptance-29722640762-2"])
+    expect(first.at(-1)).not.toBe(second.at(-1))
+    expect(wslRunnerBindingViolations(value)).toEqual([])
+
+    const staticFallback = value.replace(wslRunnerLabel, "bharatcode-acceptance")
+    expect(renderWslRunnerLabels(staticFallback, "29722640762", "1").at(-1)).toBe(
+      renderWslRunnerLabels(staticFallback, "29722640762", "2").at(-1),
+    )
+    expect(wslRunnerBindingViolations(staticFallback)).not.toEqual([])
+    expect(
+      wslRunnerBindingViolations(value.replace(wslRunnerLabel, "bharatcode-acceptance-${{ inputs.source_sha }}")),
+    ).not.toEqual([])
+    expect(wslRunnerBindingViolations(value.replace("      - accept-wsl\n", ""))).not.toEqual([])
+    expect(
+      wslRunnerBindingViolations(
+        value.replace("cp2-*-${{ github.run_id }}-${{ github.run_attempt }}", "cp2-*-${{ github.run_id }}-1"),
+      ),
+    ).not.toEqual([])
+    expect(() => renderWslRunnerLabels(value, "0", "1")).toThrow("test run identity is invalid")
+    expect(() => renderWslRunnerLabels(value, "29722640762", "01")).toThrow("test run identity is invalid")
   })
 
   test("pins every action and Bun while denying publication and overwrite authority", async () => {

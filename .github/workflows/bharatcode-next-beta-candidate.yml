@@ -756,7 +756,7 @@ jobs:
 
   accept-wsl:
     needs: [admit-source, build-cli, package-windows]
-    runs-on: [self-hosted, windows, x64, wsl2, bharatcode-acceptance]
+    runs-on: [self-hosted, windows, x64, wsl2, "bharatcode-acceptance-${{ github.run_id }}-${{ github.run_attempt }}"]
     permissions:
       contents: read
       id-token: write
