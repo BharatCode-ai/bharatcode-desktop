@@ -394,7 +394,7 @@ async function databaseFixture() {
   database.run(
     `INSERT INTO permission VALUES ('project_1', '{"command":"opencode serve","url":"https://opencode.ai"}')`,
   )
-  database.run("INSERT INTO account VALUES ('account_1', 'secret')")
+  database.run("INSERT INTO account VALUES ('account_1', 'legacy-secret-token')")
   database.close()
   fixture.input.candidates = releasedSchemaCandidatesFromMigrations([
     {

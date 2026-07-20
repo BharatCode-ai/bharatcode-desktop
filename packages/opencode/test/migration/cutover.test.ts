@@ -167,7 +167,7 @@ describe("migration cutover", () => {
     writer.run(
       'INSERT INTO permission VALUES (\'project_1\', \'{"command":"opencode serve","url":"https://opencode.ai"}\')',
     )
-    writer.run("INSERT INTO account VALUES ('acct_1', 'secret')")
+    writer.run("INSERT INTO account VALUES ('acct_1', 'legacy-secret-token')")
     const candidate: MigrationSource = {
       id: "wal-source",
       label: "Existing BharatCode data · opencode-cli · 00000000",
@@ -197,7 +197,7 @@ describe("migration cutover", () => {
     expect(() => activated.query("SELECT * FROM account").all()).toThrow()
     activated.close()
     const preserved = new Database(legacyDatabase, { readonly: true })
-    expect(preserved.query("SELECT token FROM account").get()).toEqual({ token: "secret" })
+    expect(preserved.query("SELECT token FROM account").get()).toEqual({ token: "legacy-secret-token" })
     preserved.close()
   })
 

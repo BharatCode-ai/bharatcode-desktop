@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { watch } from "node:fs"
 import { lstat, mkdir, readFile, readdir, symlink, truncate, writeFile } from "node:fs/promises"
 import path from "node:path"
 
@@ -103,7 +104,7 @@ describe("migration capture", () => {
     writer.run(
       'INSERT INTO permission VALUES (\'project_1\', \'{"command":"opencode serve","url":"https://opencode.ai"}\')',
     )
-    writer.run("INSERT INTO account VALUES ('acct_1', 'secret')")
+    writer.run("INSERT INTO account VALUES ('acct_1', 'legacy-secret-token')")
     const source: MigrationSource = {
       id: "wal-source",
       label: "Existing BharatCode data · opencode-cli · 00000000",
@@ -119,6 +120,9 @@ describe("migration capture", () => {
     expect(await Bun.file(path.join(captured.snapshotDirectory, "records", "config", "opencode.jsonc")).exists()).toBe(
       false,
     )
+    expect(
+      (await snapshotRecordFiles(captured.snapshotDirectory)).some((file) => /\.db-(?:wal|shm)$/i.test(file)),
+    ).toBe(false)
     expect(
       await Bun.file(
         path.join(captured.snapshotDirectory, "records", "data", "storage", "message", "ses_1", "msg_1.json"),
@@ -288,6 +292,205 @@ describe("migration capture", () => {
     sealed.close()
   })
 
+  test("excludes only associated SQLite sidecars and preserves every source byte", async () => {
+    await using tmp = await tmpdir()
+    const data = path.join(tmp.path, "legacy-data")
+    await mkdir(data, { recursive: true })
+    const legacyDatabase = path.join(data, "opencode.db")
+    const database = new Database(legacyDatabase, { create: true })
+    database.run("CREATE TABLE session(id TEXT PRIMARY KEY, title TEXT, model TEXT)")
+    database.run("INSERT INTO session VALUES ('session_1', 'retained', NULL)")
+    database.close()
+    const sidecars = new Map([
+      [`${legacyDatabase}-journal`, Buffer.concat([Buffer.alloc(512), Buffer.from(sentinel("journal-secret", 91))])],
+      [`${legacyDatabase}-shm`, Buffer.from(sentinel("shm-secret", 37))],
+      [`${legacyDatabase}-mjDEADBEEF`, Buffer.from(sentinel("super-journal-secret", 53))],
+    ])
+    for (const [file, bytes] of sidecars) await writeFile(file, bytes)
+    const sourceMain = await readFile(legacyDatabase)
+    const sourceSidecars = await Promise.all([...sidecars.keys()].map((file) => readFile(file)))
+
+    const captured = await captureMigrationSource(databaseSource(data, "sidecar-source"), target(tmp.path))
+
+    expect(await snapshotRecordFiles(captured.snapshotDirectory)).toEqual(["database/main.sqlite"])
+    expect(await readFile(legacyDatabase)).toEqual(sourceMain)
+    expect(await Promise.all([...sidecars.keys()].map((file) => readFile(file)))).toEqual(sourceSidecars)
+  })
+
+  test("fails closed for an unexplained database-adjacent sidecar", async () => {
+    await using tmp = await tmpdir()
+    const data = path.join(tmp.path, "legacy-data")
+    await mkdir(data, { recursive: true })
+    const database = new Database(path.join(data, "opencode.db"), { create: true })
+    database.run("CREATE TABLE session(id TEXT PRIMARY KEY, title TEXT, model TEXT)")
+    database.close()
+    await writeFile(path.join(data, "opencode.db-journal.foreign"), sentinel("foreign-sidecar", 31))
+
+    await expect(captureMigrationSource(databaseSource(data, "foreign-sidecar"), target(tmp.path))).rejects.toThrow(
+      "database-adjacent",
+    )
+  })
+
+  test.each([
+    ["exact", (secret: string) => secret],
+    ["substring", (secret: string) => `Retained prefix ${secret} retained suffix`],
+  ])("rejects a dropped credential in a retained %s collision", async (_name, title) => {
+    await using tmp = await tmpdir()
+    const data = path.join(tmp.path, "legacy-data")
+    await mkdir(data, { recursive: true })
+    const secret = "Bearer CP3collisiontokenabcdefghijklmnop"
+    const database = new Database(path.join(data, "opencode.db"), { create: true })
+    database.run("CREATE TABLE session(id TEXT PRIMARY KEY, title TEXT, model TEXT)")
+    database.run("CREATE TABLE account(id TEXT PRIMARY KEY, email TEXT, access_token TEXT)")
+    database.run("INSERT INTO session VALUES ('session_1', ?, NULL)", [title(secret)])
+    database.run("INSERT INTO account VALUES ('account_1', 'owner@example.test', ?)", [secret])
+    database.close()
+
+    await expect(
+      captureMigrationSource(databaseSource(data, "credential-collision"), target(tmp.path)),
+    ).rejects.toThrow("credential bytes")
+  })
+
+  test("fails closed for a short explicit credential before collision verification", async () => {
+    await using tmp = await tmpdir()
+    const data = path.join(tmp.path, "legacy-data")
+    await mkdir(data, { recursive: true })
+    const database = new Database(path.join(data, "opencode.db"), { create: true })
+    database.run("CREATE TABLE session(id TEXT PRIMARY KEY, title TEXT, model TEXT)")
+    database.run("CREATE TABLE account(id TEXT PRIMARY KEY, access_token TEXT)")
+    database.run("INSERT INTO session VALUES ('session_1', 'Retained tiny collision', NULL)")
+    database.run("INSERT INTO account VALUES ('account_1', 'tiny')")
+    database.close()
+
+    await expect(captureMigrationSource(databaseSource(data, "short-credential"), target(tmp.path))).rejects.toThrow(
+      "short credential",
+    )
+  })
+
+  test("preserves an ordinary retained substring that also appeared in noncredential dropped metadata", async () => {
+    await using tmp = await tmpdir()
+    const data = path.join(tmp.path, "legacy-data")
+    await mkdir(data, { recursive: true })
+    const ordinary = "ordinary-shared-identifier"
+    const database = new Database(path.join(data, "opencode.db"), { create: true })
+    database.run("CREATE TABLE session(id TEXT PRIMARY KEY, title TEXT, model TEXT)")
+    database.run("CREATE TABLE account(id TEXT PRIMARY KEY, email TEXT, access_token TEXT)")
+    database.run("INSERT INTO session VALUES ('session_1', ?, NULL)", [`Retained prefix ${ordinary} retained suffix`])
+    database.run("INSERT INTO account VALUES ('account_1', ?, 'short-token')", [ordinary])
+    database.close()
+
+    const captured = await captureMigrationSource(databaseSource(data, "ordinary-collision"), target(tmp.path))
+    const sealed = new Database(path.join(captured.snapshotDirectory, "records", "database", "main.sqlite"), {
+      readonly: true,
+    })
+    expect(sealed.query("SELECT title FROM session").get()).toEqual({
+      title: `Retained prefix ${ordinary} retained suffix`,
+    })
+    sealed.close()
+  })
+
+  test("bounds verification work for five thousand removed and retained rows", async () => {
+    await using tmp = await tmpdir()
+    const data = path.join(tmp.path, "legacy-data")
+    await mkdir(data, { recursive: true })
+    const database = new Database(path.join(data, "opencode.db"), { create: true })
+    database.run("CREATE TABLE session(id TEXT PRIMARY KEY, title TEXT, model TEXT)")
+    database.run("CREATE TABLE account(id TEXT PRIMARY KEY, email TEXT, access_token TEXT)")
+    const insertSession = database.prepare("INSERT INTO session VALUES (?, ?, NULL)")
+    const insertAccount = database.prepare("INSERT INTO account VALUES (?, ?, ?)")
+    database.transaction(() => {
+      for (let index = 0; index < 5_000; index++) {
+        const suffix = index.toString().padStart(5, "0")
+        insertSession.run(`session_${suffix}`, `Retained ordinary transcript ${suffix}`)
+        insertAccount.run(
+          `account_${suffix}`,
+          `owner-${suffix}@example.test`,
+          `Bearer CP3performance${suffix}abcdefghijkl`,
+        )
+      }
+    })()
+    database.close()
+
+    const started = performance.now()
+    const captured = await captureMigrationSource(databaseSource(data, "bounded-verifier"), target(tmp.path))
+    expect(performance.now() - started).toBeLessThan(6_000)
+    expect(await snapshotRecordFiles(captured.snapshotDirectory)).toEqual(["database/main.sqlite"])
+  }, 30_000)
+
+  test("serializes WAL-visible rows without source mutation or SQLite temp spill", async () => {
+    await using tmp = await tmpdir()
+    const data = path.join(tmp.path, "legacy-data")
+    const monitoredTemp = path.join(tmp.path, "sqlite-temp")
+    await mkdir(data, { recursive: true })
+    await mkdir(monitoredTemp, { recursive: true })
+    const legacyDatabase = path.join(data, "opencode.db")
+    const writer = new Database(legacyDatabase, { create: true })
+    writer.run("PRAGMA journal_mode = WAL")
+    writer.run("CREATE TABLE session(id TEXT PRIMARY KEY, title TEXT, model TEXT)")
+    writer.run("INSERT INTO session VALUES ('wal_session', 'WAL-visible retained row', NULL)")
+    const sourceMain = await readFile(legacyDatabase)
+    const sourceWal = await readFile(`${legacyDatabase}-wal`)
+    const events: string[] = []
+    const watcher = watch(monitoredTemp, (_event, name) => events.push(String(name)))
+
+    const child = Bun.spawn(
+      [
+        process.execPath,
+        "test/fixture/migration-capture-worker.ts",
+        JSON.stringify({
+          source: databaseSource(data, "wal-worker"),
+          destination: target(tmp.path),
+        }),
+      ],
+      { cwd: path.join(import.meta.dir, "../.."), env: { ...process.env, TMPDIR: monitoredTemp }, stderr: "pipe" },
+    )
+    expect(await child.exited).toBe(0)
+    watcher.close()
+    expect(events).toEqual([])
+    expect(await readFile(legacyDatabase)).toEqual(sourceMain)
+    expect(await readFile(`${legacyDatabase}-wal`)).toEqual(sourceWal)
+    writer.close()
+    const captured = JSON.parse(await new Response(child.stdout).text()) as { snapshotDirectory: string }
+    const sealed = new Database(path.join(captured.snapshotDirectory, "records", "database", "main.sqlite"), {
+      readonly: true,
+    })
+    expect(sealed.query("SELECT title FROM session").get()).toEqual({ title: "WAL-visible retained row" })
+    sealed.close()
+  })
+
+  test.each(["pre-sanitize", "post-sanitize"])(
+    "leaves no credential-bearing filesystem orphan after a %s process exit",
+    async (edge) => {
+      await using tmp = await tmpdir()
+      const data = path.join(tmp.path, "legacy-data")
+      const monitoredTemp = path.join(tmp.path, "sqlite-temp")
+      await mkdir(data, { recursive: true })
+      await mkdir(monitoredTemp, { recursive: true })
+      const legacyDatabase = path.join(data, "opencode.db")
+      const database = new Database(legacyDatabase, { create: true })
+      database.run("CREATE TABLE account(id TEXT PRIMARY KEY, access_token TEXT)")
+      database.run("INSERT INTO account VALUES ('account_1', ?)", [sentinel(`crash-${edge}`, 79)])
+      database.close()
+      const sourceMain = await readFile(legacyDatabase)
+
+      const child = Bun.spawn(
+        [
+          process.execPath,
+          "test/fixture/migration-capture-worker.ts",
+          JSON.stringify({
+            source: databaseSource(data, `crash-${edge}`),
+            destination: target(tmp.path),
+            crash: edge,
+          }),
+        ],
+        { cwd: path.join(import.meta.dir, "../.."), env: { ...process.env, TMPDIR: monitoredTemp }, stderr: "pipe" },
+      )
+      expect(await child.exited).not.toBe(0)
+      expect(await readdir(monitoredTemp)).toEqual([])
+      expect(await readFile(legacyDatabase)).toEqual(sourceMain)
+    },
+  )
+
   test("fails closed for an unknown SQLite capability location", async () => {
     await using tmp = await tmpdir()
     const data = path.join(tmp.path, "legacy-data")
@@ -373,6 +576,30 @@ function target(root: string): MigrationDestination {
     database: path.join(root, "destination", "data", "bharatcode.db"),
     storage: path.join(root, "destination", "data", "storage"),
   }
+}
+
+function databaseSource(data: string, id: string): MigrationSource {
+  return {
+    id,
+    label: "Existing BharatCode data · opencode-cli · 00000000",
+    kind: "opencode-cli",
+    roots: { data },
+  }
+}
+
+async function snapshotRecordFiles(snapshotDirectory: string) {
+  const root = path.join(snapshotDirectory, "records")
+  const files: string[] = []
+  const visit = async (directory: string, prefix: string): Promise<void> => {
+    for (const name of (await readdir(directory)).toSorted()) {
+      const absolute = path.join(directory, name)
+      const relative = prefix ? path.posix.join(prefix, name) : name
+      if ((await lstat(absolute)).isDirectory()) await visit(absolute, relative)
+      else files.push(relative)
+    }
+  }
+  await visit(root, "")
+  return files
 }
 
 async function applyPinnedBetaSchema(database: Database) {

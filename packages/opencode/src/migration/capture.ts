@@ -1,8 +1,6 @@
 import { Database } from "bun:sqlite"
 import { createHash, randomUUID } from "node:crypto"
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs"
 import { chmod, lstat, mkdir, open, readFile, readdir, rename, rm } from "node:fs/promises"
-import { tmpdir } from "node:os"
 import path from "node:path"
 import { parse as parseJsonc, type ParseError } from "jsonc-parser"
 
@@ -35,7 +33,13 @@ type Manifest = {
 const MAX_FILE_BYTES = 16 * 1024 * 1024
 const MAX_TOTAL_BYTES = 256 * 1024 * 1024
 const MAX_FILES = 50_000
+const MAX_SQLITE_IMAGE_BYTES = 32 * 1024 * 1024
+const MAX_SENSITIVE_VALUES = 10_000
+const MAX_SENSITIVE_VALUE_BYTES = 512 * 1024
 const DROPPED_SQLITE_TABLES = new Set(["session_share", "account_state", "account", "control_account"])
+const CREDENTIAL_VALUE =
+  /(?:bearer\s+[a-z0-9._-]{12,}|(?:access|refresh|id)[-_ ]?token|api[-_ ]?key|client[-_ ]?secret|password|private[-_ ]?key|\beyJ[a-z0-9_-]{12,})/i
+const CREDENTIAL_COLUMN = /(?:^|_)(?:token|secret|password|authorization|private_key)(?:$|_)/i
 const SQLITE_COLUMNS: Readonly<Record<string, ReadonlySet<string>>> = Object.fromEntries(
   Object.entries({
     __drizzle_migrations: ["id", "hash", "created_at"],
@@ -216,6 +220,19 @@ async function scanDirectory(role: string, root: string): Promise<CapturedEntry[
   const result: CapturedEntry[] = []
   const visit = async (directory: string, prefix: string): Promise<void> => {
     const names = (await readdir(directory)).toSorted()
+    const databases = new Set<string>()
+    for (const name of names) {
+      if (/\.db$/i.test(name) && (await lstat(path.join(directory, name))).isFile()) databases.add(name)
+    }
+    for (const name of names) {
+      const sidecar = sqliteSidecar(name, databases)
+      if (
+        sidecar === "unexplained" ||
+        (sidecar === "associated" && !(await lstat(path.join(directory, name))).isFile())
+      ) {
+        throw new MigrationCaptureError("A migration source contained an unexplained database-adjacent sidecar.")
+      }
+    }
     for (const name of names) {
       const absolute = path.join(directory, name)
       const relative = prefix ? path.posix.join(prefix, name) : name
@@ -228,7 +245,7 @@ async function scanDirectory(role: string, root: string): Promise<CapturedEntry[
       if (!before.isFile()) throw new MigrationCaptureError("A migration source contained an unsupported entry.")
       if (before.size > MAX_FILE_BYTES)
         throw new MigrationCaptureError("A migration source file exceeded its capture budget.")
-      if (/\.(?:db)-(?:wal|shm)$/i.test(relative)) continue
+      if (sqliteSidecar(name, databases) === "associated") continue
       const bytes = /\.db$/i.test(relative) ? snapshotDatabase(absolute) : await readFile(absolute)
       const after = await lstat(absolute)
       if (
@@ -256,6 +273,14 @@ async function scanDirectory(role: string, root: string): Promise<CapturedEntry[
   }
   await visit(root, "")
   return result
+}
+
+function sqliteSidecar(name: string, databases: ReadonlySet<string>): "associated" | "unexplained" | undefined {
+  const known = /^(.*\.db)-(?:journal|wal|shm)$/i.exec(name) ?? /^(.*\.db)-mj[0-9a-f]{8}$/i.exec(name)
+  if (known) return databases.has(known[1]) ? "associated" : "unexplained"
+  const adjacent = /^(.*\.db)-/i.exec(name)
+  if (adjacent && databases.has(adjacent[1])) return "unexplained"
+  return undefined
 }
 
 function canonicalRelative(role: string, relative: string) {
@@ -287,63 +312,76 @@ function sanitizeBytes(role: string, relative: string, bytes: Uint8Array) {
 }
 
 function snapshotDatabase(file: string) {
-  const directory = mkdtempSync(path.join(tmpdir(), "bharatcode-migration-db-"))
-  const snapshot = path.join(directory, "snapshot.sqlite")
   const source = new Database(file, { readonly: true })
+  let logical: Uint8Array
   try {
-    source.run(`VACUUM INTO ${quoteSql(snapshot)}`)
+    logical = standaloneSQLiteImage(source.serialize())
   } finally {
     source.close()
   }
-  const database = new Database(snapshot)
-  let removedValues: readonly Uint8Array[] = []
-  try {
-    try {
-      database.run("PRAGMA foreign_keys = OFF")
-      database.run("PRAGMA journal_mode = DELETE")
-      database.run("PRAGMA synchronous = FULL")
-      database.run("PRAGMA temp_store = MEMORY")
-      database.run("PRAGMA secure_delete = ON")
-      if ((database.query("PRAGMA secure_delete").get() as { secure_delete?: number } | null)?.secure_delete !== 1) {
-        throw new MigrationCaptureError("The migration database could not enable secure deletion.")
-      }
-      assertKnownSQLiteSchema(database)
-      const candidates = collectRemovedSQLiteValues(database)
-      database.transaction(() => {
-        for (const table of DROPPED_SQLITE_TABLES) {
-          if (hasTable(database, table)) database.run(`DROP TABLE ${quoteIdentifier(table)}`)
-        }
-        deleteRows(database, ["permission", "event", "event_sequence", "data_migration"])
-        clearColumns(database, "project", ["commands", "icon_url", "icon_url_override"])
-        setColumn(database, "project", "sandboxes", "[]")
-        clearColumns(database, "session", ["share_url", "model", "permission", "agent"])
-        clearColumns(database, "workspace", ["extra"])
-        setColumn(database, "workspace", "config", "{}")
-        sanitizeJsonColumn(database, "message")
-        sanitizeJsonColumn(database, "part")
-        sanitizeJsonColumn(database, "session_entry")
-        sanitizeJsonColumn(database, "session_message")
-        assertSanitizedSQLite(database)
-      })()
-      const retained = collectAllSQLiteValues(database)
-      removedValues = candidates.filter(
-        (candidate) => candidate.byteLength >= 8 && !retained.some((value) => containsBytes(value, candidate)),
-      )
-      database.run("VACUUM")
-      assertSanitizedSQLite(database)
-    } finally {
-      database.close()
-    }
-    return verifyClosedSQLiteSnapshot({ directory, snapshot, removedValues })
-  } finally {
-    rmSync(directory, { recursive: true, force: true })
+  if (logical.byteLength > MAX_SQLITE_IMAGE_BYTES) {
+    throw new MigrationCaptureError("The migration database exceeded its capture budget.")
   }
+  const database = Database.deserialize(logical)
+  let sensitiveValues: readonly Uint8Array[] = []
+  let sanitized: Uint8Array
+  try {
+    database.run("PRAGMA foreign_keys = OFF")
+    database.run("PRAGMA journal_mode = MEMORY")
+    database.run("PRAGMA temp_store = MEMORY")
+    database.run("PRAGMA secure_delete = ON")
+    const tempStore = database.query("PRAGMA temp_store").get() as { temp_store?: number } | null
+    const secureDelete = database.query("PRAGMA secure_delete").get() as { secure_delete?: number } | null
+    const journal = database.query("PRAGMA journal_mode").get() as { journal_mode?: string } | null
+    if (tempStore?.temp_store !== 2 || secureDelete?.secure_delete !== 1 || journal?.journal_mode !== "memory") {
+      throw new MigrationCaptureError("The migration database could not enable in-memory secure sanitation.")
+    }
+    assertKnownSQLiteSchema(database)
+    sensitiveValues = collectSensitiveRemovedSQLiteValues(database)
+    database.transaction(() => {
+      for (const table of DROPPED_SQLITE_TABLES) {
+        if (hasTable(database, table)) database.run(`DROP TABLE ${quoteIdentifier(table)}`)
+      }
+      deleteRows(database, ["permission", "event", "event_sequence", "data_migration"])
+      clearColumns(database, "project", ["commands", "icon_url", "icon_url_override"])
+      setColumn(database, "project", "sandboxes", "[]")
+      clearColumns(database, "session", ["share_url", "model", "permission", "agent"])
+      clearColumns(database, "workspace", ["extra"])
+      setColumn(database, "workspace", "config", "{}")
+      sanitizeJsonColumn(database, "message")
+      sanitizeJsonColumn(database, "part")
+      sanitizeJsonColumn(database, "session_entry")
+      sanitizeJsonColumn(database, "session_message")
+      assertSanitizedSQLite(database)
+    })()
+    database.run("VACUUM")
+    assertSanitizedSQLite(database)
+    sanitized = database.serialize()
+  } finally {
+    database.close()
+  }
+  return verifySerializedSQLiteSnapshot({ bytes: sanitized, sensitiveValues })
 }
 
-function collectRemovedSQLiteValues(database: Database) {
-  const values = new Map<string, Uint8Array>()
+function standaloneSQLiteImage(serialized: Uint8Array) {
+  const image = Buffer.from(serialized)
+  if (
+    image.byteLength < 100 ||
+    image.subarray(0, 16).toString("binary") !== "SQLite format 3\0" ||
+    ![1, 2].includes(image[18] ?? 0) ||
+    ![1, 2].includes(image[19] ?? 0)
+  ) {
+    throw new MigrationCaptureError("The migration database serialization was invalid.")
+  }
+  image[18] = 1
+  image[19] = 1
+  return image
+}
+
+function collectSensitiveRemovedSQLiteValues(database: Database) {
+  const removed = new Map<string, Uint8Array>()
   for (const table of [...DROPPED_SQLITE_TABLES, "permission", "event", "event_sequence", "data_migration"]) {
-    collectSQLiteValues(database, table, undefined, values)
+    collectSQLiteValues(database, table, undefined, removed)
   }
   for (const [table, columns] of [
     ["project", ["commands", "icon_url", "icon_url_override", "sandboxes"]],
@@ -353,20 +391,35 @@ function collectRemovedSQLiteValues(database: Database) {
     ["part", ["data"]],
     ["session_entry", ["data"]],
     ["session_message", ["data"]],
+    ["permission", ["data"]],
+    ["event", ["data"]],
   ] as const) {
-    collectSQLiteValues(database, table, columns, values)
+    collectSQLiteValues(database, table, columns, removed)
   }
-  return [...values.values()]
-}
-
-function collectAllSQLiteValues(database: Database) {
-  const values = new Map<string, Uint8Array>()
-  for (const row of database
-    .query("SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
-    .all() as { name: string }[]) {
-    collectSQLiteValues(database, row.name, undefined, values)
+  const sensitive = new Map<string, Uint8Array>()
+  for (const value of removed.values()) {
+    if (credentialShaped(value)) collectBytes(value, sensitive)
   }
-  return [...values.values()]
+  for (const table of DROPPED_SQLITE_TABLES) {
+    if (!hasTable(database, table)) continue
+    const columns = (database.query(`PRAGMA table_info(${quoteSql(table)})`).all() as { name: string }[])
+      .map((column) => column.name)
+      .filter((column) => CREDENTIAL_COLUMN.test(column) || (table === "session_share" && column === "url"))
+    const explicit = new Map<string, Uint8Array>()
+    collectSQLiteValues(database, table, columns, explicit)
+    for (const value of explicit.values()) {
+      if (value.byteLength < 8) {
+        throw new MigrationCaptureError("The migration database contained a short credential value.")
+      }
+      collectBytes(value, sensitive)
+    }
+  }
+  const values = [...sensitive.values()]
+  const bytes = values.reduce((total, value) => total + value.byteLength, 0)
+  if (values.length > MAX_SENSITIVE_VALUES || bytes > MAX_SENSITIVE_VALUE_BYTES) {
+    throw new MigrationCaptureError("The migration database exceeded its credential verification budget.")
+  }
+  return values.toSorted((left, right) => Buffer.compare(left, right))
 }
 
 function collectSQLiteValues(
@@ -406,7 +459,11 @@ function collectJsonStrings(value: string, values: Map<string, Uint8Array>) {
     }
     if (item && typeof item === "object") Object.values(item).forEach(visit)
   }
-  visit(JSON.parse(value) as unknown)
+  try {
+    visit(JSON.parse(value) as unknown)
+  } catch {
+    // Deleted capability tables may contain legacy plain text; the raw bytes are already collected.
+  }
 }
 
 function collectBytes(value: Uint8Array, values: Map<string, Uint8Array>) {
@@ -414,15 +471,19 @@ function collectBytes(value: Uint8Array, values: Map<string, Uint8Array>) {
   values.set(Buffer.from(value).toString("base64"), value)
 }
 
-function verifyClosedSQLiteSnapshot(input: {
-  directory: string
-  snapshot: string
-  removedValues: readonly Uint8Array[]
-}) {
-  if (readdirSync(input.directory).join("\0") !== "snapshot.sqlite") {
-    throw new MigrationCaptureError("The sanitized migration database retained a SQLite sidecar.")
+function credentialShaped(value: Uint8Array) {
+  try {
+    return CREDENTIAL_VALUE.test(new TextDecoder("utf-8", { fatal: true }).decode(value))
+  } catch {
+    return false
   }
-  const database = new Database(input.snapshot, { readonly: true })
+}
+
+function verifySerializedSQLiteSnapshot(input: { bytes: Uint8Array; sensitiveValues: readonly Uint8Array[] }) {
+  if (input.bytes.byteLength > MAX_SQLITE_IMAGE_BYTES) {
+    throw new MigrationCaptureError("The sanitized migration database exceeded its capture budget.")
+  }
+  const database = Database.deserialize(input.bytes, true)
   const physical = (() => {
     try {
       const integrity = database.query("PRAGMA integrity_check").all() as Record<string, unknown>[]
@@ -433,13 +494,7 @@ function verifyClosedSQLiteSnapshot(input: {
       const freelist = database.query("PRAGMA freelist_count").get() as { freelist_count?: number } | null
       const pageCount = database.query("PRAGMA page_count").get() as { page_count?: number } | null
       const pageSize = database.query("PRAGMA page_size").get() as { page_size?: number } | null
-      const journal = database.query("PRAGMA journal_mode").get() as { journal_mode?: string } | null
-      if (
-        freelist?.freelist_count !== 0 ||
-        !pageCount?.page_count ||
-        !pageSize?.page_size ||
-        journal?.journal_mode !== "delete"
-      ) {
+      if (freelist?.freelist_count !== 0 || !pageCount?.page_count || !pageSize?.page_size) {
         throw new MigrationCaptureError("The sanitized migration database was not physically compact.")
       }
       return { bytes: pageCount.page_count * pageSize.page_size }
@@ -447,18 +502,84 @@ function verifyClosedSQLiteSnapshot(input: {
       database.close()
     }
   })()
-  if (readdirSync(input.directory).join("\0") !== "snapshot.sqlite") {
-    throw new MigrationCaptureError("The sanitized migration database retained a SQLite sidecar.")
+  if (input.bytes.byteLength !== physical.bytes || containsAnyBytes(input.bytes, input.sensitiveValues)) {
+    throw new MigrationCaptureError("The sanitized migration database retained removed credential bytes.")
   }
-  const bytes = readFileSync(input.snapshot)
-  if (bytes.byteLength !== physical.bytes || input.removedValues.some((value) => containsBytes(bytes, value))) {
-    throw new MigrationCaptureError("The sanitized migration database retained removed bytes.")
-  }
-  return bytes
+  return input.bytes
 }
 
-function containsBytes(haystack: Uint8Array, needle: Uint8Array) {
-  return Buffer.from(haystack).includes(Buffer.from(needle))
+function containsAnyBytes(haystack: Uint8Array, patterns: readonly Uint8Array[]) {
+  if (patterns.length === 0) return false
+  const patternBytes = patterns.reduce((total, pattern) => total + pattern.byteLength, 0)
+  if (
+    haystack.byteLength > MAX_SQLITE_IMAGE_BYTES ||
+    patterns.length > MAX_SENSITIVE_VALUES ||
+    patternBytes > MAX_SENSITIVE_VALUE_BYTES
+  ) {
+    throw new MigrationCaptureError("The migration database exceeded its credential verification budget.")
+  }
+  const nodes = patternBytes + 1
+  const firstEdge = new Int32Array(nodes).fill(-1)
+  const failure = new Int32Array(nodes)
+  const terminal = new Uint8Array(nodes)
+  const edgeByte = new Uint8Array(patternBytes)
+  const edgeTarget = new Int32Array(patternBytes)
+  const edgeNext = new Int32Array(patternBytes).fill(-1)
+  let nodeCount = 1
+  let edgeCount = 0
+  const findEdge = (state: number, byte: number) => {
+    for (let edge = firstEdge[state]!; edge !== -1; edge = edgeNext[edge]!) {
+      if (edgeByte[edge] === byte) return edgeTarget[edge]!
+    }
+    return -1
+  }
+  for (const pattern of patterns) {
+    let state = 0
+    for (const byte of pattern) {
+      const next = findEdge(state, byte)
+      if (next !== -1) {
+        state = next
+        continue
+      }
+      const parent = state
+      state = nodeCount++
+      edgeByte[edgeCount] = byte
+      edgeTarget[edgeCount] = state
+      edgeNext[edgeCount] = firstEdge[parent]!
+      firstEdge[parent] = edgeCount++
+    }
+    terminal[state] = 1
+  }
+  const queue = new Int32Array(nodeCount)
+  let queued = 0
+  for (let edge = firstEdge[0]!; edge !== -1; edge = edgeNext[edge]!) queue[queued++] = edgeTarget[edge]!
+  for (let index = 0; index < queued; index++) {
+    const state = queue[index]!
+    for (let edge = firstEdge[state]!; edge !== -1; edge = edgeNext[edge]!) {
+      const byte = edgeByte[edge]!
+      const child = edgeTarget[edge]!
+      let fallback = failure[state]!
+      let target = findEdge(fallback, byte)
+      while (fallback !== 0 && target === -1) {
+        fallback = failure[fallback]!
+        target = findEdge(fallback, byte)
+      }
+      failure[child] = target === -1 ? 0 : target
+      terminal[child] ||= terminal[failure[child]!]!
+      queue[queued++] = child
+    }
+  }
+  let state = 0
+  for (const byte of haystack) {
+    let next = findEdge(state, byte)
+    while (state !== 0 && next === -1) {
+      state = failure[state]!
+      next = findEdge(state, byte)
+    }
+    state = next === -1 ? 0 : next
+    if (terminal[state]) return true
+  }
+  return false
 }
 
 function assertKnownSQLiteSchema(database: Database) {
