@@ -20,7 +20,20 @@ env:
   WORKFLOW_PATH: .github/workflows/bharatcode-preliminary-unsigned-wsl.yml
 
 jobs:
+  require-external-jit-control-plane:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Block until the external one-run JIT controller is supplied
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' 'bharatcode-preliminary-jit-admission-v1 and bharatcode-preliminary-jit-destruction-v1 require an independent host controller' >&2
+          exit 1
+
   admit-source:
+    needs: require-external-jit-control-plane
     if: github.ref == 'refs/heads/dev'
     runs-on: ubuntu-24.04
     outputs:
@@ -157,12 +170,6 @@ jobs:
           $env:BHARATCODE_WSL_RUNTIME_ARCH = "x64"
           bun run --cwd packages/desktop stage:wsl-runtime
 
-      - name: Run Windows namespace authority hostile tests
-        shell: pwsh
-        env:
-          BHARATCODE_PRELIMINARY_CONTROLLER_TEST: "1"
-        run: packages/desktop/scripts/wsl-windows-preliminary-controller.test.ps1
-
       - name: Build and verify unsigned TEST-only NSIS
         working-directory: packages/desktop
         shell: pwsh
@@ -193,6 +200,12 @@ jobs:
           Copy-Item resources/wsl-runtime/manifest.json "$env:GITHUB_WORKSPACE/bharatcode-wsl-runtime-manifest.json"
           Copy-Item resources/wsl-runtime/bharatcode-runtime-linux-x64-glibc "$env:GITHUB_WORKSPACE/bharatcode-runtime-linux-x64-glibc"
 
+      - name: Run Windows namespace authority hostile tests
+        shell: pwsh
+        env:
+          BHARATCODE_PRELIMINARY_CONTROLLER_TEST: "1"
+        run: packages/desktop/scripts/wsl-windows-preliminary-controller.test.ps1
+
       - name: Upload same-run unsigned TEST-only package inputs
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -210,8 +223,6 @@ jobs:
     runs-on: [self-hosted, windows, x64, wsl2, "bharatcode-acceptance-${{ github.run_id }}-${{ github.run_attempt }}"]
     permissions:
       contents: read
-      id-token: write
-      attestations: write
     steps:
       - name: Checkout the exact preliminary source
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -245,11 +256,15 @@ jobs:
           $evidenceScript = @'
             import { createHash } from "node:crypto"
             import { open, stat } from "node:fs/promises"
-            import { runPreliminaryWindowsAcceptance } from "./packages/desktop/scripts/wsl-windows-preliminary-acceptance.mjs"
-            import { canonicalPreliminaryUnsignedWslJson } from "./packages/opencode/script/lean-preliminary-unsigned-wsl.mjs"
-            const manifest = "preliminary-input/bharatcode-wsl-runtime-manifest.json"
-            const runtime = "preliminary-input/bharatcode-runtime-linux-x64-glibc"
-            const harness = "packages/desktop/scripts/wsl-windows-acceptance.mjs"
+            import { runPreliminaryWindowsAcceptance } from "./contracts/wsl-windows-preliminary-acceptance.mjs"
+            import { canonicalPreliminaryUnsignedWslJson } from "./contracts/lean-preliminary-unsigned-wsl.mjs"
+            const manifest = process.env.PRELIMINARY_RUNTIME_MANIFEST
+            const runtime = process.env.PRELIMINARY_RUNTIME
+            const harnessPath = process.env.PRELIMINARY_FROZEN_HARNESS
+            const harnessContract = "packages/desktop/scripts/wsl-windows-acceptance.mjs"
+            const adapter = process.env.PRELIMINARY_ADAPTER
+            const validator = process.env.PRELIMINARY_VALIDATOR
+            const evidenceScript = process.env.PRELIMINARY_EVIDENCE_SCRIPT
             const argv = [
               "--desktop-exe", process.env.INSTALLED_DESKTOP_EXE,
               "--runtime-manifest", manifest,
@@ -258,14 +273,16 @@ jobs:
               "--missing-prerequisite-distribution", process.env.WSL_MISSING_PREREQUISITE_DISTRIBUTION,
               "--windows-project", process.env.WSL_WINDOWS_PROJECT,
               "--source-sha", process.env.SOURCE_SHA,
-              "--acceptance-dir", `${process.env.RUNNER_TEMP}\\bharatcode-wsl-preliminary-acceptance`,
+              "--acceptance-dir", process.env.PRELIMINARY_ACCEPTANCE_DIR,
             ]
             const result = await runPreliminaryWindowsAcceptance(argv)
             if (result.authority !== "PRELIMINARY_UNSIGNED" || result.harness_authority !== "DIAGNOSTIC" || !result.evidence) throw new Error("Preliminary harness authority drift")
-            const digest = async (path) => createHash("sha256").update(await Bun.file(path).arrayBuffer()).digest("hex")
+            const digest = async (path) => createHash("sha256").update(new Uint8Array(await Bun.file(path).arrayBuffer())).digest("hex")
             const installerStat = await stat(process.env.UNSIGNED_INSTALLER_PATH)
             const installedStat = await stat(process.env.INSTALLED_DESKTOP_EXE)
             const bindings = {
+              adapter_sha256: await digest(adapter),
+              evidence_script_sha256: await digest(evidenceScript),
               source_sha: process.env.SOURCE_SHA,
               run_id: process.env.GITHUB_RUN_ID,
               run_attempt: process.env.GITHUB_RUN_ATTEMPT,
@@ -274,9 +291,11 @@ jobs:
               installed_desktop_bytes: installedStat.size,
               installed_desktop_sha256: await digest(process.env.INSTALLED_DESKTOP_EXE),
               runtime_manifest_sha256: await digest(manifest),
-              harness_sha256: await digest(harness),
+              runtime_sha256: await digest(runtime),
+              harness_sha256: await digest(harnessPath),
+              validator_sha256: await digest(validator),
             }
-            if ((await digest(runtime)) !== result.evidence.runtime.manifest_sha256) throw new Error("Preliminary raw runtime digest drift")
+            if (bindings.runtime_sha256 !== result.evidence.runtime.manifest_sha256) throw new Error("Preliminary raw runtime digest drift")
             const receipt = {
               schema: "bharatcode-wsl-preliminary-unsigned-v1",
               evidence_class: "PRELIMINARY_UNSIGNED",
@@ -286,6 +305,7 @@ jobs:
               cleanup_complete: true,
               promotable: false,
               composable: false,
+              controller_inputs: { adapter_sha256: bindings.adapter_sha256, evidence_script_sha256: bindings.evidence_script_sha256, validator_sha256: bindings.validator_sha256 },
               repository: "BharatCode-ai/bharatcode-desktop",
               workflow: process.env.WORKFLOW_PATH,
               source_sha: result.evidence.source_sha,
@@ -294,7 +314,7 @@ jobs:
               installed_desktop: { filename: "BharatCode Beta.exe", bytes: bindings.installed_desktop_bytes, sha256: result.evidence.desktop_sha256 },
               runtime_manifest_sha256: result.evidence.runtime_manifest_sha256,
               runtime: result.evidence.runtime,
-              harness: { contract: harness, contract_sha256: bindings.harness_sha256, authority: result.harness_authority },
+              harness: { contract: harnessContract, contract_sha256: bindings.harness_sha256, authority: result.harness_authority },
               identity: result.evidence.identity,
               scenarios: result.evidence.scenarios,
               completed_at: result.evidence.completed_at,
@@ -314,6 +334,11 @@ jobs:
             -RunAttempt $env:GITHUB_RUN_ATTEMPT `
             -Installer $installer `
             -ExpectedVersion '${{ needs.admit-source.outputs.desktop_version }}' `
+            -AdapterPath "packages/desktop/scripts/wsl-windows-preliminary-acceptance.mjs" `
+            -ValidatorPath "packages/opencode/script/lean-preliminary-unsigned-wsl.mjs" `
+            -FrozenHarnessPath "packages/desktop/scripts/wsl-windows-acceptance.mjs" `
+            -RuntimeManifestPath "preliminary-input/bharatcode-wsl-runtime-manifest.json" `
+            -RuntimePath "preliminary-input/bharatcode-runtime-linux-x64-glibc" `
             -EvidenceScript $evidenceScript `
             -ReceiptPath "bharatcode-wsl-preliminary-unsigned.json"
 
@@ -328,26 +353,11 @@ jobs:
             -RunId $env:GITHUB_RUN_ID `
             -RunAttempt $env:GITHUB_RUN_ATTEMPT
 
-      - name: Attest preliminary unsigned evidence
-        id: attest_preliminary
-        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
-        with:
-          subject-path: bharatcode-wsl-preliminary-unsigned.json
-          show-summary: false
-
-      - name: Stage preliminary provenance bundle
-        shell: pwsh
-        env:
-          BUNDLE_PATH: ${{ steps.attest_preliminary.outputs.bundle-path }}
-        run: Copy-Item $env:BUNDLE_PATH bharatcode-wsl-preliminary-unsigned.json.intoto.jsonl
-
       - name: Upload run-attempt-scoped preliminary evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: preliminary-wsl-evidence-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            bharatcode-wsl-preliminary-unsigned.json
-            bharatcode-wsl-preliminary-unsigned.json.intoto.jsonl
+          path: bharatcode-wsl-preliminary-unsigned.json
           if-no-files-found: error
           overwrite: ${{ false }}
           retention-days: 1

@@ -130,6 +130,8 @@ describe("preliminary unsigned WSL observation adapter", () => {
       },
     })
     const bindings = {
+      adapter_sha256: "a".repeat(64),
+      evidence_script_sha256: "b".repeat(64),
       source_sha: sourceSha,
       run_id: env.GITHUB_RUN_ID,
       run_attempt: env.GITHUB_RUN_ATTEMPT,
@@ -138,7 +140,9 @@ describe("preliminary unsigned WSL observation adapter", () => {
       installed_desktop_bytes: 8192,
       installed_desktop_sha256: desktopSha256,
       runtime_manifest_sha256: manifestSha256,
+      runtime_sha256: runtimeSha256,
       harness_sha256: "e".repeat(64),
+      validator_sha256: "c".repeat(64),
     }
     const receipt = {
       schema: "bharatcode-wsl-preliminary-unsigned-v1",
@@ -149,6 +153,11 @@ describe("preliminary unsigned WSL observation adapter", () => {
       cleanup_complete: true,
       promotable: false,
       composable: false,
+      controller_inputs: {
+        adapter_sha256: bindings.adapter_sha256,
+        evidence_script_sha256: bindings.evidence_script_sha256,
+        validator_sha256: bindings.validator_sha256,
+      },
       repository: env.GITHUB_REPOSITORY,
       workflow: ".github/workflows/bharatcode-preliminary-unsigned-wsl.yml",
       source_sha: result.evidence.source_sha,
