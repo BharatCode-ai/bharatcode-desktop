@@ -18,6 +18,8 @@ const namespaceHelperPath = resolve(root, "packages/desktop/scripts/wsl-windows-
 const namespaceTestPath = resolve(root, "packages/desktop/scripts/wsl-windows-preliminary-controller.test.ps1")
 const nsisFixturePath = resolve(root, "packages/desktop/test/fixtures/preliminary-unsigned-controller.nsi")
 const jitContractPath = resolve(root, "packages/opencode/script/lean-preliminary-jit-lifecycle.mjs")
+const jitControllerPath = resolve(root, "packages/desktop/scripts/preliminary-wsl-jit-host-controller.ps1")
+const jitAdapterPath = resolve(root, "packages/opencode/script/preliminary-jit-evidence-cli.mjs")
 const acceptedWslSha = "f223e2c6b53f567667491f6f1e5667c42fb73fa0"
 const finalWorkflowSha256 = "79b4843c8249c820d0c58306aa2d39bddd0e8f52cc39ede627acf1ff9be9459f"
 const label = "bharatcode-acceptance-${{ github.run_id }}-${{ github.run_attempt }}"
@@ -457,7 +459,7 @@ async function controllerC3Violations(value: string) {
     tests.includes("production controller test authority") &&
     tests.includes("production failure leaked transaction environment") &&
     tests.includes("terminated production controller published a receipt") &&
-    tests.includes("external JIT destruction remains required")
+    tests.includes("external JIT host controller remains required")
       ? []
       : ["executable production-controller hostile matrix"]),
   ]
@@ -562,31 +564,18 @@ function runArtifactBindingViolations(value: string) {
   ]
 }
 
-async function externalJitGateViolations(value: string) {
+async function externalJitBoundaryViolations(value: string) {
   const workflow = parse(value)
-  const gate = workflow.jobs["require-external-jit-control-plane"]
-  const gateSteps = gate?.steps ?? []
-  const block = gateSteps.find((item) => item.name === "Block until the external one-run JIT controller is supplied")
   const accept = workflow.jobs["accept-preliminary-unsigned-wsl"]
   const uses = [...value.matchAll(/^\s*uses:\s*([^\s#]+)/gmu)].map((match) => match[1])
   return [
     ...((await Bun.file(jitContractPath).exists()) ? [] : ["closed external lifecycle contract"]),
+    ...((await Bun.file(jitControllerPath).exists()) ? [] : ["external host controller"]),
     ...(JSON.stringify(workflow.permissions) === JSON.stringify({ contents: "read" })
       ? []
       : ["read-only workflow authority"]),
-    ...(gate?.["runs-on"] === "ubuntu-24.04" &&
-    JSON.stringify(gate.permissions) === JSON.stringify({ contents: "read" }) &&
-    gateSteps.length === 1 &&
-    block?.shell === "bash" &&
-    block.run?.includes("bharatcode-preliminary-jit-admission-v1") &&
-    block.run.includes("bharatcode-preliminary-jit-destruction-v1") &&
-    block.run.includes("exit 1") &&
-    !block.run.match(/secrets\.|vars\.|inputs\.|curl|gh\s|artifact|poll/iu)
-      ? []
-      : ["literal unavailable external-control-plane gate"]),
-    ...(workflow.jobs["admit-source"]?.needs === "require-external-jit-control-plane"
-      ? []
-      : ["all execution is downstream of external admission"]),
+    ...(workflow.jobs["require-external-jit-control-plane"] ? ["obsolete external-control-plane blocker"] : []),
+    ...(workflow.jobs["admit-source"]?.needs ? ["obsolete blocker dependency"] : []),
     ...(JSON.stringify(accept?.permissions) === JSON.stringify({ contents: "read" })
       ? []
       : ["read-only preliminary acceptance authority"]),
@@ -599,16 +588,54 @@ async function externalJitGateViolations(value: string) {
 }
 
 describe("preliminary unsigned Windows/WSL acceptance workflow", () => {
-  test("hard-blocks before any execution until an independent host controller supplies the closed JIT lifecycle", async () => {
+  test("validates the exact preliminary receipt through the frozen stdin-only host adapter", async () => {
+    const child = Bun.spawn([process.execPath, jitAdapterPath, "receipt"], {
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    child.stdin.write(
+      JSON.stringify({
+        raw: JSON.stringify(receipt()),
+        identity: { source_sha: sourceSha, run_id: bindings.run_id, run_attempt: bindings.run_attempt },
+      }),
+    )
+    child.stdin.end()
+    expect(await child.exited).toBe(0)
+    expect(await new Response(child.stderr).text()).toBe("")
+    expect(await new Response(child.stdout).text()).toBe(canonicalPreliminaryUnsignedWslJson(receipt(), bindings))
+    const duplicate = Bun.spawn([process.execPath, jitAdapterPath, "receipt"], {
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    duplicate.stdin.write(
+      JSON.stringify({
+        raw: JSON.stringify(receipt()).replace(
+          '"schema":"bharatcode-wsl-preliminary-unsigned-v1"',
+          '"schema":"bharatcode-wsl-preliminary-unsigned-v1","schema":"bharatcode-wsl-preliminary-unsigned-v1"',
+        ),
+        identity: { source_sha: sourceSha, run_id: bindings.run_id, run_attempt: bindings.run_attempt },
+      }),
+    )
+    duplicate.stdin.end()
+    expect(await duplicate.exited).toBe(1)
+  })
+
+  test("removes only the obsolete blocker after an independent host controller supplies the closed JIT lifecycle", async () => {
     const value = await source()
-    expect(await externalJitGateViolations(value)).toEqual([])
+    expect(await externalJitBoundaryViolations(value)).toEqual([])
     for (const hostile of [
-      value.replace("exit 1", "exit 0"),
-      value.replace("needs: require-external-jit-control-plane", "needs: []"),
+      value.replace("jobs:\n", "jobs:\n  require-external-jit-control-plane:\n    runs-on: ubuntu-24.04\n"),
+      value.replace("  admit-source:\n", "  admit-source:\n    needs: require-external-jit-control-plane\n"),
       value.replace("contents: read\n", "contents: write\n"),
+      value.replace(
+        "jobs:\n",
+        "jobs:\n  forged-host-evidence:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo bharatcode-preliminary-jit-admission.json\n",
+      ),
     ]) {
       expect(hostile).not.toBe(value)
-      expect(await externalJitGateViolations(hostile)).not.toEqual([])
+      expect(await externalJitBoundaryViolations(hostile)).not.toEqual([])
     }
   })
 
@@ -890,7 +917,6 @@ export async function runPreliminaryWindowsAcceptance() { return ${JSON.stringif
         "admit-source",
         "build-wsl-runtime",
         "package-preliminary-unsigned-windows",
-        "require-external-jit-control-plane",
       ].sort(),
     )
     expect(workflow.permissions).toEqual({ contents: "read" })

@@ -3,6 +3,7 @@ import { resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 
 const contractPath = resolve(import.meta.dir, "../../script/lean-preliminary-jit-lifecycle.mjs")
+const adapterPath = resolve(import.meta.dir, "../../script/preliminary-jit-evidence-cli.mjs")
 const sourceSha = "7".repeat(40)
 const runId = "29730000001"
 const runAttempt = "2"
@@ -107,6 +108,28 @@ async function contract() {
 }
 
 describe("preliminary one-run JIT lifecycle contract", () => {
+  test("exposes the frozen canonical validators through one stdin-only host adapter", async () => {
+    const api = await contract()
+    const accepted = admission()
+    const admissionBytes = api.canonicalPreliminaryJitAdmissionJson(accepted, bindings)
+    const completed = destruction(new Bun.CryptoHasher("sha256").update(admissionBytes).digest("hex"))
+    for (const [mode, input, expected] of [
+      ["admission", { record: accepted, bindings }, admissionBytes],
+      [
+        "destruction",
+        { record: completed, admission: accepted, bindings: destructionBindings },
+        api.canonicalPreliminaryJitDestructionJson(completed, accepted, destructionBindings),
+      ],
+    ] as const) {
+      const child = Bun.spawn([process.execPath, adapterPath, mode], { stdin: "pipe", stdout: "pipe", stderr: "pipe" })
+      child.stdin.write(JSON.stringify(input))
+      child.stdin.end()
+      expect(await child.exited).toBe(0)
+      expect(await new Response(child.stderr).text()).toBe("")
+      expect(await new Response(child.stdout).text()).toBe(expected)
+    }
+  })
+
   test("accepts only one closed independent host admission and destruction chain", async () => {
     const api = await contract()
     const accepted = admission()

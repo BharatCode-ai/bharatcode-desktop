@@ -865,9 +865,10 @@ Invoke-PreliminaryController @invoke
   $crashRoot = [IO.File]::ReadAllText($ready)
   Assert-True (Test-PreliminaryEntryNoFollow -Path $crashRoot) "controller crash did not leave the documented orphan"
   Assert-True ([IO.File]::Exists((Join-Path $crashRoot "receipt-candidate.json"))) "production crash did not retain the lease-owned candidate"
-  Assert-True ([IO.File]::Exists((Join-Path $PSScriptRoot "../../opencode/script/lean-preliminary-jit-lifecycle.mjs"))) "external JIT destruction remains required"
+  Assert-True ([IO.File]::Exists((Join-Path $PSScriptRoot "../../opencode/script/lean-preliminary-jit-lifecycle.mjs"))) "external JIT host controller remains required"
   $workflow = [IO.File]::ReadAllText((Join-Path $PSScriptRoot "../../../.github/workflows/bharatcode-preliminary-unsigned-wsl.yml"))
-  Assert-True ($workflow.Contains("Block until the external one-run JIT controller is supplied") -and $workflow.Contains("exit 1")) "external JIT destruction remains required"
+  Assert-True ([IO.File]::Exists((Join-Path $PSScriptRoot "preliminary-wsl-jit-host-controller.ps1"))) "external JIT host controller remains required"
+  Assert-True (-not $workflow.Contains("bharatcode-preliminary-jit-admission.json") -and -not $workflow.Contains("bharatcode-preliminary-jit-destruction.json")) "workflow forged host lifecycle evidence"
   Write-Output "preliminary_controller_crash_retained_state=external_jit_required"
 
   Write-Output "preliminary_controller_windows_tests=passed"

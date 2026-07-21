@@ -20,20 +20,7 @@ env:
   WORKFLOW_PATH: .github/workflows/bharatcode-preliminary-unsigned-wsl.yml
 
 jobs:
-  require-external-jit-control-plane:
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-    steps:
-      - name: Block until the external one-run JIT controller is supplied
-        shell: bash
-        run: |
-          set -euo pipefail
-          printf '%s\n' 'bharatcode-preliminary-jit-admission-v1 and bharatcode-preliminary-jit-destruction-v1 require an independent host controller' >&2
-          exit 1
-
   admit-source:
-    needs: require-external-jit-control-plane
     if: github.ref == 'refs/heads/dev'
     runs-on: ubuntu-24.04
     outputs:
