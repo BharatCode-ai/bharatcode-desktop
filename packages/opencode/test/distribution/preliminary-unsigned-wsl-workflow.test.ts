@@ -754,8 +754,17 @@ describe("preliminary unsigned Windows/WSL acceptance workflow", () => {
 
   test("binds the exact NSIS fixture compiler to a preliminary job cache", async () => {
     const workflow = parse(await source())
-    expect(workflow.jobs["package-preliminary-unsigned-windows"].env?.ELECTRON_BUILDER_CACHE).toBe(
-      "${{ runner.temp }}/bharatcode-preliminary-electron-builder-cache",
+    expect(workflow.jobs["package-preliminary-unsigned-windows"].env?.ELECTRON_BUILDER_CACHE).toBeUndefined()
+    const staging = step(
+      await source(),
+      "package-preliminary-unsigned-windows",
+      "Install exact dependencies and stage same-source runtime",
+    ).run
+    expect(staging).toContain(
+      '$env:ELECTRON_BUILDER_CACHE = Join-Path $env:RUNNER_TEMP "bharatcode-preliminary-electron-builder-cache"',
+    )
+    expect(staging).toContain(
+      '"ELECTRON_BUILDER_CACHE=$env:ELECTRON_BUILDER_CACHE" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append',
     )
     expect(await Bun.file(namespaceTestPath).text()).toContain("$env:ELECTRON_BUILDER_CACHE")
   })
