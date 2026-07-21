@@ -321,7 +321,7 @@ try {
   ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique
   $makensis = @($nsisRoots | Where-Object { [IO.Directory]::Exists($_) } | ForEach-Object {
     Get-ChildItem -LiteralPath $_ -Filter makensis.exe -File -Recurse -ErrorAction SilentlyContinue
-  } | Where-Object { $_.FullName -match '[\\/]nsis-3\.0\.4\.1[\\/]' } | Sort-Object FullName -Unique)
+  } | Where-Object { $_.FullName -match '[\\/]nsis-3\.0\.4\.1[\\/]makensis\.exe$' } | Sort-Object FullName -Unique)
   if ($makensis.Count -eq 0) {
     if ($env:GITHUB_ACTIONS -eq "true") { [void]$c2Failures.Add("real-nsis-fixture: pinned electron-builder makensis 3.0.4.1 is unavailable") }
     else { Write-Output "preliminary_controller_real_nsis_test=skipped_without_cached_makensis" }

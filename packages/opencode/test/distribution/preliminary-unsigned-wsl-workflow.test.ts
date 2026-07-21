@@ -371,7 +371,7 @@ async function controllerC2Violations(value: string) {
     helper.includes("$installArguments = Get-PreliminaryNsisArguments -InstallRoot $lease.RootPath") &&
     !helper.includes('/D=`"$($lease.RootPath)`"') &&
     fixture.includes('InstallDir "$TEMP\\bharatcode-preliminary-nsis-decoy"') &&
-    fixture.includes('File /oname="BharatCode Beta.exe"') &&
+    fixture.includes('File "/oname=BharatCode Beta.exe"') &&
     tests.includes("legacy quoted NSIS /D did not misplace the fixture") &&
     tests.includes("real NSIS fixture escaped the lease root")
       ? []
@@ -766,7 +766,9 @@ describe("preliminary unsigned Windows/WSL acceptance workflow", () => {
     expect(staging).toContain(
       '"ELECTRON_BUILDER_CACHE=$env:ELECTRON_BUILDER_CACHE" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append',
     )
-    expect(await Bun.file(namespaceTestPath).text()).toContain("$env:ELECTRON_BUILDER_CACHE")
+    const namespaceTest = await Bun.file(namespaceTestPath).text()
+    expect(namespaceTest).toContain("$env:ELECTRON_BUILDER_CACHE")
+    expect(namespaceTest).toContain("nsis-3\\.0\\.4\\.1[\\\\/]makensis\\.exe$")
   })
 
   test("keeps one unguessable handle-bound namespace authority through evidence and runs executable Windows hostile tests", async () => {
