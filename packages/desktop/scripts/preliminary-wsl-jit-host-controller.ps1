@@ -368,8 +368,8 @@ function Invoke-PreliminaryProcess {
   $stderr = $process.StandardError.ReadToEndAsync()
   if (-not $process.WaitForExit($TimeoutMilliseconds)) { $process.Kill($true); throw "Prepared command timed out" }
   $output = $stdout.GetAwaiter().GetResult()
-  [void]$stderr.GetAwaiter().GetResult()
-  if ($process.ExitCode -ne 0) { throw "Prepared command failed" }
+  $errorOutput = $stderr.GetAwaiter().GetResult()
+  if ($process.ExitCode -ne 0) { throw "Prepared command failed with exit code $($process.ExitCode) and stderr SHA-256 $(Get-PreliminarySha256 $errorOutput)" }
   return $output
 }
 
@@ -378,7 +378,8 @@ function Invoke-PreliminaryGhJson {
   $arguments = @("api", "--method", $Method, $Endpoint, "-H", "Accept: application/vnd.github+json", "-H", "X-GitHub-Api-Version: 2026-03-10")
   $input = $null
   if ($null -ne $Body) { $arguments += @("--input", "-"); $input = $Body | ConvertTo-Json -Depth 20 -Compress }
-  $raw = Invoke-PreliminaryProcess $Context (Get-Command gh -CommandType Application).Source $arguments $input
+  try { $raw = Invoke-PreliminaryProcess $Context (Get-Command gh -CommandType Application).Source $arguments $input }
+  catch { throw [InvalidOperationException]::new("GitHub API $Method $Endpoint failed", $_.Exception) }
   if ([string]::IsNullOrWhiteSpace($raw)) { return $null }
   return $raw | ConvertFrom-Json -Depth 30
 }
@@ -451,7 +452,8 @@ function Invoke-PreliminaryLifecycleAdapter {
   param([object] $Context, [ValidateSet("admission", "destruction", "receipt")] [string] $Operation, [object] $Input)
   $bun = (Get-Command bun -CommandType Application).Source
   $adapter = Join-Path $PSScriptRoot "../../opencode/script/preliminary-jit-evidence-cli.mjs"
-  return Invoke-PreliminaryProcess $Context $bun @($adapter, $Operation) ($Input | ConvertTo-Json -Depth 30 -Compress)
+  try { return Invoke-PreliminaryProcess $Context $bun @($adapter, $Operation) ($Input | ConvertTo-Json -Depth 30 -Compress) }
+  catch { throw [InvalidOperationException]::new("Preliminary lifecycle adapter $Operation failed", $_.Exception) }
 }
 
 function New-PreliminaryWslJitLiveOperations {

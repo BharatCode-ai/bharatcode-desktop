@@ -511,6 +511,41 @@ try {
     Assert-True ($error -is [TimeoutException]) "expired absolute deadline failed with the wrong error: $($error.GetType().FullName)"
   } $correctionFailures
 
+  Invoke-CorrectionCase "prepared process failure reports only exit metadata" {
+    $context = [pscustomobject]@{ DeadlineUtc = [DateTime]::UtcNow.AddSeconds(30) }
+    $error = Assert-Throws {
+      Invoke-PreliminaryProcess $context (Get-Command pwsh.exe -CommandType Application).Source @("-NoLogo", "-NoProfile", "-Command", "[Console]::Error.Write('diagnostic-only'); exit 7") $null
+    } "failing prepared process returned success"
+    Assert-True ($error.Message.Contains("exit code 7") -and $error.Message.Contains("stderr SHA-256")) "prepared process failure discarded non-secret exit metadata: $($error.Message)"
+    Assert-True (-not $error.Message.Contains("diagnostic-only")) "prepared process failure exposed stderr contents"
+  } $correctionFailures
+
+  Invoke-CorrectionCase "GitHub failure retains endpoint identity without request body" {
+    $context = [pscustomobject]@{ DeadlineUtc = [DateTime]::UtcNow.AddSeconds(30) }
+    $secretSentinel = "encoded-jit-secret-must-not-appear"
+    $error = & {
+      function Invoke-PreliminaryProcess { throw "simulated prepared command failure" }
+      Assert-Throws {
+        Invoke-PreliminaryGhJson $context "POST" "repos/BharatCode-ai/bharatcode-desktop/actions/runners/generate-jitconfig" ([ordered]@{ encoded_jit_config = $secretSentinel })
+      } "failing GitHub boundary returned success"
+    }
+    Assert-True ($error.Message.Contains("GitHub API POST repos/BharatCode-ai/bharatcode-desktop/actions/runners/generate-jitconfig failed")) "GitHub failure discarded its non-secret stage identity: $($error.Message)"
+    Assert-True (-not $error.ToString().Contains($secretSentinel)) "GitHub failure exposed its request body"
+  } $correctionFailures
+
+  Invoke-CorrectionCase "lifecycle adapter failure retains operation identity without payload" {
+    $context = [pscustomobject]@{ DeadlineUtc = [DateTime]::UtcNow.AddSeconds(30) }
+    $secretSentinel = "lifecycle-secret-must-not-appear"
+    $error = & {
+      function Invoke-PreliminaryProcess { throw "simulated lifecycle command failure" }
+      Assert-Throws {
+        Invoke-PreliminaryLifecycleAdapter $context "admission" ([ordered]@{ secret = $secretSentinel })
+      } "failing lifecycle boundary returned success"
+    }
+    Assert-True ($error.Message.Contains("Preliminary lifecycle adapter admission failed")) "lifecycle failure discarded its operation identity: $($error.Message)"
+    Assert-True (-not $error.ToString().Contains($secretSentinel)) "lifecycle failure exposed its payload"
+  } $correctionFailures
+
   Invoke-CorrectionCase "New-VM side effect is cleaned after throw" {
     $state = New-TestState
     $operations = New-TestOperations $state
