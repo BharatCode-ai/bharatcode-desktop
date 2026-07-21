@@ -89,6 +89,7 @@ function Invoke-PreliminaryWslJitHostController {
     RequiredLabels = $null
     RunnerId = $null
     RunnerName = $null
+    GuestSession = $null
     WorkflowDispatched = $false
     WorkflowCompleted = $false
   }
@@ -562,8 +563,10 @@ function New-PreliminaryWslJitLiveOperations {
             Expand-Archive -LiteralPath "C:\BharatCodeJit\runner.zip" -DestinationPath "C:\BharatCodeJit\runner" -Force
             [void](Start-Process -FilePath "C:\BharatCodeJit\runner\run.cmd" -ArgumentList @("--jitconfig", $EncodedJitConfiguration) -WorkingDirectory "C:\BharatCodeJit\runner" -PassThru)
           })
+        $Context.GuestSession = $session
+        $session = $null
       }
-      finally { Remove-PSSession $session }
+      finally { if ($session) { Remove-PSSession $session } }
     }
     ObserveRunner = {
       param($Context)
@@ -645,17 +648,28 @@ function New-PreliminaryWslJitLiveOperations {
     }
     TeardownOwnedVm = {
       param($Context, $Owned)
-      if ($Owned.AuthorityEstablished) {
-        $marker = Join-Path $Owned.RootPath "controller-owned.txt"
-        if (-not [IO.File]::Exists($marker) -or [IO.File]::ReadAllText($marker) -cne $Context.InvocationId) { throw "Owned resource marker drift" }
-        $vm = Resolve-PreliminaryOwnedVm $Owned
-        if ($vm) {
-          if ($vm.State -ne [Microsoft.HyperV.PowerShell.VMState]::Off) { [void](Stop-VM -VM $vm -TurnOff -Force) }
-          [void](Remove-VM -VM $vm -Force)
-        }
-        if ([IO.File]::Exists($Owned.DiskPath)) { Remove-Item -LiteralPath $Owned.DiskPath -Force }
-        Remove-Item -LiteralPath $Owned.RootPath -Recurse -Force
+      $errors = [Collections.Generic.List[Exception]]::new()
+      if ($Context.GuestSession) {
+        try { Remove-PSSession $Context.GuestSession }
+        catch { [void]$errors.Add($_.Exception) }
+        finally { $Context.GuestSession = $null }
       }
+      try {
+        if ($Owned.AuthorityEstablished) {
+          $marker = Join-Path $Owned.RootPath "controller-owned.txt"
+          if (-not [IO.File]::Exists($marker) -or [IO.File]::ReadAllText($marker) -cne $Context.InvocationId) { throw "Owned resource marker drift" }
+          $vm = Resolve-PreliminaryOwnedVm $Owned
+          if ($vm) {
+            if ($vm.State -ne [Microsoft.HyperV.PowerShell.VMState]::Off) { [void](Stop-VM -VM $vm -TurnOff -Force) }
+            [void](Remove-VM -VM $vm -Force)
+          }
+          if ([IO.File]::Exists($Owned.DiskPath)) { Remove-Item -LiteralPath $Owned.DiskPath -Force }
+          Remove-Item -LiteralPath $Owned.RootPath -Recurse -Force
+        }
+      }
+      catch { [void]$errors.Add($_.Exception) }
+      if ($errors.Count -eq 1) { throw $errors[0] }
+      if ($errors.Count -gt 1) { throw [AggregateException]::new("Owned VM teardown failed", [Exception[]]$errors) }
     }
     TeardownOwnedRunner = {
       param($Context)

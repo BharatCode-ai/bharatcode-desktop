@@ -527,6 +527,44 @@ try {
     Assert-True ($changes.Count -eq 0) "identity mismatch modified a WSL registration"
   } $correctionFailures
 
+  Invoke-CorrectionCase "runner retains its PowerShell Direct profile authority through VM teardown" {
+    $vmId = [Guid]::NewGuid()
+    $vmName = "bharatcode-preliminary-jit-session-test"
+    $diskPath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "owned-session-test.vhdx"))
+    $vm = [pscustomobject]@{ Id = $vmId; Name = $vmName; State = "Off" }
+    $owned = [pscustomobject]@{ AuthorityEstablished = $false; VmCreationAttempted = $true; VmId = [string]$vmId; VmName = $vmName; DiskPath = $diskPath }
+    $guestSession = [pscustomobject]@{ TestOnly = $true }
+    $context = [pscustomobject]@{
+      DeadlineUtc = [DateTime]::UtcNow.AddSeconds(2)
+      GuestCredential = [pscustomobject]@{ TestOnly = $true }
+      GuestSession = $null
+      RunnerArchivePath = "test-only-runner.zip"
+    }
+    $capture = [pscustomobject]@{ SessionRemoved = $false }
+    $operations = New-PreliminaryWslJitLiveOperations
+    & {
+      function Get-VM { param([Guid] $Id, [string] $Name) return $vm }
+      function Get-VMHardDiskDrive { param([object] $VM) return [pscustomobject]@{ Path = $diskPath } }
+      function Start-VM { param([object] $VM) }
+      function New-PSSession { param([string] $VMName, [object] $Credential, [object] $ErrorAction) return $guestSession }
+      function Invoke-Command { param([object] $Session, [scriptblock] $ScriptBlock, [object[]] $ArgumentList) }
+      function Copy-Item { param([string] $LiteralPath, [string] $Destination, [object] $ToSession) }
+      function Remove-PSSession { param([object] $Session) $capture.SessionRemoved = $true }
+      & $operations.TransferAndStartRunner $context $owned "test-only-jit-secret"
+    }
+    Assert-True ([object]::ReferenceEquals($context.GuestSession, $guestSession)) "runner did not retain the exact PowerShell Direct session"
+    Assert-True (-not $capture.SessionRemoved) "runner profile authority ended immediately after start"
+    & {
+      function Remove-PSSession {
+        param([object] $Session)
+        Assert-True ([object]::ReferenceEquals($Session, $guestSession)) "teardown received a substituted PowerShell Direct session"
+        $capture.SessionRemoved = $true
+      }
+      & $operations.TeardownOwnedVm $context $owned
+    }
+    Assert-True ($capture.SessionRemoved -and $null -eq $context.GuestSession) "VM teardown did not close the retained guest session"
+  } $correctionFailures
+
   Invoke-CorrectionCase "production VM start matches the installed host parameter contract" {
     $startVm = Get-Command Start-VM -CommandType Cmdlet -ErrorAction Stop
     Assert-True ($startVm.Parameters.ContainsKey("VM")) "installed Start-VM does not expose the required VM parameter"
