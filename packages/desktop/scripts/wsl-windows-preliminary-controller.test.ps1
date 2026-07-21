@@ -208,6 +208,7 @@ $root = Join-Path ([IO.Path]::GetTempPath()) "bcp-$([Guid]::NewGuid().ToString('
 [IO.Directory]::CreateDirectory($root) | Out-Null
 $controllerTestFailure = $null
 $linkExternalRoot = $null
+$links = $null
 
 try {
   $nonce = "ab" * 32
@@ -611,9 +612,13 @@ try {
     if ($env:GITHUB_ACTIONS -eq "true") { throw }
     Write-Output "preliminary_controller_symlink_test=skipped_without_local_privilege"
   }
-  New-Item -ItemType HardLink -Path (Join-Path $links.RootPath "hardlink.txt") -Target $externalFile | Out-Null
+  $hardlinkDirectory = Join-Path $links.RootPath "hardlink-container"
+  [IO.Directory]::CreateDirectory($hardlinkDirectory) | Out-Null
+  New-Item -ItemType HardLink -Path (Join-Path $hardlinkDirectory "hardlink.txt") -Target $externalFile | Out-Null
   [IO.File]::WriteAllText((Join-Path $links.RootPath "Uninstall BharatCode Beta.cmd"), "@echo executed>$uninstallerSignal")
-  Remove-PreliminaryControllerLease -Lease $links
+  $linksToRemove = $links
+  $links = $null
+  Remove-PreliminaryControllerLease -Lease $linksToRemove
   Assert-True ([IO.File]::Exists((Join-Path $externalDirectory "survive.txt"))) "junction target was traversed"
   Assert-True ([IO.File]::ReadAllText($externalFile) -eq "survive") "link target was changed"
   Assert-True (-not [IO.File]::Exists($uninstallerSignal)) "malicious uninstaller was executed"
@@ -890,6 +895,10 @@ catch {
 }
 finally {
   $outerCleanupFailures = [Collections.Generic.List[Exception]]::new()
+  if ($links) {
+    try { Remove-PreliminaryControllerLease -Lease $links }
+    catch { [void]$outerCleanupFailures.Add($_.Exception) }
+  }
   if ($linkExternalRoot) {
     try { Remove-TestTree $linkExternalRoot }
     catch { [void]$outerCleanupFailures.Add($_.Exception) }

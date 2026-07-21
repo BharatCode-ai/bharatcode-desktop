@@ -380,6 +380,10 @@ async function controllerC2Violations(value: string) {
     !tests.includes('$externalFile = Join-Path $root "external-file.txt"')
       ? []
       : ["foreign hardlink target outside retained lease parent"]),
+    ...(tests.includes('$hardlinkDirectory = Join-Path $links.RootPath "hardlink-container"') &&
+    tests.includes("if ($links) {")
+      ? []
+      : ["hardlink fixture below retained root with unconditional lease cleanup"]),
     ...(helper.includes("PinExternal") &&
     helper.includes("PinOwned") &&
     helper.includes('$pinnedFiles.PinExternal("installer", $installerPath)') &&
