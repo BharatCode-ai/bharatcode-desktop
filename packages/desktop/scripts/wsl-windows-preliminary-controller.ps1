@@ -75,6 +75,11 @@ namespace BharatCode.Preliminary {
       if ((PreliminaryControllerNative.Attributes(Handle) & PreliminaryControllerNative.FILE_ATTRIBUTE_REPARSE_POINT) != 0) throw new InvalidOperationException("Preliminary pinned file became a reparse point");
       if (!PreliminaryControllerNative.FixedEquals(PreliminaryControllerNative.ContentIdentity(Handle), ContentIdentity)) throw new InvalidOperationException("Preliminary pinned file content drift");
     }
+    internal void MakeReadOnly() {
+      Validate();
+      PreliminaryControllerNative.MakeReadOnly(Handle);
+      Validate();
+    }
     internal string Diagnostic() { return PreliminaryControllerNative.DescribeHandle(Handle); }
     public void Dispose() { Handle.Dispose(); if (externalParent != null) externalParent.Dispose(); }
   }
@@ -237,6 +242,7 @@ namespace BharatCode.Preliminary {
     public long PinnedLength(string label) { Validate(); return RequiredPin(label).Length; }
     public string PinnedSha256(string label) { Validate(); return RequiredPin(label).Sha256; }
     public byte[] PinnedBytes(string label) { Validate(); return PreliminaryControllerNative.ReadAllBytes(RequiredPin(label).Handle); }
+    public void MakePinnedReadOnly(string label) { Validate(); RequiredPin(label).MakeReadOnly(); Validate(); }
     private PinnedFile RequiredPin(string label) {
       PinnedFile pin;
       if (String.IsNullOrEmpty(label)) throw new InvalidOperationException("Preliminary pin is unavailable");
@@ -378,9 +384,11 @@ namespace BharatCode.Preliminary {
     private static int failNextJobProcessIdsForTest;
     private static int failNextJobProcessCountForTest;
     private static int failNextTerminateJobForTest;
+    internal const uint FILE_ATTRIBUTE_READONLY = 0x00000001;
     public const uint FILE_ATTRIBUTE_REPARSE_POINT = 0x00000400;
     private const uint FILE_ATTRIBUTE_DIRECTORY = 0x00000010;
     private const uint FILE_READ_ATTRIBUTES = 0x00000080;
+    private const uint FILE_WRITE_ATTRIBUTES = 0x00000100;
     private const uint FILE_LIST_DIRECTORY = 0x00000001;
     private const uint READ_CONTROL = 0x00020000;
     private const uint DELETE = 0x00010000;
@@ -432,6 +440,7 @@ namespace BharatCode.Preliminary {
     [StructLayout(LayoutKind.Sequential)] internal struct FILE_DISPOSITION_INFO_EX { internal uint Flags; }
     [StructLayout(LayoutKind.Sequential)] internal struct FILE_ATTRIBUTE_TAG_INFO { internal uint FileAttributes; internal uint ReparseTag; }
     [StructLayout(LayoutKind.Sequential)] internal struct FILE_STANDARD_INFO { internal long AllocationSize; internal long EndOfFile; internal uint NumberOfLinks; [MarshalAs(UnmanagedType.U1)] internal bool DeletePending; [MarshalAs(UnmanagedType.U1)] internal bool Directory; }
+    [StructLayout(LayoutKind.Sequential)] internal struct FILE_BASIC_INFO { internal long CreationTime; internal long LastAccessTime; internal long LastWriteTime; internal long ChangeTime; internal uint FileAttributes; }
     [StructLayout(LayoutKind.Sequential)] public struct FILE_ID_INFO { public ulong VolumeSerialNumber; public Guid FileId; }
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)] internal struct STARTUPINFO { internal uint cb; internal string reserved; internal string desktop; internal string title; internal uint x; internal uint y; internal uint xSize; internal uint ySize; internal uint xCountChars; internal uint yCountChars; internal uint fillAttribute; internal uint flags; internal ushort showWindow; internal ushort reserved2; internal IntPtr reserved2Pointer; internal IntPtr standardInput; internal IntPtr standardOutput; internal IntPtr standardError; }
     [StructLayout(LayoutKind.Sequential)] internal struct PROCESS_INFORMATION { internal IntPtr Process; internal IntPtr Thread; internal uint ProcessId; internal uint ThreadId; }
@@ -448,6 +457,8 @@ namespace BharatCode.Preliminary {
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetFileInformationByHandleEx(SafeFileHandle file, int informationClass, out FILE_ID_INFO information, uint size);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetFileInformationByHandleEx(SafeFileHandle file, int informationClass, out FILE_ATTRIBUTE_TAG_INFO information, uint size);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetFileInformationByHandleEx(SafeFileHandle file, int informationClass, out FILE_STANDARD_INFO information, uint size);
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetFileInformationByHandleEx(SafeFileHandle file, int informationClass, out FILE_BASIC_INFO information, uint size);
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern bool SetFileInformationByHandle(SafeFileHandle file, int informationClass, ref FILE_BASIC_INFO information, uint size);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] private static extern uint GetDriveTypeW(string rootPath);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern SafeFileHandle CreateJobObjectW(IntPtr attributes, string name);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool SetInformationJobObject(SafeFileHandle job, int informationClass, ref JOBOBJECT_EXTENDED_LIMIT_INFORMATION information, uint length);
@@ -662,7 +673,7 @@ namespace BharatCode.Preliminary {
     }
 
     internal static PinnedFile PinOwnedRelative(SafeFileHandle parent, string parentPath, string leaf) {
-      var handle = OpenRelative(parent, leaf, GENERIC_READ | READ_CONTROL | SYNCHRONIZE, FILE_OPEN, FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_REPARSE_POINT, null, 0, FILE_SHARE_READ);
+      var handle = OpenRelative(parent, leaf, GENERIC_READ | FILE_WRITE_ATTRIBUTES | READ_CONTROL | SYNCHRONIZE, FILE_OPEN, FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_REPARSE_POINT, null, 0, FILE_SHARE_READ);
       try {
         if ((Attributes(handle) & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) != 0) throw new InvalidOperationException("Preliminary owned file identity is invalid");
         if (LinkCount(handle) != 1) throw new InvalidOperationException("Preliminary owned file link count is invalid");
@@ -736,6 +747,15 @@ namespace BharatCode.Preliminary {
         Buffer.BlockCopy(digest, 0, value, 8, digest.Length);
         return value;
       }
+    }
+
+    internal static void MakeReadOnly(SafeFileHandle handle) {
+      FILE_BASIC_INFO information;
+      var size = checked((uint)Marshal.SizeOf(typeof(FILE_BASIC_INFO)));
+      if (!GetFileInformationByHandleEx(handle, 0, out information, size)) throw new InvalidOperationException("Preliminary pinned file attributes are unavailable");
+      information.FileAttributes |= FILE_ATTRIBUTE_READONLY;
+      if (!SetFileInformationByHandle(handle, 0, ref information, size)) throw new InvalidOperationException("Preliminary pinned file could not be made read-only");
+      if ((Attributes(handle) & FILE_ATTRIBUTE_READONLY) == 0) throw new InvalidOperationException("Preliminary pinned file read-only state is unavailable");
     }
 
     internal static byte[] ReadAllBytes(SafeFileHandle handle) {
@@ -1299,6 +1319,7 @@ function Invoke-PreliminaryController {
     $installed = Join-Path $lease.RootPath "BharatCode Beta.exe"
     if (-not [IO.File]::Exists($installed)) { throw "Installed preliminary Desktop is missing" }
     $lease.PinOwnedRelative("installed", "BharatCode Beta.exe")
+    $lease.MakePinnedReadOnly("installed")
     $installedSignature = Get-AuthenticodeSignature $installed
     if ($installedSignature.Status -ne "NotSigned" -or $installedSignature.SignerCertificate -or $installedSignature.TimeStamperCertificate) { throw "Installed preliminary Desktop must remain unsigned" }
     $installedVersion = [version](Get-Item -LiteralPath $installed).VersionInfo.ProductVersion
@@ -1323,6 +1344,8 @@ function Invoke-PreliminaryController {
     $frozenHarness = Copy-PreliminaryPinnedInput -Lease $lease -Label "frozen-harness" -Destination $paths.FrozenHarness -DirectoryLabel "contracts" -TestHooks $TestHooks -CopiedBoundary "after-frozen-harness-copy" -PinnedBoundary "after-frozen-harness-pin"
     $runtimeManifest = Copy-PreliminaryPinnedInput -Lease $lease -Label "runtime-manifest" -Destination $paths.RuntimeManifest -DirectoryLabel "inputs" -TestHooks $TestHooks -CopiedBoundary "after-runtime-manifest-copy" -PinnedBoundary "after-runtime-manifest-pin"
     $runtime = Copy-PreliminaryPinnedInput -Lease $lease -Label "runtime" -Destination $paths.Runtime -DirectoryLabel "inputs" -TestHooks $TestHooks -CopiedBoundary "after-runtime-copy" -PinnedBoundary "after-runtime-pin"
+    $lease.MakePinnedReadOnly("runtime-manifest")
+    $lease.MakePinnedReadOnly("runtime")
     $scriptBytes = [Text.UTF8Encoding]::new($false).GetBytes($EvidenceScript)
     $lease.WriteNew("evidence-script", "evidence.mjs", $scriptBytes)
     Invoke-PreliminaryControllerBoundary -TestHooks $TestHooks -Boundary "after-evidence-write" -Lease $lease

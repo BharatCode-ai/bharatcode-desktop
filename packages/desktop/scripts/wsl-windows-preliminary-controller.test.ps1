@@ -47,6 +47,7 @@ function Remove-TestTree([string]$Path) {
     }
     return
   }
+  if (($attributes -band [IO.FileAttributes]::ReadOnly) -ne 0) { [IO.File]::SetAttributes($Path, $attributes -band (-bnot [IO.FileAttributes]::ReadOnly)) }
   [IO.File]::Delete($Path)
 }
 
@@ -176,6 +177,9 @@ internal static class Program {
       using (var process = Process.Start(start)) { process.WaitForExit(); return process.ExitCode == 0 ? 0 : 53; }
     }
     if (mode == "assert-pins") {
+      foreach (var name in new[] { "INSTALLED_DESKTOP_EXE", "PRELIMINARY_RUNTIME_MANIFEST", "PRELIMINARY_RUNTIME" }) {
+        if ((File.GetAttributes(Environment.GetEnvironmentVariable(name)) & FileAttributes.ReadOnly) == 0) return 54;
+      }
       foreach (var name in new[] { "INSTALLED_DESKTOP_EXE", "UNSIGNED_INSTALLER_PATH", "PRELIMINARY_EVIDENCE_SCRIPT", "PRELIMINARY_ADAPTER", "PRELIMINARY_VALIDATOR", "PRELIMINARY_FROZEN_HARNESS", "PRELIMINARY_RUNTIME_MANIFEST", "PRELIMINARY_RUNTIME" }) {
         try { File.WriteAllText(Environment.GetEnvironmentVariable(name), "substitution"); return 52; }
         catch (IOException) { }
