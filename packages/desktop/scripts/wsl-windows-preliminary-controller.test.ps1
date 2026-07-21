@@ -316,8 +316,9 @@ try {
   Assert-True ([IO.File]::Exists($fixture)) "real NSIS controller fixture is missing"
   $nsisRoots = @(
     (Join-Path $env:LOCALAPPDATA "electron-builder\Cache\nsis"),
-    (Join-Path $env:LOCALAPPDATA "electron-builder\Cache\nsis-3.0.4.1")
-  )
+    (Join-Path $env:LOCALAPPDATA "electron-builder\Cache\nsis-3.0.4.1"),
+    $env:ELECTRON_BUILDER_CACHE
+  ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique
   $makensis = @($nsisRoots | Where-Object { [IO.Directory]::Exists($_) } | ForEach-Object {
     Get-ChildItem -LiteralPath $_ -Filter makensis.exe -File -Recurse -ErrorAction SilentlyContinue
   } | Where-Object { $_.FullName -match '[\\/]nsis-3\.0\.4\.1[\\/]' } | Sort-Object FullName -Unique)

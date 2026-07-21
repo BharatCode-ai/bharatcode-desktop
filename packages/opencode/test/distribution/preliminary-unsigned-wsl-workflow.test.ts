@@ -62,6 +62,7 @@ type Workflow = {
     string,
     {
       if?: string
+      env?: Record<string, string>
       needs?: string[] | string
       permissions?: Record<string, string>
       "runs-on"?: string | string[]
@@ -749,6 +750,14 @@ describe("preliminary unsigned Windows/WSL acceptance workflow", () => {
       "wsl2",
       label,
     ])
+  })
+
+  test("binds the exact NSIS fixture compiler to a preliminary job cache", async () => {
+    const workflow = parse(await source())
+    expect(workflow.jobs["package-preliminary-unsigned-windows"].env?.ELECTRON_BUILDER_CACHE).toBe(
+      "${{ runner.temp }}/bharatcode-preliminary-electron-builder-cache",
+    )
+    expect(await Bun.file(namespaceTestPath).text()).toContain("$env:ELECTRON_BUILDER_CACHE")
   })
 
   test("keeps one unguessable handle-bound namespace authority through evidence and runs executable Windows hostile tests", async () => {

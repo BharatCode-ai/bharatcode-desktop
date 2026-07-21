@@ -127,6 +127,8 @@ jobs:
     runs-on: windows-2022
     permissions:
       contents: read
+    env:
+      ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/bharatcode-preliminary-electron-builder-cache
     steps:
       - name: Checkout the exact preliminary source
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
