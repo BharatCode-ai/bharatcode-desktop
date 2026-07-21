@@ -521,6 +521,41 @@ function New-PreliminaryWslJitLiveOperations {
       if (-not $session) { throw "PowerShell Direct guest session timed out" }
       try {
         [void](Invoke-Command -Session $session -ScriptBlock { [void][IO.Directory]::CreateDirectory("C:\BharatCodeJit") })
+        [void](Invoke-Command -Session $session -ScriptBlock {
+            $ErrorActionPreference = "Stop"
+            $expected = [ordered]@{
+              BharatCodeAcceptance = [uint32]1000
+              BharatCodeRoot = [uint32]0
+              BharatCodeMissingPrerequisite = [uint32]1000
+            }
+            $keys = @(Get-ChildItem -LiteralPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss")
+            if ($keys.Count -ne $expected.Count) { throw "Disposable guest WSL registration inventory is invalid" }
+            $registrations = @($keys | ForEach-Object {
+                $properties = Get-ItemProperty -LiteralPath $_.PSPath -Name @("DistributionName", "DefaultUid")
+                [pscustomobject]@{ Path = $_.PSPath; Name = [string]$properties.DistributionName; DefaultUid = [uint32]$properties.DefaultUid }
+              })
+            foreach ($name in $expected.Keys) {
+              $matches = @($registrations | Where-Object { $_.Name -ceq $name })
+              if ($matches.Count -ne 1) { throw "Disposable guest WSL registration identity is ambiguous" }
+              [uint32]$observedUid = 0
+              $observedText = [string]((& wsl.exe --distribution $name --exec /usr/bin/id -u | Out-String).Trim())
+              if ($LASTEXITCODE -ne 0 -or -not [uint32]::TryParse($observedText, [ref]$observedUid) -or $observedUid -ne $expected[$name]) { throw "Disposable guest WSL default identity is invalid" }
+              if ($matches[0].DefaultUid -ne $expected[$name] -and ($expected[$name] -ne 1000 -or $matches[0].DefaultUid -ne 0)) { throw "Disposable guest WSL registration drift is invalid" }
+            }
+            foreach ($registration in @($registrations | Where-Object { $_.DefaultUid -ne $expected[$_.Name] })) {
+              Set-ItemProperty -LiteralPath $registration.Path -Name "DefaultUid" -Value ([uint32]$expected[$registration.Name])
+            }
+            foreach ($name in $expected.Keys) {
+              $registration = @($registrations | Where-Object { $_.Name -ceq $name })[0]
+              $properties = Get-ItemProperty -LiteralPath $registration.Path -Name @("DistributionName", "DefaultUid")
+              [uint32]$observedUid = 0
+              $observedText = [string]((& wsl.exe --distribution $name --exec /usr/bin/id -u | Out-String).Trim())
+              if ([string]$properties.DistributionName -cne $name -or [uint32]$properties.DefaultUid -ne $expected[$name] -or
+                $LASTEXITCODE -ne 0 -or -not [uint32]::TryParse($observedText, [ref]$observedUid) -or $observedUid -ne $expected[$name]) {
+                throw "Disposable guest WSL registration correction could not be verified"
+              }
+            }
+          })
         Copy-Item -LiteralPath $Context.RunnerArchivePath -Destination "C:\BharatCodeJit\runner.zip" -ToSession $session
         [void](Invoke-Command -Session $session -ArgumentList $Secret -ScriptBlock {
             param($EncodedJitConfiguration)

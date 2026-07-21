@@ -438,6 +438,95 @@ try {
     Assert-True ($capture.PowerShellDirectCalls -eq 0) "live start regression reached PowerShell Direct"
   } $correctionFailures
 
+  Invoke-CorrectionCase "disposable guest closes exact WSL registration drift before runner transfer" {
+    $vmId = [Guid]::NewGuid()
+    $vmName = "bharatcode-preliminary-jit-wsl-registration-test"
+    $diskPath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "owned-wsl-registration-test.vhdx"))
+    $vm = [pscustomobject]@{ Id = $vmId; Name = $vmName; State = "Off" }
+    $owned = [pscustomobject]@{ VmCreationAttempted = $true; VmId = [string]$vmId; VmName = $vmName; DiskPath = $diskPath }
+    $context = [pscustomobject]@{ DeadlineUtc = [DateTime]::UtcNow.AddMinutes(5); GuestCredential = [pscustomobject]@{ TestOnly = $true }; RunnerArchivePath = "test-only-runner.zip" }
+    $capture = [pscustomobject]@{ IdentityBlock = $null; SessionRemoved = $false }
+    $sentinel = "test-only runner transfer sentinel"
+    $operations = New-PreliminaryWslJitLiveOperations
+    $error = Assert-Throws {
+      & {
+        function Get-VM { param([Guid] $Id, [string] $Name) return $vm }
+        function Get-VMHardDiskDrive { param([object] $VM) return [pscustomobject]@{ Path = $diskPath } }
+        function Start-VM { param([object] $VM) }
+        function New-PSSession { return [pscustomobject]@{ TestOnly = $true } }
+        function Invoke-Command {
+          param([object] $Session, [scriptblock] $ScriptBlock, [object[]] $ArgumentList)
+          if ($ScriptBlock.ToString().Contains("DefaultUid")) { $capture.IdentityBlock = $ScriptBlock }
+        }
+        function Copy-Item { param([string] $LiteralPath, [string] $Destination, [object] $ToSession) throw $sentinel }
+        function Remove-PSSession { param([object] $Session) $capture.SessionRemoved = $true }
+        & $operations.TransferAndStartRunner $context $owned "test-only-jit-secret"
+      }
+    } "live fixture unexpectedly transferred the runner archive"
+    Assert-True ($error.Message -ceq $sentinel) "live fixture failed before the isolated transfer boundary: $($error.Message)"
+    Assert-True ($null -ne $capture.IdentityBlock) "live start omitted disposable-guest WSL registration validation"
+    Assert-True $capture.SessionRemoved "live fixture did not close its test-only session"
+
+    $fixtureRegistrations = @(
+      [pscustomobject]@{ PSPath = "test:\acceptance"; Name = "BharatCodeAcceptance" },
+      [pscustomobject]@{ PSPath = "test:\root"; Name = "BharatCodeRoot" },
+      [pscustomobject]@{ PSPath = "test:\missing"; Name = "BharatCodeMissingPrerequisite" }
+    )
+    $registryUid = @{ "BharatCodeAcceptance" = [uint32]0; "BharatCodeRoot" = [uint32]0; "BharatCodeMissingPrerequisite" = [uint32]0 }
+    $observedUidByName = @{ "BharatCodeAcceptance" = [uint32]1000; "BharatCodeRoot" = [uint32]0; "BharatCodeMissingPrerequisite" = [uint32]1000 }
+    $changes = [Collections.Generic.List[string]]::new()
+    $wslCalls = [Collections.Generic.List[string]]::new()
+    & {
+      function Get-ChildItem { param([string] $LiteralPath) return $fixtureRegistrations }
+      function Get-ItemProperty {
+        param([string] $LiteralPath, [string[]] $Name)
+        $registration = @($fixtureRegistrations | Where-Object { $_.PSPath -ceq $LiteralPath })[0]
+        return [pscustomobject]@{ DistributionName = $registration.Name; DefaultUid = $registryUid[$registration.Name] }
+      }
+      function Set-ItemProperty {
+        param([string] $LiteralPath, [string] $Name, [uint32] $Value)
+        $registration = @($fixtureRegistrations | Where-Object { $_.PSPath -ceq $LiteralPath })[0]
+        $registryUid[$registration.Name] = $Value
+        $changes.Add($registration.Name)
+      }
+      function wsl.exe {
+        param([Parameter(ValueFromRemainingArguments = $true)] [object[]] $Arguments)
+        $wslCalls.Add($Arguments -join " ")
+        $global:LASTEXITCODE = 0
+        return [string]$observedUidByName[[string]$Arguments[1]]
+      }
+      & $capture.IdentityBlock
+    }
+    Assert-True ($registryUid["BharatCodeAcceptance"] -eq 1000 -and $registryUid["BharatCodeMissingPrerequisite"] -eq 1000) "non-root WSL registrations were not corrected"
+    Assert-True ($registryUid["BharatCodeRoot"] -eq 0 -and -not $changes.Contains("BharatCodeRoot")) "root-only WSL registration was modified"
+    $actualChanges = @($changes | Sort-Object) -join "`n"
+    $expectedChanges = @("BharatCodeAcceptance", "BharatCodeMissingPrerequisite") | Sort-Object
+    Assert-True ($actualChanges -ceq ($expectedChanges -join "`n")) "unexpected WSL registrations were modified"
+    $unexpectedWslCalls = @($wslCalls | Where-Object { $_ -notmatch '^--distribution BharatCode(?:Acceptance|Root|MissingPrerequisite) --exec /usr/bin/id -u$' })
+    Assert-True (($wslCalls.Count -eq 6) -and ($unexpectedWslCalls.Count -eq 0)) "guest identity validation used an unexpected WSL command"
+
+    $registryUid["BharatCodeAcceptance"] = [uint32]0
+    $observedUidByName["BharatCodeAcceptance"] = [uint32]0
+    $changes.Clear()
+    $identityError = & {
+      function Get-ChildItem { param([string] $LiteralPath) return $fixtureRegistrations }
+      function Get-ItemProperty {
+        param([string] $LiteralPath, [string[]] $Name)
+        $registration = @($fixtureRegistrations | Where-Object { $_.PSPath -ceq $LiteralPath })[0]
+        return [pscustomobject]@{ DistributionName = $registration.Name; DefaultUid = $registryUid[$registration.Name] }
+      }
+      function Set-ItemProperty { param([string] $LiteralPath, [string] $Name, [uint32] $Value) $changes.Add($LiteralPath) }
+      function wsl.exe {
+        param([Parameter(ValueFromRemainingArguments = $true)] [object[]] $Arguments)
+        $global:LASTEXITCODE = 0
+        return [string]$observedUidByName[[string]$Arguments[1]]
+      }
+      Assert-Throws { & $capture.IdentityBlock } "unexpected WSL default identity was accepted"
+    }
+    Assert-True ($identityError.Message.Contains("identity")) "unexpected WSL identity failed without an identity diagnostic: $($identityError.Message)"
+    Assert-True ($changes.Count -eq 0) "identity mismatch modified a WSL registration"
+  } $correctionFailures
+
   Invoke-CorrectionCase "production VM start matches the installed host parameter contract" {
     $startVm = Get-Command Start-VM -CommandType Cmdlet -ErrorAction Stop
     Assert-True ($startVm.Parameters.ContainsKey("VM")) "installed Start-VM does not expose the required VM parameter"
