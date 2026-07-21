@@ -81,6 +81,7 @@ function Invoke-PreliminaryWslJitHostController {
     VmMemoryBytes = $VmMemoryBytes
     VmDiskBytes = $VmDiskBytes
     TimeoutSeconds = $TimeoutSeconds
+    DeadlineUtc = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
     InvocationId = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(16)).ToLowerInvariant()
     JitEndpoint = "/repos/$Repository/actions/runners/generate-jitconfig"
     RunId = $null
@@ -178,9 +179,9 @@ function Invoke-PreliminaryWslJitHostController {
       }
       vm = [ordered]@{ instance_id_sha256 = $bindings.vm_instance_id_sha256; image_sha256 = $bindings.vm_image_sha256; dedicated = $true }
       admitted_at = $admitted.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", [Globalization.CultureInfo]::InvariantCulture)
-      expires_at = $admitted.AddSeconds($context.TimeoutSeconds).UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", [Globalization.CultureInfo]::InvariantCulture)
+      expires_at = $context.DeadlineUtc.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", [Globalization.CultureInfo]::InvariantCulture)
     }
-    $admissionCanonical = [string](& $Operations["ValidateAdmission"] $admission $bindings)
+    $admissionCanonical = [string](& $Operations["ValidateAdmission"] $admission $bindings $context)
     [void](& $Operations["WriteEvidence"] $context "admission" $admissionCanonical)
     $admissionWritten = $true
 
@@ -252,7 +253,7 @@ function Invoke-PreliminaryWslJitHostController {
           vm = [ordered]@{ instance_id_sha256 = $bindings.vm_instance_id_sha256; destroyed = $true; destroyed_at = $completedAt }
           completed_at = $completedAt
         }
-        $destructionCanonical = [string](& $Operations["ValidateDestruction"] $destruction $admission $destructionBindings)
+        $destructionCanonical = [string](& $Operations["ValidateDestruction"] $destruction $admission $destructionBindings $context)
         [void](& $Operations["WriteEvidence"] $context "destruction" $destructionCanonical)
       }
       catch { [void]$cleanupErrors.Add($_.Exception) }
@@ -341,8 +342,16 @@ function Test-PreliminaryLabelSet {
   return (($Actual | Sort-Object -CaseSensitive) -join "`n") -ceq (($Expected | Sort-Object -CaseSensitive) -join "`n")
 }
 
+function Get-PreliminaryRemainingTimeoutMilliseconds {
+  param([object] $Context, [DateTime] $NowUtc = [DateTime]::UtcNow)
+  $remaining = ($Context.DeadlineUtc - $NowUtc).TotalMilliseconds
+  if ($remaining -le 0) { throw [TimeoutException]::new("Preliminary JIT absolute deadline expired") }
+  return [int][Math]::Min([int]::MaxValue, [Math]::Floor($remaining))
+}
+
 function Invoke-PreliminaryProcess {
-  param([string] $FilePath, [string[]] $ArgumentList, [string] $InputText, [int] $TimeoutMilliseconds = 300000)
+  param([object] $Context, [string] $FilePath, [string[]] $ArgumentList, [string] $InputText, [int] $MaximumTimeoutMilliseconds = 300000)
+  $timeoutMilliseconds = [Math]::Min($MaximumTimeoutMilliseconds, (Get-PreliminaryRemainingTimeoutMilliseconds $Context))
   $start = [Diagnostics.ProcessStartInfo]::new()
   $start.FileName = $FilePath
   $start.UseShellExecute = $false
@@ -365,11 +374,11 @@ function Invoke-PreliminaryProcess {
 }
 
 function Invoke-PreliminaryGhJson {
-  param([string] $Method, [string] $Endpoint, [object] $Body)
+  param([object] $Context, [string] $Method, [string] $Endpoint, [object] $Body)
   $arguments = @("api", "--method", $Method, $Endpoint, "-H", "Accept: application/vnd.github+json", "-H", "X-GitHub-Api-Version: 2026-03-10")
   $input = $null
   if ($null -ne $Body) { $arguments += @("--input", "-"); $input = $Body | ConvertTo-Json -Depth 20 -Compress }
-  $raw = Invoke-PreliminaryProcess (Get-Command gh -CommandType Application).Source $arguments $input
+  $raw = Invoke-PreliminaryProcess $Context (Get-Command gh -CommandType Application).Source $arguments $input
   if ([string]::IsNullOrWhiteSpace($raw)) { return $null }
   return $raw | ConvertFrom-Json -Depth 30
 }
@@ -383,7 +392,7 @@ function Find-PreliminaryRepositoryRunner {
     $response = if ($ListPage) {
       & $ListPage $Context $page
     } else {
-      Invoke-PreliminaryGhJson "GET" "repos/$($Context.Repository)/actions/runners?per_page=100&page=$page" $null
+      Invoke-PreliminaryGhJson $Context "GET" "repos/$($Context.Repository)/actions/runners?per_page=100&page=$page" $null
     }
     if ($null -eq $response -or $response.PSObject.Properties.Name -notcontains "runners") { throw "Repository runner enumeration response is invalid" }
     $runners = @($response.runners)
@@ -439,10 +448,10 @@ function Resolve-PreliminaryOwnedVm {
 }
 
 function Invoke-PreliminaryLifecycleAdapter {
-  param([ValidateSet("admission", "destruction", "receipt")] [string] $Operation, [object] $Input)
+  param([object] $Context, [ValidateSet("admission", "destruction", "receipt")] [string] $Operation, [object] $Input)
   $bun = (Get-Command bun -CommandType Application).Source
   $adapter = Join-Path $PSScriptRoot "../../opencode/script/preliminary-jit-evidence-cli.mjs"
-  return Invoke-PreliminaryProcess $bun @($adapter, $Operation) ($Input | ConvertTo-Json -Depth 30 -Compress)
+  return Invoke-PreliminaryProcess $Context $bun @($adapter, $Operation) ($Input | ConvertTo-Json -Depth 30 -Compress)
 }
 
 function New-PreliminaryWslJitLiveOperations {
@@ -451,15 +460,15 @@ function New-PreliminaryWslJitLiveOperations {
       $principal = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
       return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     }
-    GetLocalSourceSha = { (Invoke-PreliminaryProcess (Get-Command git -CommandType Application).Source @("rev-parse", "HEAD") $null).Trim() }
+    GetLocalSourceSha = { param($Context) (Invoke-PreliminaryProcess $Context (Get-Command git -CommandType Application).Source @("rev-parse", "HEAD") $null).Trim() }
     AssertPrerequisites = {
       param($Context)
       if ($ExecutionContext.SessionState.LanguageMode -ne [Management.Automation.PSLanguageMode]::FullLanguage) { throw "PowerShell FullLanguage is required" }
-      foreach ($command in @("gh", "git", "bun", "Get-VM", "Get-VHD", "New-VHD", "New-VM", "Set-VMProcessor", "Start-VM", "Stop-VM", "Remove-VM", "Get-VMHardDiskDrive", "Get-VMSwitch")) { if (-not (Get-Command $command -ErrorAction SilentlyContinue)) { throw "Missing prepared prerequisite: $command" } }
+      foreach ($command in @("gh", "git", "bun", "Get-VM", "Get-VHD", "New-VHD", "New-VM", "Set-VM", "Set-VMProcessor", "Start-VM", "Stop-VM", "Remove-VM", "Get-VMHardDiskDrive", "Get-VMSwitch")) { if (-not (Get-Command $command -ErrorAction SilentlyContinue)) { throw "Missing prepared prerequisite: $command" } }
       if (-not ($Context.GuestCredential -is [pscredential])) { throw "PowerShell Direct guest credential is required" }
       if (-not (Get-VMSwitch -Name $Context.VmSwitchName -ErrorAction SilentlyContinue)) { throw "Prepared Hyper-V switch is unavailable" }
-      if ((Invoke-PreliminaryProcess (Get-Command git -CommandType Application).Source @("status", "--porcelain") $null).Length -ne 0) { throw "Live controller checkout must be clean" }
-      $origin = (Invoke-PreliminaryProcess (Get-Command git -CommandType Application).Source @("remote", "get-url", "origin") $null).Trim()
+      if ((Invoke-PreliminaryProcess $Context (Get-Command git -CommandType Application).Source @("status", "--porcelain") $null).Length -ne 0) { throw "Live controller checkout must be clean" }
+      $origin = (Invoke-PreliminaryProcess $Context (Get-Command git -CommandType Application).Source @("remote", "get-url", "origin") $null).Trim()
       if ($origin -notmatch 'BharatCode-ai[/:]bharatcode-desktop(?:\.git)?$') { throw "Live controller origin is invalid" }
       $vhd = Get-VHD -Path $Context.BaseVhdxPath
       if ($vhd.VhdType -notin @("Fixed", "Dynamic") -or $vhd.Size -gt $Context.VmDiskBytes) { throw "Prepared base VHDX exceeds the approved disk bound" }
@@ -468,16 +477,16 @@ function New-PreliminaryWslJitLiveOperations {
     DispatchWorkflow = {
       param($Context)
       $workflowName = [Uri]::EscapeDataString([IO.Path]::GetFileName($Context.Workflow))
-      $response = Invoke-PreliminaryGhJson "POST" "repos/$($Context.Repository)/actions/workflows/$workflowName/dispatches" ([ordered]@{ ref = $Context.Ref; inputs = [ordered]@{ source_sha = $Context.SourceSha } })
+      $response = Invoke-PreliminaryGhJson $Context "POST" "repos/$($Context.Repository)/actions/workflows/$workflowName/dispatches" ([ordered]@{ ref = $Context.Ref; inputs = [ordered]@{ source_sha = $Context.SourceSha } })
       if ([string]$response.workflow_run_id -notmatch '^[1-9][0-9]*$') { throw "Workflow dispatch did not return an immutable run ID" }
       $Context.RunId = [string]$response.workflow_run_id
       $Context.WorkflowDispatched = $true
-      $run = Invoke-PreliminaryGhJson "GET" "repos/$($Context.Repository)/actions/runs/$($response.workflow_run_id)" $null
+      $run = Invoke-PreliminaryGhJson $Context "GET" "repos/$($Context.Repository)/actions/runs/$($response.workflow_run_id)" $null
       return [pscustomobject]@{ Repository = $Context.Repository; Workflow = [string]$run.path; SourceSha = [string]$run.head_sha; RunId = [string]$run.id; RunAttempt = [string]$run.run_attempt }
     }
     GenerateRepositoryJitConfiguration = {
       param($Context)
-      $response = Invoke-PreliminaryGhJson "POST" $Context.JitEndpoint ([ordered]@{ name = $Context.RunnerName; runner_group_id = $Context.RunnerGroupId; labels = @($Context.RequiredLabels); work_folder = "_work" })
+      $response = Invoke-PreliminaryGhJson $Context "POST" $Context.JitEndpoint ([ordered]@{ name = $Context.RunnerName; runner_group_id = $Context.RunnerGroupId; labels = @($Context.RequiredLabels); work_folder = "_work" })
       return [pscustomobject]@{ Endpoint = $Context.JitEndpoint; RunnerId = [string]$response.runner.id; RunnerName = [string]$response.runner.name; EncodedJitConfiguration = [string]$response.encoded_jit_config }
     }
     CreateOwnedVm = {
@@ -492,6 +501,7 @@ function New-PreliminaryWslJitLiveOperations {
       $vm = New-VM -Name $Owned.VmName -Generation 2 -MemoryStartupBytes $Context.VmMemoryBytes -VHDPath $Owned.DiskPath -SwitchName $Context.VmSwitchName
       $Owned.VmId = [string]$vm.Id
       [void](Set-VMProcessor -VM $vm -Count $Context.VmProcessorCount -ExposeVirtualizationExtensions $true)
+      [void](Set-VM -VM $vm -AutomaticCheckpointsEnabled $false)
       return $Owned
     }
     TransferAndStartRunner = {
@@ -499,11 +509,12 @@ function New-PreliminaryWslJitLiveOperations {
       $vm = Resolve-PreliminaryOwnedVm $Owned
       if (-not $vm) { throw "Owned VM is unavailable before start" }
       [void](Start-VM -VM $vm)
-      $deadline = [DateTime]::UtcNow.AddSeconds([Math]::Min(300, $Context.TimeoutSeconds))
+      $sessionDeadline = [DateTime]::UtcNow.AddSeconds(300)
+      $deadline = if ($sessionDeadline -lt $Context.DeadlineUtc) { $sessionDeadline } else { $Context.DeadlineUtc }
       $session = $null
       while (-not $session -and [DateTime]::UtcNow -lt $deadline) {
         try { $session = New-PSSession -VMName $Owned.VmName -Credential $Context.GuestCredential -ErrorAction Stop }
-        catch { Start-Sleep -Seconds 2 }
+        catch { Start-Sleep -Milliseconds ([Math]::Min(2000, (Get-PreliminaryRemainingTimeoutMilliseconds $Context))) }
       }
       if (-not $session) { throw "PowerShell Direct guest session timed out" }
       try {
@@ -519,19 +530,19 @@ function New-PreliminaryWslJitLiveOperations {
     }
     ObserveRunner = {
       param($Context)
-      $deadline = [DateTime]::UtcNow.AddSeconds($Context.TimeoutSeconds)
+      $deadline = $Context.DeadlineUtc
       while ([DateTime]::UtcNow -lt $deadline) {
-        $runner = Invoke-PreliminaryGhJson "GET" "repos/$($Context.Repository)/actions/runners/$($Context.RunnerId)" $null
+        $runner = Invoke-PreliminaryGhJson $Context "GET" "repos/$($Context.Repository)/actions/runners/$($Context.RunnerId)" $null
         $labels = @($runner.labels | ForEach-Object { [string]$_.name })
         if ([string]$runner.id -ceq $Context.RunnerId -and [string]$runner.name -ceq $Context.RunnerName -and [string]$runner.status -ceq "online" -and (Test-PreliminaryLabelSet $labels @($Context.RequiredLabels))) {
           $now = [DateTime]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", [Globalization.CultureInfo]::InvariantCulture)
           return [pscustomobject]@{ RunnerId = $Context.RunnerId; RunnerName = $Context.RunnerName; Status = "online"; Busy = [bool]$runner.busy; Labels = @($Context.RequiredLabels); RegisteredAt = $now; ObservedAt = $now }
         }
-        Start-Sleep -Seconds 2
+        Start-Sleep -Milliseconds ([Math]::Min(2000, (Get-PreliminaryRemainingTimeoutMilliseconds $Context)))
       }
       throw "Independent repository runner observation timed out"
     }
-    ValidateAdmission = { param($Record, $Bindings) Invoke-PreliminaryLifecycleAdapter "admission" ([ordered]@{ record = $Record; bindings = $Bindings }) }
+    ValidateAdmission = { param($Record, $Bindings, $Context) Invoke-PreliminaryLifecycleAdapter $Context "admission" ([ordered]@{ record = $Record; bindings = $Bindings }) }
     WriteEvidence = {
       param($Context, $Kind, $Canonical)
       $path = Join-Path $Context.OutputDirectory "bharatcode-preliminary-jit-$Kind-$($Context.RunId)-$($Context.RunAttempt).json"
@@ -542,9 +553,9 @@ function New-PreliminaryWslJitLiveOperations {
     }
     WaitForWorkflow = {
       param($Context, $Owned)
-      $deadline = [DateTime]::UtcNow.AddSeconds($Context.TimeoutSeconds)
+      $deadline = $Context.DeadlineUtc
       while ([DateTime]::UtcNow -lt $deadline) {
-        $run = Invoke-PreliminaryGhJson "GET" "repos/$($Context.Repository)/actions/runs/$($Context.RunId)" $null
+        $run = Invoke-PreliminaryGhJson $Context "GET" "repos/$($Context.Repository)/actions/runs/$($Context.RunId)" $null
         if ([string]$run.id -cne $Context.RunId -or [string]$run.run_attempt -cne $Context.RunAttempt -or [string]$run.head_sha -cne $Context.SourceSha -or [string]$run.path -cne $Context.Workflow) { throw "Exact workflow run identity drift" }
         if ([string]$run.status -ceq "completed") {
           $Context.WorkflowCompleted = $true
@@ -553,20 +564,20 @@ function New-PreliminaryWslJitLiveOperations {
             $artifactName = "preliminary-wsl-evidence-$($Context.RunId)-$($Context.RunAttempt)"
             $artifactRoot = Join-Path $Owned.RootPath "workflow-evidence"
             [void][IO.Directory]::CreateDirectory($artifactRoot)
-            [void](Invoke-PreliminaryProcess (Get-Command gh -CommandType Application).Source @("run", "download", $Context.RunId, "--repo", $Context.Repository, "--name", $artifactName, "--dir", $artifactRoot) $null)
+            [void](Invoke-PreliminaryProcess $Context (Get-Command gh -CommandType Application).Source @("run", "download", $Context.RunId, "--repo", $Context.Repository, "--name", $artifactName, "--dir", $artifactRoot) $null)
             $receiptPath = Join-Path $artifactRoot "bharatcode-wsl-preliminary-unsigned.json"
             if (-not [IO.File]::Exists($receiptPath)) { throw "Exact preliminary WSL receipt is absent" }
             $receipt = [IO.File]::ReadAllText($receiptPath)
           }
           return [pscustomobject]@{ Repository = $Context.Repository; Workflow = [string]$run.path; SourceSha = [string]$run.head_sha; RunId = [string]$run.id; RunAttempt = [string]$run.run_attempt; Conclusion = [string]$run.conclusion; Receipt = $receipt }
         }
-        Start-Sleep -Seconds 2
+        Start-Sleep -Milliseconds ([Math]::Min(2000, (Get-PreliminaryRemainingTimeoutMilliseconds $Context)))
       }
       throw [TimeoutException]::new("Exact preliminary workflow timed out")
     }
     ValidateReceipt = {
       param($Receipt, $Context)
-      [void](Invoke-PreliminaryLifecycleAdapter "receipt" ([ordered]@{
+      [void](Invoke-PreliminaryLifecycleAdapter $Context "receipt" ([ordered]@{
             raw = [string]$Receipt
             identity = [ordered]@{ source_sha = $Context.SourceSha; run_id = $Context.RunId; run_attempt = $Context.RunAttempt }
           }))
@@ -574,13 +585,13 @@ function New-PreliminaryWslJitLiveOperations {
     RequestWorkflowCancellation = {
       param($Context)
       if (-not $Context.WorkflowDispatched -or [string]::IsNullOrWhiteSpace([string]$Context.RunId)) { throw "Exact workflow cancellation identity is unavailable" }
-      [void](Invoke-PreliminaryGhJson "POST" "repos/$($Context.Repository)/actions/runs/$($Context.RunId)/cancel" $null)
+      [void](Invoke-PreliminaryGhJson $Context "POST" "repos/$($Context.Repository)/actions/runs/$($Context.RunId)/cancel" $null)
     }
     WaitForWorkflowTerminal = {
       param($Context)
-      $deadline = [DateTime]::UtcNow.AddSeconds($Context.TimeoutSeconds)
+      $deadline = $Context.DeadlineUtc
       while ([DateTime]::UtcNow -lt $deadline) {
-        $run = Invoke-PreliminaryGhJson "GET" "repos/$($Context.Repository)/actions/runs/$($Context.RunId)" $null
+        $run = Invoke-PreliminaryGhJson $Context "GET" "repos/$($Context.Repository)/actions/runs/$($Context.RunId)" $null
         if ([string]$run.id -cne $Context.RunId -or [string]$run.head_sha -cne $Context.SourceSha -or [string]$run.path -cne $Context.Workflow) { throw "Cancelled workflow run identity drift" }
         if ($Context.RunAttempt) {
           if ([string]$run.run_attempt -cne $Context.RunAttempt) { throw "Cancelled workflow run attempt drift" }
@@ -591,7 +602,7 @@ function New-PreliminaryWslJitLiveOperations {
         if ([string]$run.status -ceq "completed") {
           return [pscustomobject]@{ Repository = $Context.Repository; Workflow = [string]$run.path; SourceSha = [string]$run.head_sha; RunId = [string]$run.id; RunAttempt = [string]$run.run_attempt; Conclusion = [string]$run.conclusion; Receipt = $null }
         }
-        Start-Sleep -Seconds 2
+        Start-Sleep -Milliseconds ([Math]::Min(2000, (Get-PreliminaryRemainingTimeoutMilliseconds $Context)))
       }
       throw [TimeoutException]::new("Cancelled preliminary workflow did not reach a terminal state")
     }
@@ -612,15 +623,16 @@ function New-PreliminaryWslJitLiveOperations {
     TeardownOwnedRunner = {
       param($Context)
       $runner = Find-PreliminaryRepositoryRunner $Context
-      if ($runner) { [void](Invoke-PreliminaryGhJson "DELETE" "repos/$($Context.Repository)/actions/runners/$([string]$runner.id)" $null) }
+      if ($runner) { [void](Invoke-PreliminaryGhJson $Context "DELETE" "repos/$($Context.Repository)/actions/runners/$([string]$runner.id)" $null) }
     }
     ObserveRunnerAbsent = {
       param($Context)
       if ([string]::IsNullOrWhiteSpace([string]$Context.RunnerName)) { return $true }
-      $deadline = [DateTime]::UtcNow.AddSeconds([Math]::Min(120, $Context.TimeoutSeconds))
+      $absenceDeadline = [DateTime]::UtcNow.AddSeconds(120)
+      $deadline = if ($absenceDeadline -lt $Context.DeadlineUtc) { $absenceDeadline } else { $Context.DeadlineUtc }
       while ([DateTime]::UtcNow -lt $deadline) {
         if (-not (Find-PreliminaryRepositoryRunner $Context)) { return $true }
-        Start-Sleep -Seconds 2
+        Start-Sleep -Milliseconds ([Math]::Min(2000, (Get-PreliminaryRemainingTimeoutMilliseconds $Context)))
       }
       return $false
     }
@@ -636,7 +648,7 @@ function New-PreliminaryWslJitLiveOperations {
       $vmAbsent = $vms.Count -eq 0
       return $vmAbsent -and -not [IO.File]::Exists($Owned.DiskPath) -and -not [IO.Directory]::Exists($Owned.RootPath) -and @($Owned.NetworkNames).Count -eq 0
     }
-    ValidateDestruction = { param($Record, $Admission, $Bindings) Invoke-PreliminaryLifecycleAdapter "destruction" ([ordered]@{ record = $Record; admission = $Admission; bindings = $Bindings }) }
+    ValidateDestruction = { param($Record, $Admission, $Bindings, $Context) Invoke-PreliminaryLifecycleAdapter $Context "destruction" ([ordered]@{ record = $Record; admission = $Admission; bindings = $Bindings }) }
   }
 }
 

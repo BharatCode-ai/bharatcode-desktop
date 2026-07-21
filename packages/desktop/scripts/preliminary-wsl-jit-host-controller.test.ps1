@@ -449,6 +449,68 @@ try {
     Assert-True ($startSource.IndexOf('$vm = Resolve-PreliminaryOwnedVm $Owned') -lt $startSource.IndexOf('Start-VM -VM $vm')) "VM start does not pass the resolved object to Start-VM -VM"
   } $correctionFailures
 
+  Invoke-CorrectionCase "owned VM disables automatic checkpoints before first start" {
+    $testId = [Guid]::NewGuid().ToString("N")
+    $root = Join-Path ([IO.Path]::GetTempPath()) "bharatcode-preliminary-checkpoint-test-$testId"
+    $disk = Join-Path $root "guest.vhdx"
+    $vm = [pscustomobject]@{ Id = [Guid]::NewGuid(); Name = "bharatcode-preliminary-jit-$testId"; State = "Off" }
+    $capture = [pscustomobject]@{ SetVmCalls = 0; AutomaticCheckpointsEnabled = $null }
+    $context = [pscustomobject]@{
+      InvocationId = $testId
+      BaseVhdxPath = $basePath
+      VmMemoryBytes = 4GB
+      VmProcessorCount = 2
+      VmSwitchName = "approved-existing-switch"
+    }
+    $owned = [pscustomobject]@{
+      AuthorityEstablished = $false
+      RootPath = $root
+      VmName = $vm.Name
+      VmId = $null
+      VmCreationAttempted = $false
+      DiskPath = $disk
+    }
+    $operations = New-PreliminaryWslJitLiveOperations
+    try {
+      & {
+        function Get-VM { param([string] $Name) return $null }
+        function New-VHD { param([string] $Path, [string] $ParentPath, [switch] $Differencing) [pscustomobject]@{ Path = $Path } }
+        function New-VM {
+          param([string] $Name, [int] $Generation, [long] $MemoryStartupBytes, [string] $VHDPath, [string] $SwitchName)
+          return $vm
+        }
+        function Set-VMProcessor { param([object] $VM, [int] $Count, [bool] $ExposeVirtualizationExtensions) }
+        function Set-VM {
+          param([object] $VM, [bool] $AutomaticCheckpointsEnabled)
+          $capture.SetVmCalls++
+          $capture.AutomaticCheckpointsEnabled = $AutomaticCheckpointsEnabled
+        }
+        [void](& $operations.CreateOwnedVm $context $owned)
+      }
+      Assert-True ($capture.SetVmCalls -eq 1 -and $capture.AutomaticCheckpointsEnabled -eq $false) "live VM creation left automatic checkpoints enabled"
+      $source = [IO.File]::ReadAllText($controllerPath)
+      $prerequisites = $source.Substring($source.IndexOf('    AssertPrerequisites = {'), $source.IndexOf('    DispatchWorkflow = {') - $source.IndexOf('    AssertPrerequisites = {'))
+      Assert-True ($prerequisites.Contains('"Set-VM"')) "automatic-checkpoint control is not a closed live prerequisite"
+    }
+    finally {
+      if ([IO.Directory]::Exists($root)) { [IO.Directory]::Delete($root, $true) }
+    }
+  } $correctionFailures
+
+  Invoke-CorrectionCase "all phases consume one absolute controller deadline" {
+    $source = [IO.File]::ReadAllText($controllerPath)
+    Assert-True ($source.Contains('DeadlineUtc = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)')) "controller does not establish one absolute deadline"
+    Assert-True ([regex]::Matches($source, 'AddSeconds\(\$Context\.TimeoutSeconds\)').Count -eq 0) "a controller phase resets the overall timeout"
+    Assert-True ($source.Contains('Get-PreliminaryRemainingTimeoutMilliseconds $Context')) "prepared processes do not receive only the remaining budget"
+    $start = [DateTime]::Parse("2026-07-21T10:00:00Z").ToUniversalTime()
+    $context = [pscustomobject]@{ DeadlineUtc = $start.AddSeconds(10) }
+    $first = Get-PreliminaryRemainingTimeoutMilliseconds $context $start.AddSeconds(2)
+    $second = Get-PreliminaryRemainingTimeoutMilliseconds $context $start.AddSeconds(8)
+    Assert-True ($first -eq 8000 -and $second -eq 2000 -and $second -lt $first) "remaining deadline budget was reset between phases"
+    $error = Assert-Throws { Get-PreliminaryRemainingTimeoutMilliseconds $context $context.DeadlineUtc } "expired absolute deadline was accepted"
+    Assert-True ($error -is [TimeoutException]) "expired absolute deadline failed with the wrong error: $($error.GetType().FullName)"
+  } $correctionFailures
+
   Invoke-CorrectionCase "New-VM side effect is cleaned after throw" {
     $state = New-TestState
     $operations = New-TestOperations $state
