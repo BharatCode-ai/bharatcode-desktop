@@ -246,6 +246,12 @@ jobs:
           $ErrorActionPreference = "Stop"
           . ./packages/desktop/scripts/wsl-windows-preliminary-controller.ps1
           $installer = (Resolve-Path preliminary-input/bharatcode-desktop-preliminary-unsigned-test-win-x64.exe).Path
+          $adapter = (Resolve-Path "packages/desktop/scripts/wsl-windows-preliminary-acceptance.mjs").Path
+          $validator = (Resolve-Path "packages/opencode/script/lean-preliminary-unsigned-wsl.mjs").Path
+          $harness = (Resolve-Path "packages/desktop/scripts/wsl-windows-acceptance.mjs").Path
+          $runtimeManifest = (Resolve-Path "preliminary-input/bharatcode-wsl-runtime-manifest.json").Path
+          $runtime = (Resolve-Path "preliminary-input/bharatcode-runtime-linux-x64-glibc").Path
+          $receipt = Join-Path $env:GITHUB_WORKSPACE "bharatcode-wsl-preliminary-unsigned.json"
           $evidenceScript = @'
             import { createHash } from "node:crypto"
             import { open, stat } from "node:fs/promises"
@@ -327,13 +333,13 @@ jobs:
             -RunAttempt $env:GITHUB_RUN_ATTEMPT `
             -Installer $installer `
             -ExpectedVersion '${{ needs.admit-source.outputs.desktop_version }}' `
-            -AdapterPath "packages/desktop/scripts/wsl-windows-preliminary-acceptance.mjs" `
-            -ValidatorPath "packages/opencode/script/lean-preliminary-unsigned-wsl.mjs" `
-            -FrozenHarnessPath "packages/desktop/scripts/wsl-windows-acceptance.mjs" `
-            -RuntimeManifestPath "preliminary-input/bharatcode-wsl-runtime-manifest.json" `
-            -RuntimePath "preliminary-input/bharatcode-runtime-linux-x64-glibc" `
+            -AdapterPath $adapter `
+            -ValidatorPath $validator `
+            -FrozenHarnessPath $harness `
+            -RuntimeManifestPath $runtimeManifest `
+            -RuntimePath $runtime `
             -EvidenceScript $evidenceScript `
-            -ReceiptPath "bharatcode-wsl-preliminary-unsigned.json"
+            -ReceiptPath $receipt
 
       - name: Prove preliminary namespace absence
         if: ${{ always() }}

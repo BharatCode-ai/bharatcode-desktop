@@ -206,8 +206,12 @@ function installedAcceptanceViolations(value: string) {
       : ["installed Desktop harness entrypoint"]),
     ...(acceptance.includes("const manifest = process.env.PRELIMINARY_RUNTIME_MANIFEST") &&
     acceptance.includes("const runtime = process.env.PRELIMINARY_RUNTIME") &&
-    acceptance.includes('-RuntimeManifestPath "preliminary-input/bharatcode-wsl-runtime-manifest.json"') &&
-    acceptance.includes('-RuntimePath "preliminary-input/bharatcode-runtime-linux-x64-glibc"')
+    acceptance.includes(
+      '$runtimeManifest = (Resolve-Path "preliminary-input/bharatcode-wsl-runtime-manifest.json").Path',
+    ) &&
+    acceptance.includes('$runtime = (Resolve-Path "preliminary-input/bharatcode-runtime-linux-x64-glibc").Path') &&
+    acceptance.includes("-RuntimeManifestPath $runtimeManifest") &&
+    acceptance.includes("-RuntimePath $runtime")
       ? []
       : ["raw runtime harness binding"]),
     ...(acceptance.includes("sha256: result.evidence.desktop_sha256") ? [] : ["harness Desktop digest binding"]),
@@ -298,7 +302,16 @@ async function namespaceAuthorityViolations(value: string) {
     transactionRun.includes("runPreliminaryWindowsAcceptance(argv)") &&
     transactionRun.includes("canonicalPreliminaryUnsignedWslJson(receipt, bindings)") &&
     transactionRun.includes("cleanup_complete: true") &&
-    transactionRun.includes('ReceiptPath "bharatcode-wsl-preliminary-unsigned.json"')
+    transactionRun.includes(
+      '$adapter = (Resolve-Path "packages/desktop/scripts/wsl-windows-preliminary-acceptance.mjs").Path',
+    ) &&
+    transactionRun.includes(
+      '$validator = (Resolve-Path "packages/opencode/script/lean-preliminary-unsigned-wsl.mjs").Path',
+    ) &&
+    transactionRun.includes('$receipt = Join-Path $env:GITHUB_WORKSPACE "bharatcode-wsl-preliminary-unsigned.json"') &&
+    transactionRun.includes("-AdapterPath $adapter") &&
+    transactionRun.includes("-ValidatorPath $validator") &&
+    transactionRun.includes("-ReceiptPath $receipt")
       ? []
       : ["one live authority transaction"]),
     ...(absence.if === "${{ always() }}" &&
