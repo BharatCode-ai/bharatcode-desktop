@@ -124,7 +124,7 @@ jobs:
 
   package-preliminary-unsigned-windows:
     needs: [admit-source, build-wsl-runtime]
-    runs-on: windows-2025
+    runs-on: windows-2022
     permissions:
       contents: read
     steps:

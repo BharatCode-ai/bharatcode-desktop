@@ -739,6 +739,18 @@ describe("preliminary unsigned Windows/WSL acceptance workflow", () => {
     expect(staging!.indexOf("Set-ItemProperty")).toBeLessThan(staging!.indexOf("stage:wsl-runtime"))
   })
 
+  test("uses the repository-supported Windows packaging toolchain", async () => {
+    const workflow = parse(await source())
+    expect(workflow.jobs["package-preliminary-unsigned-windows"]["runs-on"]).toBe("windows-2022")
+    expect(workflow.jobs["accept-preliminary-unsigned-wsl"]["runs-on"]).toEqual([
+      "self-hosted",
+      "windows",
+      "x64",
+      "wsl2",
+      label,
+    ])
+  })
+
   test("keeps one unguessable handle-bound namespace authority through evidence and runs executable Windows hostile tests", async () => {
     const value = await source()
     expect(await namespaceAuthorityViolations(value)).toEqual([])
