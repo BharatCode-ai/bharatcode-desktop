@@ -55,8 +55,9 @@ function Invoke-PreliminaryWslJitHostController {
   $requiredOperations = @(
     "IsElevated", "GetLocalSourceSha", "AssertPrerequisites", "DispatchWorkflow",
     "GenerateRepositoryJitConfiguration", "CreateOwnedVm", "TransferAndStartRunner", "ObserveRunner",
-    "ValidateAdmission", "WriteEvidence", "WaitForWorkflow", "ValidateReceipt", "TeardownOwnedResources",
-    "ObserveRunnerAbsent", "ObserveOwnedResourcesAbsent", "ValidateDestruction"
+    "ValidateAdmission", "WriteEvidence", "WaitForWorkflow", "ValidateReceipt", "RequestWorkflowCancellation",
+    "WaitForWorkflowTerminal", "TeardownOwnedVm", "TeardownOwnedRunner", "ObserveRunnerAbsent",
+    "ObserveOwnedResourcesAbsent", "ValidateDestruction"
   )
   if ((($Operations.Keys | Sort-Object) -join "`n") -cne (($requiredOperations | Sort-Object) -join "`n")) {
     throw "Preliminary JIT operation boundary is not closed"
@@ -80,13 +81,15 @@ function Invoke-PreliminaryWslJitHostController {
     VmMemoryBytes = $VmMemoryBytes
     VmDiskBytes = $VmDiskBytes
     TimeoutSeconds = $TimeoutSeconds
-    InvocationId = [Guid]::NewGuid().ToString("N")
+    InvocationId = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(16)).ToLowerInvariant()
     JitEndpoint = "/repos/$Repository/actions/runners/generate-jitconfig"
     RunId = $null
     RunAttempt = $null
     RequiredLabels = $null
     RunnerId = $null
     RunnerName = $null
+    WorkflowDispatched = $false
+    WorkflowCompleted = $false
   }
   if (-not (& $Operations["IsElevated"] $context)) { throw "Preliminary JIT live mode requires an elevated PowerShell session" }
   if ((& $Operations["GetLocalSourceSha"] $context) -cne $SourceSha) { throw "Preliminary JIT local source identity mismatch" }
@@ -99,6 +102,7 @@ function Invoke-PreliminaryWslJitHostController {
     RootPath = [IO.Path]::Combine($context.HostTemporaryRoot, "bharatcode-preliminary-jit-$($context.InvocationId)")
     VmName = "bharatcode-preliminary-jit-$($context.InvocationId)"
     VmId = $null
+    VmCreationAttempted = $false
     DiskPath = [IO.Path]::Combine($context.HostTemporaryRoot, "bharatcode-preliminary-jit-$($context.InvocationId)", "guest.vhdx")
     NetworkNames = @()
   }
@@ -115,13 +119,19 @@ function Invoke-PreliminaryWslJitHostController {
     $context.RunId = [string]$dispatch.RunId
     $context.RunAttempt = [string]$dispatch.RunAttempt
     $context.RequiredLabels = @("self-hosted", "windows", "x64", "wsl2", "bharatcode-acceptance-$($context.RunId)-$($context.RunAttempt)")
+    $context.RunnerName = "bharatcode-jit-$($context.RunId)-$($context.RunAttempt)-$($context.InvocationId)"
+    $context.WorkflowDispatched = $true
 
     $jit = & $Operations["GenerateRepositoryJitConfiguration"] $context
-    if ($jit.Endpoint -cne $context.JitEndpoint -or $jit.RunnerId -notmatch '^[1-9][0-9]*$' -or [string]::IsNullOrWhiteSpace($jit.RunnerName) -or [string]::IsNullOrWhiteSpace($jit.EncodedJitConfiguration)) {
+    if ($null -ne $jit -and $jit.PSObject.Properties.Name -contains "RunnerId" -and [string]$jit.RunnerId -match '^[1-9][0-9]*$') {
+      $context.RunnerId = [string]$jit.RunnerId
+    }
+    if ($null -eq $jit -or $jit.PSObject.Properties.Name -notcontains "Endpoint" -or $jit.PSObject.Properties.Name -notcontains "RunnerName" -or
+      $jit.PSObject.Properties.Name -notcontains "EncodedJitConfiguration" -or $jit.Endpoint -cne $context.JitEndpoint -or
+      $context.RunnerId -notmatch '^[1-9][0-9]*$' -or [string]$jit.RunnerName -cne $context.RunnerName -or
+      [string]::IsNullOrWhiteSpace([string]$jit.EncodedJitConfiguration)) {
       throw "Repository JIT configuration response is invalid"
     }
-    $context.RunnerId = [string]$jit.RunnerId
-    $context.RunnerName = [string]$jit.RunnerName
     $jitConfiguration = [string]$jit.EncodedJitConfiguration
     $jit = $null
 
@@ -176,15 +186,34 @@ function Invoke-PreliminaryWslJitHostController {
 
     $workflowResult = & $Operations["WaitForWorkflow"] $context $owned
     Assert-PreliminaryWorkflowResult $workflowResult $context
+    $context.WorkflowCompleted = $true
     if ($workflowResult.Conclusion -cne "success") { throw "Exact preliminary workflow did not succeed" }
     [void](& $Operations["ValidateReceipt"] $workflowResult.Receipt $context)
     $receiptValidated = $true
   }
   catch { $primary = $_.Exception }
   finally {
+    $jit = $null
     $jitConfiguration = $null
-    try { [void](& $Operations["TeardownOwnedResources"] $context $owned) }
+    $cancellationRequired = $context.WorkflowDispatched -and -not $context.WorkflowCompleted
+    if ($cancellationRequired) {
+      try {
+        [void](& $Operations["RequestWorkflowCancellation"] $context)
+      }
+      catch { [void]$cleanupErrors.Add($_.Exception) }
+    }
+    try { [void](& $Operations["TeardownOwnedVm"] $context $owned) }
     catch { [void]$cleanupErrors.Add($_.Exception) }
+    try { [void](& $Operations["TeardownOwnedRunner"] $context) }
+    catch { [void]$cleanupErrors.Add($_.Exception) }
+    if ($cancellationRequired) {
+      try {
+        $terminal = & $Operations["WaitForWorkflowTerminal"] $context
+        Assert-PreliminaryWorkflowResult $terminal $context
+        $context.WorkflowCompleted = $true
+      }
+      catch { [void]$cleanupErrors.Add($_.Exception) }
+    }
 
     $runnerAbsent = $false
     $resourcesAbsent = $false
@@ -282,7 +311,7 @@ function Assert-PreliminaryDispatch {
 function Assert-PreliminaryOwnedResources {
   param([object] $Owned, [object] $Context)
   $expectedRoot = [IO.Path]::Combine($Context.HostTemporaryRoot, "bharatcode-preliminary-jit-$($Context.InvocationId)")
-  if (-not $Owned.Owned -or -not $Owned.AuthorityEstablished -or $Owned.RootPath -cne $expectedRoot -or $Owned.VmName -cne "bharatcode-preliminary-jit-$($Context.InvocationId)" -or [string]::IsNullOrWhiteSpace($Owned.VmId)) { throw "Owned VM identity is invalid" }
+  if (-not $Owned.Owned -or -not $Owned.AuthorityEstablished -or -not $Owned.VmCreationAttempted -or $Owned.RootPath -cne $expectedRoot -or $Owned.VmName -cne "bharatcode-preliminary-jit-$($Context.InvocationId)" -or [string]::IsNullOrWhiteSpace($Owned.VmId)) { throw "Owned VM identity is invalid" }
   if ($Owned.DiskPath -cne [IO.Path]::Combine($expectedRoot, "guest.vhdx") -or @($Owned.NetworkNames).Count -ne 0) { throw "Owned disk or network identity is invalid" }
 }
 
@@ -346,18 +375,67 @@ function Invoke-PreliminaryGhJson {
 }
 
 function Find-PreliminaryRepositoryRunner {
-  param([object] $Context)
+  param([object] $Context, [scriptblock] $ListPage)
+  if ([string]::IsNullOrWhiteSpace([string]$Context.RunnerName)) { return $null }
+  $matches = [Collections.Generic.List[object]]::new()
+  $complete = $false
   for ($page = 1; $page -le 100; $page++) {
-    $response = Invoke-PreliminaryGhJson "GET" "repos/$($Context.Repository)/actions/runners?per_page=100&page=$page" $null
-    $matches = @($response.runners | Where-Object { [string]$_.id -ceq $Context.RunnerId })
-    if ($matches.Count -gt 1) { throw "Repository runner ID is not unique" }
-    if ($matches.Count -eq 1) {
-      if ([string]$matches[0].name -cne $Context.RunnerName) { throw "Repository runner name identity drift" }
-      return $matches[0]
+    $response = if ($ListPage) {
+      & $ListPage $Context $page
+    } else {
+      Invoke-PreliminaryGhJson "GET" "repos/$($Context.Repository)/actions/runners?per_page=100&page=$page" $null
     }
-    if (@($response.runners).Count -lt 100) { return $null }
+    if ($null -eq $response -or $response.PSObject.Properties.Name -notcontains "runners") { throw "Repository runner enumeration response is invalid" }
+    $runners = @($response.runners)
+    foreach ($runner in $runners) {
+      if ($Context.RunnerId) {
+        if ([string]$runner.id -ceq $Context.RunnerId) { [void]$matches.Add($runner) }
+        continue
+      }
+      if ([string]$runner.name -ceq $Context.RunnerName) { [void]$matches.Add($runner) }
+    }
+    if ($runners.Count -lt 100) {
+      $complete = $true
+      break
+    }
   }
-  throw "Repository runner enumeration exceeded its bound"
+  if (-not $complete) { throw "Repository runner enumeration exceeded its bound" }
+  if ($matches.Count -gt 1) { throw "Repository runner cleanup identity is not unique" }
+  if ($matches.Count -eq 0) { return $null }
+  if ([string]$matches[0].name -cne $Context.RunnerName) { throw "Repository runner name identity drift" }
+  $labels = @($matches[0].labels | ForEach-Object { [string]$_.name })
+  if (-not (Test-PreliminaryLabelSet $labels @($Context.RequiredLabels))) { throw "Repository runner label identity drift" }
+  return $matches[0]
+}
+
+function Resolve-PreliminaryOwnedVm {
+  param(
+    [object] $Owned,
+    [scriptblock] $GetById,
+    [scriptblock] $GetByName,
+    [scriptblock] $GetDiskPaths
+  )
+  if (-not $Owned.VmCreationAttempted) { return $null }
+  $vms = @(if ($Owned.VmId) {
+    if ($GetById) { @(& $GetById $Owned) } else { @(Get-VM -Id ([Guid]$Owned.VmId) -ErrorAction SilentlyContinue) }
+  } else {
+    if ($GetByName) { @(& $GetByName $Owned) } else { @(Get-VM -Name $Owned.VmName -ErrorAction SilentlyContinue) }
+  })
+  if ($vms.Count -gt 1) { throw "Owned VM cleanup identity is not unique" }
+  if ($vms.Count -eq 0) {
+    if ($Owned.VmId) { return $null }
+    throw "Owned VM cleanup identity is missing"
+  }
+  if ([string]$vms[0].Name -cne $Owned.VmName) { throw "Owned VM cleanup identity drift" }
+  $diskPaths = @(if ($GetDiskPaths) {
+    @(& $GetDiskPaths $vms[0])
+  } else {
+    @(Get-VMHardDiskDrive -VM $vms[0] | ForEach-Object { [string]$_.Path })
+  })
+  if ($diskPaths.Count -ne 1 -or [IO.Path]::GetFullPath([string]$diskPaths[0]) -cne [IO.Path]::GetFullPath([string]$Owned.DiskPath)) {
+    throw "Owned VM attached disk identity drift"
+  }
+  return $vms[0]
 }
 
 function Invoke-PreliminaryLifecycleAdapter {
@@ -377,7 +455,7 @@ function New-PreliminaryWslJitLiveOperations {
     AssertPrerequisites = {
       param($Context)
       if ($ExecutionContext.SessionState.LanguageMode -ne [Management.Automation.PSLanguageMode]::FullLanguage) { throw "PowerShell FullLanguage is required" }
-      foreach ($command in @("gh", "git", "bun", "Get-VM", "Get-VHD", "New-VHD", "New-VM", "Set-VMProcessor", "Start-VM", "Stop-VM", "Remove-VM", "Get-VMSwitch")) { if (-not (Get-Command $command -ErrorAction SilentlyContinue)) { throw "Missing prepared prerequisite: $command" } }
+      foreach ($command in @("gh", "git", "bun", "Get-VM", "Get-VHD", "New-VHD", "New-VM", "Set-VMProcessor", "Start-VM", "Stop-VM", "Remove-VM", "Get-VMHardDiskDrive", "Get-VMSwitch")) { if (-not (Get-Command $command -ErrorAction SilentlyContinue)) { throw "Missing prepared prerequisite: $command" } }
       if (-not ($Context.GuestCredential -is [pscredential])) { throw "PowerShell Direct guest credential is required" }
       if (-not (Get-VMSwitch -Name $Context.VmSwitchName -ErrorAction SilentlyContinue)) { throw "Prepared Hyper-V switch is unavailable" }
       if ((Invoke-PreliminaryProcess (Get-Command git -CommandType Application).Source @("status", "--porcelain") $null).Length -ne 0) { throw "Live controller checkout must be clean" }
@@ -392,13 +470,14 @@ function New-PreliminaryWslJitLiveOperations {
       $workflowName = [Uri]::EscapeDataString([IO.Path]::GetFileName($Context.Workflow))
       $response = Invoke-PreliminaryGhJson "POST" "repos/$($Context.Repository)/actions/workflows/$workflowName/dispatches" ([ordered]@{ ref = $Context.Ref; inputs = [ordered]@{ source_sha = $Context.SourceSha } })
       if ([string]$response.workflow_run_id -notmatch '^[1-9][0-9]*$') { throw "Workflow dispatch did not return an immutable run ID" }
+      $Context.RunId = [string]$response.workflow_run_id
+      $Context.WorkflowDispatched = $true
       $run = Invoke-PreliminaryGhJson "GET" "repos/$($Context.Repository)/actions/runs/$($response.workflow_run_id)" $null
       return [pscustomobject]@{ Repository = $Context.Repository; Workflow = [string]$run.path; SourceSha = [string]$run.head_sha; RunId = [string]$run.id; RunAttempt = [string]$run.run_attempt }
     }
     GenerateRepositoryJitConfiguration = {
       param($Context)
-      $name = "bharatcode-jit-$($Context.RunId)-$($Context.RunAttempt)-$($Context.InvocationId)"
-      $response = Invoke-PreliminaryGhJson "POST" $Context.JitEndpoint ([ordered]@{ name = $name; runner_group_id = $Context.RunnerGroupId; labels = @($Context.RequiredLabels); work_folder = "_work" })
+      $response = Invoke-PreliminaryGhJson "POST" $Context.JitEndpoint ([ordered]@{ name = $Context.RunnerName; runner_group_id = $Context.RunnerGroupId; labels = @($Context.RequiredLabels); work_folder = "_work" })
       return [pscustomobject]@{ Endpoint = $Context.JitEndpoint; RunnerId = [string]$response.runner.id; RunnerName = [string]$response.runner.name; EncodedJitConfiguration = [string]$response.encoded_jit_config }
     }
     CreateOwnedVm = {
@@ -409,6 +488,7 @@ function New-PreliminaryWslJitLiveOperations {
       [IO.File]::WriteAllText($marker, $Context.InvocationId, [Text.UTF8Encoding]::new($false))
       $Owned.AuthorityEstablished = $true
       [void](New-VHD -Path $Owned.DiskPath -ParentPath $Context.BaseVhdxPath -Differencing)
+      $Owned.VmCreationAttempted = $true
       $vm = New-VM -Name $Owned.VmName -Generation 2 -MemoryStartupBytes $Context.VmMemoryBytes -VHDPath $Owned.DiskPath -SwitchName $Context.VmSwitchName
       $Owned.VmId = [string]$vm.Id
       [void](Set-VMProcessor -VM $vm -Count $Context.VmProcessorCount -ExposeVirtualizationExtensions $true)
@@ -465,6 +545,7 @@ function New-PreliminaryWslJitLiveOperations {
         $run = Invoke-PreliminaryGhJson "GET" "repos/$($Context.Repository)/actions/runs/$($Context.RunId)" $null
         if ([string]$run.id -cne $Context.RunId -or [string]$run.run_attempt -cne $Context.RunAttempt -or [string]$run.head_sha -cne $Context.SourceSha -or [string]$run.path -cne $Context.Workflow) { throw "Exact workflow run identity drift" }
         if ([string]$run.status -ceq "completed") {
+          $Context.WorkflowCompleted = $true
           $receipt = $null
           if ([string]$run.conclusion -ceq "success") {
             $artifactName = "preliminary-wsl-evidence-$($Context.RunId)-$($Context.RunAttempt)"
@@ -488,34 +569,52 @@ function New-PreliminaryWslJitLiveOperations {
             identity = [ordered]@{ source_sha = $Context.SourceSha; run_id = $Context.RunId; run_attempt = $Context.RunAttempt }
           }))
     }
-    TeardownOwnedResources = {
-      param($Context, $Owned)
-      $teardownErrors = [Collections.Generic.List[Exception]]::new()
-      try {
-        if ($Owned.AuthorityEstablished) {
-          $marker = Join-Path $Owned.RootPath "controller-owned.txt"
-          if (-not [IO.File]::Exists($marker) -or [IO.File]::ReadAllText($marker) -cne $Context.InvocationId) { throw "Owned resource marker drift" }
-          $vm = if ($Owned.VmId) { Get-VM -Id ([Guid]$Owned.VmId) -ErrorAction SilentlyContinue } else { $null }
-          if ($vm) {
-            if ($vm.Name -cne $Owned.VmName) { throw "Owned VM identity drift" }
-            if ($vm.State -ne [Microsoft.HyperV.PowerShell.VMState]::Off) { [void](Stop-VM -VM $vm -TurnOff -Force) }
-            [void](Remove-VM -VM $vm -Force)
-          }
-          if ([IO.File]::Exists($Owned.DiskPath)) { Remove-Item -LiteralPath $Owned.DiskPath -Force }
-          Remove-Item -LiteralPath $Owned.RootPath -Recurse -Force
+    RequestWorkflowCancellation = {
+      param($Context)
+      if (-not $Context.WorkflowDispatched -or [string]::IsNullOrWhiteSpace([string]$Context.RunId)) { throw "Exact workflow cancellation identity is unavailable" }
+      [void](Invoke-PreliminaryGhJson "POST" "repos/$($Context.Repository)/actions/runs/$($Context.RunId)/cancel" $null)
+    }
+    WaitForWorkflowTerminal = {
+      param($Context)
+      $deadline = [DateTime]::UtcNow.AddSeconds($Context.TimeoutSeconds)
+      while ([DateTime]::UtcNow -lt $deadline) {
+        $run = Invoke-PreliminaryGhJson "GET" "repos/$($Context.Repository)/actions/runs/$($Context.RunId)" $null
+        if ([string]$run.id -cne $Context.RunId -or [string]$run.head_sha -cne $Context.SourceSha -or [string]$run.path -cne $Context.Workflow) { throw "Cancelled workflow run identity drift" }
+        if ($Context.RunAttempt) {
+          if ([string]$run.run_attempt -cne $Context.RunAttempt) { throw "Cancelled workflow run attempt drift" }
+        } else {
+          if ([string]$run.run_attempt -cnotmatch '^[1-9][0-9]*$') { throw "Cancelled workflow run attempt is invalid" }
+          $Context.RunAttempt = [string]$run.run_attempt
         }
+        if ([string]$run.status -ceq "completed") {
+          return [pscustomobject]@{ Repository = $Context.Repository; Workflow = [string]$run.path; SourceSha = [string]$run.head_sha; RunId = [string]$run.id; RunAttempt = [string]$run.run_attempt; Conclusion = [string]$run.conclusion; Receipt = $null }
+        }
+        Start-Sleep -Seconds 2
       }
-      catch { [void]$teardownErrors.Add($_.Exception) }
-      try {
-        if ($Context.RunnerId -and (Find-PreliminaryRepositoryRunner $Context)) { [void](Invoke-PreliminaryGhJson "DELETE" "repos/$($Context.Repository)/actions/runners/$($Context.RunnerId)" $null) }
+      throw [TimeoutException]::new("Cancelled preliminary workflow did not reach a terminal state")
+    }
+    TeardownOwnedVm = {
+      param($Context, $Owned)
+      if ($Owned.AuthorityEstablished) {
+        $marker = Join-Path $Owned.RootPath "controller-owned.txt"
+        if (-not [IO.File]::Exists($marker) -or [IO.File]::ReadAllText($marker) -cne $Context.InvocationId) { throw "Owned resource marker drift" }
+        $vm = Resolve-PreliminaryOwnedVm $Owned
+        if ($vm) {
+          if ($vm.State -ne [Microsoft.HyperV.PowerShell.VMState]::Off) { [void](Stop-VM -VM $vm -TurnOff -Force) }
+          [void](Remove-VM -VM $vm -Force)
+        }
+        if ([IO.File]::Exists($Owned.DiskPath)) { Remove-Item -LiteralPath $Owned.DiskPath -Force }
+        Remove-Item -LiteralPath $Owned.RootPath -Recurse -Force
       }
-      catch { [void]$teardownErrors.Add($_.Exception) }
-      if ($teardownErrors.Count -eq 1) { throw $teardownErrors[0] }
-      if ($teardownErrors.Count -gt 1) { throw [AggregateException]::new("Preliminary JIT teardown failures", [Exception[]]$teardownErrors.ToArray()) }
+    }
+    TeardownOwnedRunner = {
+      param($Context)
+      $runner = Find-PreliminaryRepositoryRunner $Context
+      if ($runner) { [void](Invoke-PreliminaryGhJson "DELETE" "repos/$($Context.Repository)/actions/runners/$([string]$runner.id)" $null) }
     }
     ObserveRunnerAbsent = {
       param($Context)
-      if (-not $Context.RunnerId) { return $true }
+      if ([string]::IsNullOrWhiteSpace([string]$Context.RunnerName)) { return $true }
       $deadline = [DateTime]::UtcNow.AddSeconds([Math]::Min(120, $Context.TimeoutSeconds))
       while ([DateTime]::UtcNow -lt $deadline) {
         if (-not (Find-PreliminaryRepositoryRunner $Context)) { return $true }
@@ -525,7 +624,14 @@ function New-PreliminaryWslJitLiveOperations {
     }
     ObserveOwnedResourcesAbsent = {
       param($Context, $Owned)
-      $vmAbsent = -not $Owned.VmId -or -not (Get-VM -Id ([Guid]$Owned.VmId) -ErrorAction SilentlyContinue)
+      $vms = @(if ($Owned.VmId) {
+        @(Get-VM -Id ([Guid]$Owned.VmId) -ErrorAction SilentlyContinue)
+      } elseif ($Owned.VmCreationAttempted) {
+        @(Get-VM -Name $Owned.VmName -ErrorAction SilentlyContinue)
+      } else {
+        @()
+      })
+      $vmAbsent = $vms.Count -eq 0
       return $vmAbsent -and -not [IO.File]::Exists($Owned.DiskPath) -and -not [IO.Directory]::Exists($Owned.RootPath) -and @($Owned.NetworkNames).Count -eq 0
     }
     ValidateDestruction = { param($Record, $Admission, $Bindings) Invoke-PreliminaryLifecycleAdapter "destruction" ([ordered]@{ record = $Record; admission = $Admission; bindings = $Bindings }) }

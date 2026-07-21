@@ -13,6 +13,16 @@ function Assert-Throws {
   throw $Message
 }
 
+function Invoke-CorrectionCase {
+  param([string] $Name, [scriptblock] $Action, [Collections.Generic.List[string]] $Failures)
+  try { & $Action }
+  catch {
+    $message = "$Name`: $($_.Exception.Message)"
+    [void]$Failures.Add($message)
+    Write-Output "correction_red=$message"
+  }
+}
+
 function New-TestState {
   [pscustomobject]@{
     Calls = [Collections.Generic.List[string]]::new()
@@ -22,6 +32,7 @@ function New-TestState {
     WorkflowMode = "success"
     RunnerAbsent = $true
     ResourcesAbsent = $true
+    OwnedRunnerPresent = $false
     OwnedVmPresent = $true
     OwnedDiskPresent = $true
     ForeignRunnerPresent = $true
@@ -31,6 +42,10 @@ function New-TestState {
     Labels = $null
     ObservedLabels = $null
     Endpoint = $null
+    CancellationFailure = $false
+    TerminalFailure = $false
+    VmTeardownFailure = $false
+    RunnerTeardownFailure = $false
   }
 }
 
@@ -66,10 +81,11 @@ function New-TestOperations {
       param($State, $Context)
       $State.Endpoint = $Context.JitEndpoint
       $State.Labels = @($Context.RequiredLabels)
+      $State.OwnedRunnerPresent = $true
       [pscustomobject]@{
         Endpoint = $Context.JitEndpoint
         RunnerId = "9812345"
-        RunnerName = "bharatcode-jit-$($Context.RunId)-$($Context.RunAttempt)-$($Context.InvocationId)"
+        RunnerName = $Context.RunnerName
         EncodedJitConfiguration = $State.EncodedJitConfiguration
       }
     }
@@ -81,6 +97,7 @@ function New-TestOperations {
         RootPath = [IO.Path]::Combine($Context.HostTemporaryRoot, "bharatcode-preliminary-jit-$($Context.InvocationId)")
         VmName = "bharatcode-preliminary-jit-$($Context.InvocationId)"
         VmId = "vm-$($Context.InvocationId)"
+        VmCreationAttempted = $true
         DiskPath = [IO.Path]::Combine($Context.HostTemporaryRoot, "bharatcode-preliminary-jit-$($Context.InvocationId)", "guest.vhdx")
         NetworkNames = @()
       }
@@ -126,13 +143,37 @@ function New-TestOperations {
       }
     }
     ValidateReceipt = New-TestOperation $State "validate-receipt" { }
-    TeardownOwnedResources = New-TestOperation $State "teardown" {
+    RequestWorkflowCancellation = New-TestOperation $State "cancel-workflow" {
+      param($State)
+      if ($State.CancellationFailure) { throw "simulated cancellation failure" }
+    }
+    WaitForWorkflowTerminal = New-TestOperation $State "wait-terminal" {
+      param($State, $Context)
+      if ($State.TerminalFailure) { throw "simulated terminal-state failure" }
+      if (-not $Context.RunAttempt) { $Context.RunAttempt = "2" }
+      [pscustomobject]@{
+        Repository = $Context.Repository
+        Workflow = $Context.Workflow
+        SourceSha = $Context.SourceSha
+        RunId = $Context.RunId
+        RunAttempt = $Context.RunAttempt
+        Conclusion = "cancelled"
+        Receipt = $null
+      }
+    }
+    TeardownOwnedVm = New-TestOperation $State "teardown-vm" {
       param($State, $Context, $Owned)
       Assert-True ($Owned.Owned -and $Owned.VmName -ceq "bharatcode-preliminary-jit-$($Context.InvocationId)") "teardown escaped owned VM identity"
+      if ($State.VmTeardownFailure) { throw "simulated VM teardown failure" }
       $State.OwnedVmPresent = $false
       $State.OwnedDiskPresent = $false
     }
-    ObserveRunnerAbsent = New-TestOperation $State "runner-absent" { param($State) $State.RunnerAbsent }
+    TeardownOwnedRunner = New-TestOperation $State "teardown-runner" {
+      param($State)
+      if ($State.RunnerTeardownFailure) { throw "simulated runner teardown failure" }
+      $State.OwnedRunnerPresent = $false
+    }
+    ObserveRunnerAbsent = New-TestOperation $State "runner-absent" { param($State) $State.RunnerAbsent -and -not $State.OwnedRunnerPresent }
     ObserveOwnedResourcesAbsent = New-TestOperation $State "resources-absent" {
       param($State)
       Assert-True (-not $State.OwnedVmPresent -and -not $State.OwnedDiskPresent) "owned resource observation preceded teardown"
@@ -189,8 +230,9 @@ try {
   foreach ($name in @(
       "IsElevated", "GetLocalSourceSha", "AssertPrerequisites", "DispatchWorkflow",
       "GenerateRepositoryJitConfiguration", "CreateOwnedVm", "TransferAndStartRunner", "ObserveRunner",
-      "ValidateAdmission", "WriteEvidence", "WaitForWorkflow", "ValidateReceipt", "TeardownOwnedResources",
-      "ObserveRunnerAbsent", "ObserveOwnedResourcesAbsent", "ValidateDestruction"
+      "ValidateAdmission", "WriteEvidence", "WaitForWorkflow", "ValidateReceipt", "RequestWorkflowCancellation",
+      "WaitForWorkflowTerminal", "TeardownOwnedVm", "TeardownOwnedRunner", "ObserveRunnerAbsent",
+      "ObserveOwnedResourcesAbsent", "ValidateDestruction"
     )) {
     $noLiveOperations[$name] = { throw "validation mode invoked a live boundary" }
   }
@@ -240,9 +282,11 @@ try {
     $state.WorkflowMode = $workflowMode
     $caseInput = New-TestInput (New-TestOperations $state)
     $workflowError = Assert-Throws { Invoke-PreliminaryWslJitHostController @caseInput } "$workflowMode incorrectly returned PASS"
-    Assert-True ($state.Calls.Contains("teardown")) "$workflowMode skipped teardown: $($state.Calls -join ','); error=$($workflowError.Message)"
+    Assert-True ($state.Calls.Contains("teardown-vm") -and $state.Calls.Contains("teardown-runner")) "$workflowMode skipped teardown: $($state.Calls -join ','); error=$($workflowError.Message)"
+    Assert-True ($state.Calls.IndexOf("teardown-vm") -lt $state.Calls.IndexOf("teardown-runner")) "$workflowMode reversed VM-before-runner teardown"
     Assert-True ($state.Calls.Contains("runner-absent") -and $state.Calls.Contains("resources-absent")) "$workflowMode skipped absence proof"
     Assert-True ($state.Evidence.Contains("destruction")) "$workflowMode omitted validated destruction evidence"
+    Assert-True (($workflowMode -ceq "timeout") -eq $state.Calls.Contains("cancel-workflow")) "$workflowMode cancellation decision drifted"
   }
 
   $deregistrationFailure = New-TestState
@@ -257,16 +301,221 @@ try {
   [void](Assert-Throws { Invoke-PreliminaryWslJitHostController @vmInput } "VM destruction failure returned PASS")
   Assert-True (-not $vmFailure.Evidence.Contains("destruction")) "destruction was emitted without VM/disk/network absence"
 
+  $correctionFailures = [Collections.Generic.List[string]]::new()
+  $runnerLabels = @("self-hosted", "windows", "x64", "wsl2", "bharatcode-acceptance-29730000001-2")
+  $runnerContext = [pscustomobject]@{
+    Repository = "BharatCode-ai/bharatcode-desktop"
+    RunId = "29730000001"
+    RunAttempt = "2"
+    RunnerId = $null
+    RunnerName = "bharatcode-jit-29730000001-2-0123456789abcdef0123456789abcdef"
+    RequiredLabels = $runnerLabels
+  }
+  $ownedDisk = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "owned-correction-test.vhdx"))
+  $ownedVm = [pscustomobject]@{
+    VmCreationAttempted = $true
+    VmId = $null
+    VmName = "bharatcode-preliminary-jit-0123456789abcdef0123456789abcdef"
+    DiskPath = $ownedDisk
+  }
+  $ownedVmRecord = [pscustomobject]@{ Id = [Guid]::NewGuid(); Name = $ownedVm.VmName; State = "Off" }
+
+  Invoke-CorrectionCase "runner response lost after side effect" {
+    $state = New-TestState
+    $operations = New-TestOperations $state
+    $operations.GenerateRepositoryJitConfiguration = New-TestOperation $state "jit-config" {
+      param($State, $Context)
+      $State.Endpoint = [string]$Context.RunnerName
+      $State.OwnedRunnerPresent = $true
+      throw "simulated lost JIT response after runner creation"
+    }
+    $caseInput = New-TestInput $operations
+    [void](Assert-Throws { Invoke-PreliminaryWslJitHostController @caseInput } "lost JIT response returned PASS")
+    Assert-True (-not [string]::IsNullOrWhiteSpace([string]$state.Endpoint)) "runner name was not established before JIT request; calls=$($state.Calls -join ',')"
+    Assert-True (-not $state.OwnedRunnerPresent -and $state.Calls.Contains("teardown-runner")) "lost-response runner was not cleaned by its pre-established identity"
+  } $correctionFailures
+
+  Invoke-CorrectionCase "malformed JIT response retains cleanup identity" {
+    $state = New-TestState
+    $operations = New-TestOperations $state
+    $operations.GenerateRepositoryJitConfiguration = New-TestOperation $state "jit-config" {
+      param($State, $Context)
+      $State.Endpoint = [string]$Context.RunnerName
+      $State.OwnedRunnerPresent = $true
+      [pscustomobject]@{ Endpoint = $Context.JitEndpoint; RunnerName = $Context.RunnerName; EncodedJitConfiguration = "" }
+    }
+    $caseInput = New-TestInput $operations
+    [void](Assert-Throws { Invoke-PreliminaryWslJitHostController @caseInput } "malformed JIT response returned PASS")
+    Assert-True (-not [string]::IsNullOrWhiteSpace([string]$state.Endpoint)) "runner name was not established before malformed JIT response; calls=$($state.Calls -join ',')"
+    Assert-True (-not $state.OwnedRunnerPresent -and $state.Calls.Contains("teardown-runner")) "malformed-response runner was not cleaned by its pre-established identity"
+  } $correctionFailures
+
+  Invoke-CorrectionCase "paginated exact-name runner fallback" {
+    $foreign = 1..100 | ForEach-Object { [pscustomobject]@{ id = 1000 + $_; name = "foreign-$_"; labels = @() } }
+    $owned = [pscustomobject]@{ id = 9812345; name = $runnerContext.RunnerName; labels = @($runnerLabels | ForEach-Object { [pscustomobject]@{ name = $_ } }) }
+    $found = Find-PreliminaryRepositoryRunner $runnerContext {
+      param($Context, $Page)
+      if ($Page -eq 1) { return [pscustomobject]@{ runners = $foreign } }
+      return [pscustomobject]@{ runners = @($owned) }
+    }
+    Assert-True ([string]$found.id -ceq "9812345") "paginated exact-name runner was not resolved"
+  } $correctionFailures
+
+  Invoke-CorrectionCase "exact runner ID remains preferred" {
+    $idContext = $runnerContext.PSObject.Copy()
+    $idContext.RunnerId = "9812345"
+    $sameNameForeignId = [pscustomobject]@{ id = 17; name = $runnerContext.RunnerName; labels = @($runnerLabels | ForEach-Object { [pscustomobject]@{ name = $_ } }) }
+    $exactId = [pscustomobject]@{ id = 9812345; name = $runnerContext.RunnerName; labels = @($runnerLabels | ForEach-Object { [pscustomobject]@{ name = $_ } }) }
+    $found = Find-PreliminaryRepositoryRunner $idContext { [pscustomobject]@{ runners = @($sameNameForeignId, $exactId) } }
+    Assert-True ([string]$found.id -ceq "9812345") "exact runner ID was not preferred"
+  } $correctionFailures
+
+  foreach ($runnerCase in @(
+      @{ Name = "foreign runner match"; Runners = @([pscustomobject]@{ id = 9; name = $runnerContext.RunnerName; labels = @([pscustomobject]@{ name = "self-hosted" }, [pscustomobject]@{ name = "windows" }, [pscustomobject]@{ name = "x64" }, [pscustomobject]@{ name = "wsl2" }, [pscustomobject]@{ name = "bharatcode-acceptance-9-1" }) }); Error = "label" },
+      @{ Name = "duplicate runner match"; Runners = @([pscustomobject]@{ id = 9; name = $runnerContext.RunnerName; labels = @($runnerLabels | ForEach-Object { [pscustomobject]@{ name = $_ } }) }, [pscustomobject]@{ id = 10; name = $runnerContext.RunnerName; labels = @($runnerLabels | ForEach-Object { [pscustomobject]@{ name = $_ } }) }); Error = "unique" },
+      @{ Name = "label-drifted runner match"; Runners = @([pscustomobject]@{ id = 9; name = $runnerContext.RunnerName; labels = @($runnerLabels[0..3] | ForEach-Object { [pscustomobject]@{ name = $_ } }) }); Error = "label" }
+    )) {
+    Invoke-CorrectionCase $runnerCase.Name {
+      $case = $runnerCase
+      $error = Assert-Throws { Find-PreliminaryRepositoryRunner $runnerContext { [pscustomobject]@{ runners = $case.Runners } } } "uncertain runner match was accepted"
+      Assert-True ($error.Message.Contains($case.Error)) "uncertain runner failed for the wrong reason: $($error.Message)"
+    } $correctionFailures
+  }
+
+  Invoke-CorrectionCase "name-resolved VM with owned disk" {
+    $resolved = Resolve-PreliminaryOwnedVm $ownedVm { @() } { @($ownedVmRecord) } { @($ownedDisk) }
+    Assert-True ([string]$resolved.Id -ceq [string]$ownedVmRecord.Id) "owned name-resolved VM was not recovered"
+  } $correctionFailures
+
+  Invoke-CorrectionCase "New-VM side effect is cleaned after throw" {
+    $state = New-TestState
+    $operations = New-TestOperations $state
+    $operations.CreateOwnedVm = New-TestOperation $state "create-vm" {
+      param($State, $Context, $Owned)
+      $Owned.AuthorityEstablished = $true
+      $Owned.VmCreationAttempted = $true
+      $State.OwnedVmPresent = $true
+      $State.OwnedDiskPresent = $true
+      throw "simulated New-VM post-creation failure"
+    }
+    $caseInput = New-TestInput $operations
+    [void](Assert-Throws { Invoke-PreliminaryWslJitHostController @caseInput } "post-creation New-VM failure returned PASS")
+    Assert-True (-not $state.OwnedVmPresent -and -not $state.OwnedDiskPresent) "partial VM was not cleaned after New-VM threw; calls=$($state.Calls -join ',')"
+    Assert-True ($state.Calls.IndexOf("teardown-vm") -lt $state.Calls.IndexOf("teardown-runner")) "partial VM cleanup did not precede runner cleanup"
+  } $correctionFailures
+
+  foreach ($vmCase in @(
+      @{ Name = "missing VM fallback"; ByName = @(); Paths = @($ownedDisk); Error = "missing" },
+      @{ Name = "duplicate VM fallback"; ByName = @($ownedVmRecord, $ownedVmRecord); Paths = @($ownedDisk); Error = "unique" },
+      @{ Name = "foreign VM fallback"; ByName = @([pscustomobject]@{ Id = [Guid]::NewGuid(); Name = "foreign-vm"; State = "Off" }); Paths = @($ownedDisk); Error = "identity" },
+      @{ Name = "disk-mismatched VM fallback"; ByName = @($ownedVmRecord); Paths = @([IO.Path]::GetFullPath((Join-Path $PSScriptRoot "foreign.vhdx"))); Error = "disk" }
+    )) {
+    Invoke-CorrectionCase $vmCase.Name {
+      $case = $vmCase
+      $error = Assert-Throws { Resolve-PreliminaryOwnedVm $ownedVm { @() } { $case.ByName } { $case.Paths } } "uncertain VM fallback was accepted"
+      Assert-True ($error.Message.Contains($case.Error)) "uncertain VM failed for the wrong reason: $($error.Message)"
+    } $correctionFailures
+  }
+
+  $failureOperations = @{
+    "jit-config" = "GenerateRepositoryJitConfiguration"
+    "create-vm" = "CreateOwnedVm"
+    "start-runner" = "TransferAndStartRunner"
+    "validate-admission" = "ValidateAdmission"
+  }
+  foreach ($failureStage in @("jit-config", "create-vm", "start-runner", "validate-admission", "wait-workflow")) {
+    Invoke-CorrectionCase "workflow cancellation after $failureStage failure" {
+      $state = New-TestState
+      if ($failureStage -ceq "wait-workflow") { $state.WorkflowMode = "timeout" }
+      $operations = New-TestOperations $state
+      if ($failureStage -cne "wait-workflow") {
+        $operations[$failureOperations[$failureStage]] = New-TestOperation $state $failureStage { throw "simulated post-dispatch failure" }
+      }
+      $caseInput = New-TestInput $operations
+      [void](Assert-Throws { Invoke-PreliminaryWslJitHostController @caseInput } "post-dispatch failure returned PASS")
+      Assert-True ($state.Calls.Contains("cancel-workflow")) "abandoned exact workflow run was not cancelled; calls=$($state.Calls -join ',')"
+      Assert-True ($state.Calls.Contains("wait-terminal")) "cancelled exact workflow run did not reach a terminal state"
+      Assert-True ($state.Calls.IndexOf("teardown-vm") -lt $state.Calls.IndexOf("teardown-runner")) "VM-before-runner teardown order drifted"
+    } $correctionFailures
+  }
+
+  Invoke-CorrectionCase "workflow cancellation after immutable dispatch ID follow-up failure" {
+    $state = New-TestState
+    $operations = New-TestOperations $state
+    $operations.DispatchWorkflow = New-TestOperation $state "dispatch" {
+      param($State, $Context)
+      $Context.RunId = "29730000001"
+      $Context.WorkflowDispatched = $true
+      throw "simulated post-dispatch identity lookup failure"
+    }
+    $caseInput = New-TestInput $operations
+    $error = Assert-Throws { Invoke-PreliminaryWslJitHostController @caseInput } "partial dispatch failure returned PASS"
+    Assert-True ($state.Calls.Contains("cancel-workflow") -and $state.Calls.Contains("wait-terminal")) "immutable partial dispatch was abandoned"
+    Assert-True (-not $error.ToString().Contains("Completed workflow identity drift")) "partial dispatch could not independently resolve its run attempt"
+  } $correctionFailures
+
+  Invoke-CorrectionCase "successful workflow is never cancelled" {
+    $state = New-TestState
+    $caseInput = New-TestInput (New-TestOperations $state)
+    [void](Invoke-PreliminaryWslJitHostController @caseInput)
+    Assert-True (-not $state.Calls.Contains("cancel-workflow")) "successful workflow was cancelled"
+  } $correctionFailures
+
+  foreach ($completedFailure in @("receipt-retrieval", "receipt-validation")) {
+    Invoke-CorrectionCase "completed successful workflow is not cancelled after $completedFailure failure" {
+      $state = New-TestState
+      $operations = New-TestOperations $state
+      if ($completedFailure -ceq "receipt-retrieval") {
+        $operations.WaitForWorkflow = New-TestOperation $state "wait-workflow" {
+          param($State, $Context)
+          $Context.WorkflowCompleted = $true
+          throw "simulated post-completion receipt retrieval failure"
+        }
+      } else {
+        $operations.ValidateReceipt = New-TestOperation $state "validate-receipt" { throw "simulated receipt validation failure" }
+      }
+      $caseInput = New-TestInput $operations
+      [void](Assert-Throws { Invoke-PreliminaryWslJitHostController @caseInput } "post-completion receipt failure returned PASS")
+      Assert-True (-not $state.Calls.Contains("cancel-workflow")) "completed successful workflow was cancelled after $completedFailure failure"
+    } $correctionFailures
+  }
+
+  Invoke-CorrectionCase "independent cancellation VM and runner cleanup aggregation" {
+    $state = New-TestState
+    $state.WorkflowMode = "timeout"
+    $state.CancellationFailure = $true
+    $state.VmTeardownFailure = $true
+    $state.RunnerTeardownFailure = $true
+    $caseInput = New-TestInput (New-TestOperations $state)
+    $error = Assert-Throws { Invoke-PreliminaryWslJitHostController @caseInput } "independent cleanup failures returned PASS"
+    $messages = if ($error -is [AggregateException]) { @($error.Flatten().InnerExceptions | ForEach-Object { $_.Message }) -join "`n" } else { $error.Message }
+    foreach ($expected in @("simulated cancellation failure", "simulated VM teardown failure", "simulated runner teardown failure")) {
+      Assert-True ($messages.Contains($expected)) "cleanup aggregation omitted: $expected; messages=$messages; calls=$($state.Calls -join ',')"
+    }
+    Assert-True ($state.Calls.Contains("teardown-vm") -and $state.Calls.Contains("teardown-runner")) "cancellation failure suppressed VM or runner teardown"
+    Assert-True ($state.Calls.IndexOf("teardown-vm") -lt $state.Calls.IndexOf("teardown-runner")) "cleanup failure reversed VM-before-runner order"
+    Assert-True ($state.Calls.Contains("wait-terminal")) "cancellation request failure suppressed bounded terminal observation"
+  } $correctionFailures
+
+  if ($correctionFailures.Count -gt 0) {
+    throw [AggregateException]::new("Preliminary JIT correction regressions failed", [Exception[]]@($correctionFailures | ForEach-Object { [Exception]::new($_) }))
+  }
+
   $source = [IO.File]::ReadAllText($controllerPath)
   Assert-True (-not $source.Contains("/orgs/")) "organization runner authority was introduced"
   Assert-True (-not $source.Contains("registration-token")) "persistent registration fallback was introduced"
   Assert-True (-not $source.Contains("-ExecutionPolicy")) "execution policy override was introduced"
+  Assert-True (-not $source.Contains("force-cancel")) "force-cancel fallback was introduced"
+  Assert-True ($source.Contains("[Security.Cryptography.RandomNumberGenerator]::GetBytes(16)")) "runner and VM identities are not cryptographically random"
   Assert-True ($source.Contains("function Find-PreliminaryRepositoryRunner") -and $source.Contains('per_page=100&page=$page')) "runner absence is limited to one API page"
   $createVmSource = $source.Substring($source.IndexOf('    CreateOwnedVm = {'), $source.IndexOf('    TransferAndStartRunner = {') - $source.IndexOf('    CreateOwnedVm = {'))
+  Assert-True ($createVmSource.IndexOf('$Owned.VmCreationAttempted = $true') -lt $createVmSource.IndexOf('New-VM')) "New-VM can run before its name fallback is armed"
   Assert-True ($createVmSource.IndexOf('$Owned.VmId =') -lt $createVmSource.IndexOf('Set-VMProcessor')) "partial VM creation can lose teardown identity"
-  $teardownSource = $source.Substring($source.IndexOf('    TeardownOwnedResources = {'), $source.IndexOf('    ObserveRunnerAbsent = {') - $source.IndexOf('    TeardownOwnedResources = {'))
-  Assert-True ($teardownSource.IndexOf('Remove-VM') -lt $teardownSource.IndexOf('actions/runners/$($Context.RunnerId)')) "runner deletion precedes owned VM destruction"
-  Assert-True ($teardownSource.Contains('$teardownErrors') -and $teardownSource.Contains('Preliminary JIT teardown failures')) "VM failure can suppress exact runner teardown"
+  $finallySource = $source.Substring($source.IndexOf('  finally {'), $source.IndexOf('  if ($primary -or $cleanupErrors.Count') - $source.IndexOf('  finally {'))
+  Assert-True ($finallySource.IndexOf('$Operations["TeardownOwnedVm"]') -lt $finallySource.IndexOf('$Operations["TeardownOwnedRunner"]')) "runner deletion precedes owned VM destruction"
+  Assert-True ($finallySource.Contains('$Operations["RequestWorkflowCancellation"]') -and $finallySource.Contains('$Operations["WaitForWorkflowTerminal"]')) "abandoned exact-run cancellation is not bounded"
+  $dispatchSource = $source.Substring($source.IndexOf('    DispatchWorkflow = {'), $source.IndexOf('    GenerateRepositoryJitConfiguration = {') - $source.IndexOf('    DispatchWorkflow = {'))
+  Assert-True ($dispatchSource.Contains('$Context.RunId =') -and $dispatchSource.IndexOf('$Context.RunId =') -lt $dispatchSource.IndexOf('$run =')) "immutable dispatch ID is not armed for cancellation before follow-up lookup"
   Write-Output "preliminary_wsl_jit_host_controller_tests=passed"
 }
 finally {
