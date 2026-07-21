@@ -207,6 +207,7 @@ $env:BHARATCODE_PRELIMINARY_CONTROLLER_TEST = "1"
 $root = Join-Path ([IO.Path]::GetTempPath()) "bcp-$([Guid]::NewGuid().ToString('N'))"
 [IO.Directory]::CreateDirectory($root) | Out-Null
 $controllerTestFailure = $null
+$linkExternalRoot = $null
 
 try {
   $nonce = "ab" * 32
@@ -589,13 +590,15 @@ try {
   Assert-PreliminaryNamespacePrefixAbsent -RunnerTemp $root -RunId "720005" -RunAttempt "1"
   Assert-True (-not (Test-PreliminaryEntryNoFollow -Path $jobLeaseRoot)) "stage lease root survived cleanup"
 
-  $links = New-PreliminaryControllerLease -RunnerTemp $root -RunId "720006" -RunAttempt "1"
-  $externalDirectory = Join-Path $root "external-directory"
-  $externalFile = Join-Path $root "external-file.txt"
-  $uninstallerSignal = Join-Path $root "uninstaller-executed.txt"
+  $linkExternalRoot = Join-Path ([IO.Path]::GetTempPath()) "bcp-link-external-$([Guid]::NewGuid().ToString('N'))"
+  $externalDirectory = Join-Path $linkExternalRoot "external-directory"
+  $externalFile = Join-Path $linkExternalRoot "external-file.txt"
+  $uninstallerSignal = Join-Path $linkExternalRoot "uninstaller-executed.txt"
+  [IO.Directory]::CreateDirectory($linkExternalRoot) | Out-Null
   [IO.Directory]::CreateDirectory($externalDirectory) | Out-Null
   [IO.File]::WriteAllText((Join-Path $externalDirectory "survive.txt"), "survive")
   [IO.File]::WriteAllText($externalFile, "survive")
+  $links = New-PreliminaryControllerLease -RunnerTemp $root -RunId "720006" -RunAttempt "1"
   New-Item -ItemType Junction -Path (Join-Path $links.RootPath "junction") -Target $externalDirectory | Out-Null
   $danglingTarget = Join-Path $root "dangling-target"
   $danglingJunction = Join-Path $links.RootPath "dangling-junction"
@@ -615,8 +618,8 @@ try {
   Assert-True ([IO.File]::ReadAllText($externalFile) -eq "survive") "link target was changed"
   Assert-True (-not [IO.File]::Exists($uninstallerSignal)) "malicious uninstaller was executed"
   Assert-PreliminaryNamespacePrefixAbsent -RunnerTemp $root -RunId "720006" -RunAttempt "1"
-  Remove-TestTree $externalDirectory
-  Remove-TestTree $externalFile
+  Remove-TestTree $linkExternalRoot
+  $linkExternalRoot = $null
 
   $productionFixtureRoot = Join-Path $root "production-controller-fixture"
   [IO.Directory]::CreateDirectory($productionFixtureRoot) | Out-Null
@@ -886,13 +889,21 @@ catch {
   Write-Output "preliminary_controller_failure_stack=$($_.ScriptStackTrace -replace '[\r\n]+', ' | ')"
 }
 finally {
-  $outerCleanupFailure = $null
-  try { Remove-TestTree $root }
-  catch { $outerCleanupFailure = $_.Exception }
-  Remove-Item Env:BHARATCODE_PRELIMINARY_CONTROLLER_TEST -ErrorAction SilentlyContinue
-  if ($controllerTestFailure -and $outerCleanupFailure) {
-    throw [AggregateException]::new("Preliminary controller tests and outer cleanup failed", @($controllerTestFailure, $outerCleanupFailure))
+  $outerCleanupFailures = [Collections.Generic.List[Exception]]::new()
+  if ($linkExternalRoot) {
+    try { Remove-TestTree $linkExternalRoot }
+    catch { [void]$outerCleanupFailures.Add($_.Exception) }
   }
-  if ($outerCleanupFailure) { throw $outerCleanupFailure }
+  try { Remove-TestTree $root }
+  catch { [void]$outerCleanupFailures.Add($_.Exception) }
+  Remove-Item Env:BHARATCODE_PRELIMINARY_CONTROLLER_TEST -ErrorAction SilentlyContinue
+  if ($controllerTestFailure -and $outerCleanupFailures.Count -ne 0) {
+    $allFailures = [Collections.Generic.List[Exception]]::new()
+    [void]$allFailures.Add($controllerTestFailure)
+    [void]$allFailures.AddRange($outerCleanupFailures)
+    throw [AggregateException]::new("Preliminary controller tests and outer cleanup failed", [Exception[]]$allFailures.ToArray())
+  }
+  if ($outerCleanupFailures.Count -eq 1) { throw $outerCleanupFailures[0] }
+  if ($outerCleanupFailures.Count -gt 1) { throw [AggregateException]::new("Preliminary outer cleanup failed", [Exception[]]$outerCleanupFailures.ToArray()) }
 }
 if ($controllerTestFailure) { throw $controllerTestFailure }

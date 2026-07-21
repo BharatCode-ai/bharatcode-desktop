@@ -376,6 +376,10 @@ async function controllerC2Violations(value: string) {
     tests.includes("real NSIS fixture escaped the lease root")
       ? []
       : ["exact final unquoted NSIS /D with real fixture"]),
+    ...(tests.includes('$linkExternalRoot = Join-Path ([IO.Path]::GetTempPath()) "bcp-link-external-') &&
+    !tests.includes('$externalFile = Join-Path $root "external-file.txt"')
+      ? []
+      : ["foreign hardlink target outside retained lease parent"]),
     ...(helper.includes("PinExternal") &&
     helper.includes("PinOwned") &&
     helper.includes('$pinnedFiles.PinExternal("installer", $installerPath)') &&
