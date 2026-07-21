@@ -449,10 +449,10 @@ function Resolve-PreliminaryOwnedVm {
 }
 
 function Invoke-PreliminaryLifecycleAdapter {
-  param([object] $Context, [ValidateSet("admission", "destruction", "receipt")] [string] $Operation, [object] $Input)
+  param([object] $Context, [ValidateSet("admission", "destruction", "receipt")] [string] $Operation, [object] $Payload)
   $bun = (Get-Command bun -CommandType Application).Source
   $adapter = Join-Path $PSScriptRoot "../../opencode/script/preliminary-jit-evidence-cli.mjs"
-  try { return Invoke-PreliminaryProcess $Context $bun @($adapter, $Operation) ($Input | ConvertTo-Json -Depth 30 -Compress) }
+  try { return Invoke-PreliminaryProcess $Context $bun @($adapter, $Operation) ($Payload | ConvertTo-Json -Depth 30 -Compress) }
   catch { throw [InvalidOperationException]::new("Preliminary lifecycle adapter $Operation failed", $_.Exception) }
 }
 

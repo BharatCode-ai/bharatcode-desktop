@@ -546,6 +546,58 @@ try {
     Assert-True (-not $error.ToString().Contains($secretSentinel)) "lifecycle failure exposed its payload"
   } $correctionFailures
 
+  Invoke-CorrectionCase "lifecycle adapter receives the supplied admission payload" {
+    $context = [pscustomobject]@{ DeadlineUtc = [DateTime]::UtcNow.AddSeconds(30) }
+    $bindings = [ordered]@{
+      source_sha = "1" * 40
+      run_id = "29847118341"
+      run_attempt = "1"
+      required_labels = @("self-hosted", "windows", "x64", "wsl2", "bharatcode-acceptance-29847118341-1")
+      provider = "bharatcode-jit-controller"
+      controller_identity = "controller/preliminary-wsl-jit-v1"
+      admission_observation_id = "admission-29847118341-1-test"
+      runner_id = "9812345"
+      runner_name_sha256 = "2" * 64
+      vm_instance_id_sha256 = "3" * 64
+      vm_image_sha256 = "4" * 64
+      admission_observed_at = "2026-07-20T10:00:02.000Z"
+    }
+    $record = [ordered]@{
+      schema = "bharatcode-preliminary-jit-admission-v1"
+      evidence_class = "PRELIMINARY_UNSIGNED"
+      promotable = $false
+      composable = $false
+      repository = "BharatCode-ai/bharatcode-desktop"
+      workflow = ".github/workflows/bharatcode-preliminary-unsigned-wsl.yml"
+      source_sha = $bindings.source_sha
+      github = [ordered]@{ run_id = $bindings.run_id; run_attempt = $bindings.run_attempt }
+      provenance = [ordered]@{
+        authority = "INDEPENDENT_HOST_CONTROL_PLANE"
+        guest_originated = $false
+        provider = $bindings.provider
+        controller_identity = $bindings.controller_identity
+        observation_id = $bindings.admission_observation_id
+        observed_at = $bindings.admission_observed_at
+      }
+      runner = [ordered]@{
+        runner_id = $bindings.runner_id
+        runner_name_sha256 = $bindings.runner_name_sha256
+        scope = "repository"
+        labels = @($bindings.required_labels)
+        jit = $true
+        ephemeral = $true
+        one_run = $true
+        no_other_workload = $true
+        registered_at = "2026-07-20T10:00:00.000Z"
+      }
+      vm = [ordered]@{ instance_id_sha256 = $bindings.vm_instance_id_sha256; image_sha256 = $bindings.vm_image_sha256; dedicated = $true }
+      admitted_at = $bindings.admission_observed_at
+      expires_at = "2026-07-20T10:30:00.000Z"
+    }
+    $canonical = Invoke-PreliminaryLifecycleAdapter $context "admission" ([ordered]@{ record = $record; bindings = $bindings })
+    Assert-True ($canonical.Contains('"schema":"bharatcode-preliminary-jit-admission-v1"')) "valid admission payload did not reach the lifecycle adapter"
+  } $correctionFailures
+
   Invoke-CorrectionCase "New-VM side effect is cleaned after throw" {
     $state = New-TestState
     $operations = New-TestOperations $state
