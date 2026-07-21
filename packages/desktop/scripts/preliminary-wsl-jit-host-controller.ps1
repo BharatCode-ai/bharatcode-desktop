@@ -496,7 +496,9 @@ function New-PreliminaryWslJitLiveOperations {
     }
     TransferAndStartRunner = {
       param($Context, $Owned, $Secret)
-      [void](Start-VM -Id ([Guid]$Owned.VmId))
+      $vm = Resolve-PreliminaryOwnedVm $Owned
+      if (-not $vm) { throw "Owned VM is unavailable before start" }
+      [void](Start-VM -VM $vm)
       $deadline = [DateTime]::UtcNow.AddSeconds([Math]::Min(300, $Context.TimeoutSeconds))
       $session = $null
       while (-not $session -and [DateTime]::UtcNow -lt $deadline) {

@@ -387,6 +387,68 @@ try {
     Assert-True ([string]$resolved.Id -ceq [string]$ownedVmRecord.Id) "owned name-resolved VM was not recovered"
   } $correctionFailures
 
+  Invoke-CorrectionCase "live VM start uses the exact resolved owned VM" {
+    $vmId = [Guid]::NewGuid()
+    $vmName = "bharatcode-preliminary-jit-start-binding-test"
+    $diskPath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "owned-start-binding-test.vhdx"))
+    $vm = [pscustomobject]@{ Id = $vmId; Name = $vmName; State = "Off" }
+    $owned = [pscustomobject]@{
+      VmCreationAttempted = $true
+      VmId = [string]$vmId
+      VmName = $vmName
+      DiskPath = $diskPath
+    }
+    $context = [pscustomobject]@{ TimeoutSeconds = 1800; GuestCredential = [pscustomobject]@{ TestOnly = $true } }
+    $capture = [pscustomobject]@{ GetVmCalls = 0; GetDiskCalls = 0; StartVmCalls = 0; StartedVm = $null; PowerShellDirectCalls = 0 }
+    $sentinel = "test-only Start-VM -VM sentinel"
+    $operations = New-PreliminaryWslJitLiveOperations
+    $error = Assert-Throws {
+      & {
+        function Get-VM {
+          [CmdletBinding()]
+          param([Guid] $Id, [string] $Name)
+          $capture.GetVmCalls++
+          Assert-True ($Id -eq $vmId -and [string]::IsNullOrEmpty($Name)) "fixture received an inexact VM lookup"
+          return $vm
+        }
+        function Get-VMHardDiskDrive {
+          [CmdletBinding()]
+          param([Parameter(Mandatory)] [object] $VM)
+          $capture.GetDiskCalls++
+          Assert-True ([object]::ReferenceEquals($VM, $vm)) "fixture received a substituted VM for disk validation"
+          return [pscustomobject]@{ Path = $diskPath }
+        }
+        function Start-VM {
+          [CmdletBinding()]
+          param([Parameter(Mandatory)] [object] $VM)
+          $capture.StartVmCalls++
+          $capture.StartedVm = $VM
+          throw $sentinel
+        }
+        function New-PSSession {
+          $capture.PowerShellDirectCalls++
+          throw "fixture allowed PowerShell Direct"
+        }
+        & $operations.TransferAndStartRunner $context $owned "test-only-jit-secret"
+      }
+    } "live VM start unexpectedly reached PowerShell Direct"
+    Assert-True ($error.Message -ceq $sentinel) "live start path did not call supported Start-VM -VM: $($error.GetType().FullName): $($error.Message)"
+    Assert-True ($capture.GetVmCalls -eq 1 -and $capture.GetDiskCalls -eq 1) "live start path did not resolve and validate the exact owned VM"
+    Assert-True ($capture.StartVmCalls -eq 1 -and [object]::ReferenceEquals($capture.StartedVm, $vm)) "live start path did not pass the resolved VM object"
+    Assert-True ($capture.PowerShellDirectCalls -eq 0) "live start regression reached PowerShell Direct"
+  } $correctionFailures
+
+  Invoke-CorrectionCase "production VM start matches the installed host parameter contract" {
+    $startVm = Get-Command Start-VM -CommandType Cmdlet -ErrorAction Stop
+    Assert-True ($startVm.Parameters.ContainsKey("VM")) "installed Start-VM does not expose the required VM parameter"
+    Assert-True (-not $startVm.Parameters.ContainsKey("Id")) "installed Start-VM unexpectedly exposes an Id parameter"
+    $source = [IO.File]::ReadAllText($controllerPath)
+    $startSource = $source.Substring($source.IndexOf('    TransferAndStartRunner = {'), $source.IndexOf('    ObserveRunner = {') - $source.IndexOf('    TransferAndStartRunner = {'))
+    Assert-True (-not $startSource.Contains('Start-VM -Id')) "production still uses unsupported Start-VM -Id"
+    Assert-True ($startSource.Contains('$vm = Resolve-PreliminaryOwnedVm $Owned')) "VM start does not resolve the exact owned VM"
+    Assert-True ($startSource.IndexOf('$vm = Resolve-PreliminaryOwnedVm $Owned') -lt $startSource.IndexOf('Start-VM -VM $vm')) "VM start does not pass the resolved object to Start-VM -VM"
+  } $correctionFailures
+
   Invoke-CorrectionCase "New-VM side effect is cleaned after throw" {
     $state = New-TestState
     $operations = New-TestOperations $state
