@@ -152,8 +152,12 @@ jobs:
           INTEGRATED_HEAD: ${{ inputs.source_sha }}
         run: |
           bun install --frozen-lockfile --linker hoisted
-          $env:BHARATCODE_WSL_RUNTIME = (Resolve-Path preliminary-runtime/bharatcode-runtime-linux-x64-glibc)
-          $env:BHARATCODE_WSL_RUNTIME_MANIFEST = (Resolve-Path preliminary-runtime/manifest.json)
+          $runtime = (Resolve-Path preliminary-runtime/bharatcode-runtime-linux-x64-glibc).Path
+          $manifest = (Resolve-Path preliminary-runtime/manifest.json).Path
+          Set-ItemProperty -LiteralPath $runtime -Name IsReadOnly -Value $true
+          Set-ItemProperty -LiteralPath $manifest -Name IsReadOnly -Value $true
+          $env:BHARATCODE_WSL_RUNTIME = $runtime
+          $env:BHARATCODE_WSL_RUNTIME_MANIFEST = $manifest
           $env:BHARATCODE_WSL_RUNTIME_ARCH = "x64"
           bun run --cwd packages/desktop stage:wsl-runtime
 

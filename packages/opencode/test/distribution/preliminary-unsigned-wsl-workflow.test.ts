@@ -726,6 +726,19 @@ describe("preliminary unsigned Windows/WSL acceptance workflow", () => {
     }
   })
 
+  test("restores immutable runtime inputs after artifact transport", async () => {
+    const staging = step(
+      await source(),
+      "package-preliminary-unsigned-windows",
+      "Install exact dependencies and stage same-source runtime",
+    ).run
+    expect(staging).toContain("$runtime = (Resolve-Path preliminary-runtime/bharatcode-runtime-linux-x64-glibc).Path")
+    expect(staging).toContain("$manifest = (Resolve-Path preliminary-runtime/manifest.json).Path")
+    expect(staging).toContain("Set-ItemProperty -LiteralPath $runtime -Name IsReadOnly -Value $true")
+    expect(staging).toContain("Set-ItemProperty -LiteralPath $manifest -Name IsReadOnly -Value $true")
+    expect(staging!.indexOf("Set-ItemProperty")).toBeLessThan(staging!.indexOf("stage:wsl-runtime"))
+  })
+
   test("keeps one unguessable handle-bound namespace authority through evidence and runs executable Windows hostile tests", async () => {
     const value = await source()
     expect(await namespaceAuthorityViolations(value)).toEqual([])
