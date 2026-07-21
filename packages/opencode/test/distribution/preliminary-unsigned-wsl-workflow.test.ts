@@ -768,7 +768,8 @@ describe("preliminary unsigned Windows/WSL acceptance workflow", () => {
     )
     const namespaceTest = await Bun.file(namespaceTestPath).text()
     expect(namespaceTest).toContain("$env:ELECTRON_BUILDER_CACHE")
-    expect(namespaceTest).toContain("nsis-3\\.0\\.4\\.1[\\\\/]makensis\\.exe$")
+    expect(namespaceTest).toContain('$_.Directory.Parent.Name -ceq "nsis"')
+    expect(namespaceTest).toContain('$_.Directory.Name -ceq "nsis-3.0.4.1-nsis-3.0.4.1"')
   })
 
   test("keeps one unguessable handle-bound namespace authority through evidence and runs executable Windows hostile tests", async () => {
