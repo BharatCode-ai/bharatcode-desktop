@@ -118,8 +118,8 @@ using System.Threading;
 
 [assembly: AssemblyTitle("BharatCode Preliminary Controller Fixture")]
 [assembly: AssemblyProduct("BharatCode Preliminary Controller Fixture")]
-[assembly: AssemblyVersion("1.2.3.4")]
-[assembly: AssemblyFileVersion("1.2.3.4")]
+[assembly: AssemblyVersion("1.2.3.0")]
+[assembly: AssemblyFileVersion("1.2.3.0")]
 
 internal static class Program {
   private static int Main(string[] args) {
@@ -759,6 +759,27 @@ try {
     }
     finally { $env:BHARATCODE_PRELIMINARY_CONTROLLER_TEST = $savedTestAuthority }
     Assert-PreliminaryNamespacePrefixAbsent -RunnerTemp $root -RunId "720011" -RunAttempt "1"
+
+    $semanticVersionReceipt = Join-Path $root "receipt-semantic-version.json"
+    $env:BHARATCODE_PRELIMINARY_FIXTURE_MODE = "assert-pins"
+    $invoke.RunId = "720014"
+    $invoke.RunAttempt = "1"
+    $invoke.ExpectedVersion = "1.2.3"
+    $invoke.ReceiptPath = $semanticVersionReceipt
+    $invoke.TestHooks = @{ UseInstalledDesktopAsHarness = $true }
+    Invoke-PreliminaryController @invoke
+    Assert-True ([IO.File]::Exists($semanticVersionReceipt)) "zero revision semantic version was rejected"
+    Assert-PreliminaryNamespacePrefixAbsent -RunnerTemp $root -RunId "720014" -RunAttempt "1"
+    Remove-TestTree $semanticVersionReceipt
+
+    $revisionDriftReceipt = Join-Path $root "receipt-version-drift.json"
+    $invoke.RunId = "720015"
+    $invoke.ExpectedVersion = "1.2.3.1"
+    $invoke.ReceiptPath = $revisionDriftReceipt
+    Assert-Throws { Invoke-PreliminaryController @invoke } "nonzero installed version revision drift"
+    Assert-True (-not [IO.File]::Exists($revisionDriftReceipt)) "version drift published a receipt"
+    Assert-PreliminaryNamespacePrefixAbsent -RunnerTemp $root -RunId "720015" -RunAttempt "1"
+    $invoke.ExpectedVersion = $productionVersion
 
     $successReceipt = Join-Path $root "receipt-success.json"
     $env:BHARATCODE_PRELIMINARY_FIXTURE_MODE = "assert-pins"

@@ -1301,7 +1301,14 @@ function Invoke-PreliminaryController {
     $lease.PinOwnedRelative("installed", "BharatCode Beta.exe")
     $installedSignature = Get-AuthenticodeSignature $installed
     if ($installedSignature.Status -ne "NotSigned" -or $installedSignature.SignerCertificate -or $installedSignature.TimeStamperCertificate) { throw "Installed preliminary Desktop must remain unsigned" }
-    if ([version](Get-Item -LiteralPath $installed).VersionInfo.ProductVersion -ne [version]$ExpectedVersion) { throw "Installed preliminary Desktop version drift" }
+    $installedVersion = [version](Get-Item -LiteralPath $installed).VersionInfo.ProductVersion
+    $expectedVersionValue = [version]$ExpectedVersion
+    if (
+      $installedVersion.Major -ne $expectedVersionValue.Major -or
+      $installedVersion.Minor -ne $expectedVersionValue.Minor -or
+      $installedVersion.Build -ne $expectedVersionValue.Build -or
+      [Math]::Max(0, $installedVersion.Revision) -ne [Math]::Max(0, $expectedVersionValue.Revision)
+    ) { throw "Installed preliminary Desktop version drift" }
     Invoke-PreliminaryControllerBoundary -TestHooks $TestHooks -Boundary "after-installed-pin" -Lease $lease
     $scriptPath = $paths.EvidenceScript
     $candidatePath = $paths.ReceiptCandidate
