@@ -223,6 +223,7 @@ export async function spawnWslServer(
     arch: WslRuntimeArch
     channel: string
     hostEnv: Readonly<Record<string, string | undefined>>
+    healthCheck?: typeof checkHealth
     onSqliteProgress?: (progress: SqliteMigrationProgress) => void
     onStderr?: (message: string) => void
   },
@@ -255,7 +256,7 @@ export async function spawnWslServer(
     expectedVersion: options.version,
     expectedArch: options.arch,
     hostEnv: options.hostEnv,
-    healthCheck: checkHealth,
+    healthCheck: options.healthCheck ?? checkHealth,
     onSqliteProgress: options.onSqliteProgress,
     onStderr: options.onStderr,
   })

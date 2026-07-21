@@ -761,6 +761,36 @@ describe("preliminary unsigned Windows/WSL acceptance workflow", () => {
     expect(staging!.indexOf("Set-ItemProperty")).toBeLessThan(staging!.indexOf("stage:wsl-runtime"))
   })
 
+  test("initializes only the exact fresh disposable WSL recovery state", async () => {
+    const workflow = parse(await source())
+    const steps = workflow.jobs["accept-preliminary-unsigned-wsl"].steps ?? []
+    const initialize = step(
+      await source(),
+      "accept-preliminary-unsigned-wsl",
+      "Initialize exact disposable WSL recovery state",
+    )
+    const run = initialize.run ?? ""
+    expect(initialize.shell).toBe("pwsh")
+    expect(initialize.env).toEqual({ WSL_DISTRIBUTION: "${{ vars.BHARATCODE_WSL_DISTRIBUTION }}" })
+    expect(run).toContain("Get-FileHash -Algorithm SHA256")
+    expect(run).toContain("$manifest.source_sha -cne $env:SOURCE_SHA")
+    expect(run).toContain("/usr/bin/id -un")
+    expect(run).toContain("/usr/bin/getent passwd")
+    expect(run).toContain("/usr/bin/wslpath -a -u")
+    expect(run).toContain("recovery status --json")
+    expect(run).toContain('\'{"state":"start-fresh","reason":"no-source"}\'')
+    expect(run).toContain("recovery start-fresh --confirm --json")
+    expect(run).toContain('\'{"state":"ready"}\'')
+    expect(run).not.toMatch(/doctor repair|recovery retry|Remove-Item|--user root|sudo/)
+    const initializeIndex = steps.findIndex((item) => item.name === initialize.name)
+    expect(initializeIndex).toBeGreaterThan(
+      steps.findIndex((item) => item.name === "Download same-run unsigned TEST-only package inputs"),
+    )
+    expect(initializeIndex).toBeLessThan(
+      steps.findIndex((item) => item.name === "Run one handle-bound installed Desktop preliminary transaction"),
+    )
+  })
+
   test("uses the repository-supported Windows packaging toolchain", async () => {
     const workflow = parse(await source())
     expect(workflow.jobs["package-preliminary-unsigned-windows"]["runs-on"]).toBe("windows-2022")

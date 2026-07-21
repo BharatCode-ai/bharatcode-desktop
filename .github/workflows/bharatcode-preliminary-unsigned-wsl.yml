@@ -235,6 +235,49 @@ jobs:
           path: preliminary-input
           digest-mismatch: error
 
+      - name: Initialize exact disposable WSL recovery state
+        shell: pwsh
+        env:
+          WSL_DISTRIBUTION: ${{ vars.BHARATCODE_WSL_DISTRIBUTION }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $runtime = (Resolve-Path "preliminary-input/bharatcode-runtime-linux-x64-glibc").Path
+          $manifestPath = (Resolve-Path "preliminary-input/bharatcode-wsl-runtime-manifest.json").Path
+          $manifestText = [IO.File]::ReadAllText($manifestPath)
+          if (-not $manifestText.EndsWith("`n") -or $manifestText.Contains("`r")) { throw "Preliminary runtime manifest is not canonical" }
+          $manifest = $manifestText | ConvertFrom-Json
+          $keys = @($manifest.PSObject.Properties.Name | Sort-Object)
+          $expectedKeys = @("arch", "bytes", "filename", "schema", "sha256", "source_sha", "version") | Sort-Object
+          if (($keys -join "`n") -cne ($expectedKeys -join "`n")) { throw "Preliminary runtime manifest is not closed" }
+          if ($manifest.schema -ne 1 -or $manifest.arch -cne "x64" -or $manifest.filename -cne "bharatcode-runtime-linux-x64-glibc" -or $manifest.source_sha -cne $env:SOURCE_SHA) { throw "Preliminary runtime manifest identity is invalid" }
+          if ((Get-FileHash -Algorithm SHA256 -LiteralPath $runtime).Hash.ToLowerInvariant() -cne [string]$manifest.sha256) { throw "Preliminary runtime digest mismatch" }
+          $distribution = $env:WSL_DISTRIBUTION
+          if ($distribution -cnotmatch '^[A-Za-z0-9._-]{1,128}$') { throw "Preliminary WSL distribution identity is invalid" }
+          $userOutput = & wsl.exe --distribution $distribution --exec /usr/bin/id -un
+          if ($LASTEXITCODE -ne 0) { throw "Preliminary WSL user query failed" }
+          $user = ($userOutput | Out-String).Trim()
+          if ($user -cnotmatch '^[a-z_][a-z0-9_-]{0,31}$') { throw "Preliminary WSL user identity is invalid" }
+          $passwdOutput = & wsl.exe --distribution $distribution --exec /usr/bin/getent passwd $user
+          if ($LASTEXITCODE -ne 0) { throw "Preliminary WSL passwd query failed" }
+          $passwd = ($passwdOutput | Out-String).Trim().Split(":")
+          if ($passwd.Count -ne 7 -or $passwd[0] -cne $user -or $passwd[2] -cne "1000" -or $passwd[5] -cnotmatch '^/[A-Za-z0-9._/-]+$') { throw "Preliminary WSL non-root identity is invalid" }
+          $guestHome = $passwd[5]
+          $runtimePathOutput = & wsl.exe --distribution $distribution --exec /usr/bin/wslpath -a -u $runtime
+          if ($LASTEXITCODE -ne 0) { throw "Preliminary runtime path translation failed" }
+          $linuxRuntime = ($runtimePathOutput | Out-String).Trim()
+          if ($linuxRuntime -cnotmatch '^/[A-Za-z0-9._/ -]+$') { throw "Preliminary Linux runtime path is invalid" }
+          $runtimeEnvironment = @(
+            "--distribution", $distribution, "--user", $user, "--cd", $guestHome, "--exec", "/usr/bin/env", "-i",
+            "HOME=$guestHome", "USER=$user", "LOGNAME=$user",
+            "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "BHARATCODE_CHANNEL=beta", "TMPDIR=/tmp"
+          )
+          $statusOutput = & wsl.exe @runtimeEnvironment $linuxRuntime recovery status --json
+          if ($LASTEXITCODE -ne 0) { throw "Preliminary recovery status failed" }
+          if (($statusOutput | Out-String).Trim() -cne '{"state":"start-fresh","reason":"no-source"}') { throw "Preliminary recovery state is not an exact fresh guest" }
+          $resultOutput = & wsl.exe @runtimeEnvironment $linuxRuntime recovery start-fresh --confirm --json
+          if ($LASTEXITCODE -ne 0) { throw "Preliminary recovery initialization failed" }
+          if (($resultOutput | Out-String).Trim() -cne '{"state":"ready"}') { throw "Preliminary recovery initialization did not reach ready" }
+
       - name: Run one handle-bound installed Desktop preliminary transaction
         shell: pwsh
         env:

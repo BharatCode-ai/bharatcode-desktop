@@ -139,6 +139,21 @@ export interface WslAcceptanceDependencies {
   readFile: (path: string) => Promise<Uint8Array>
 }
 
+export async function waitForAcceptanceHealth(
+  check: (url: string, username?: string | null, password?: string | null) => Promise<boolean>,
+  url: string,
+  username?: string | null,
+  password?: string | null,
+  delay: (milliseconds: number) => Promise<unknown> = (milliseconds) =>
+    new Promise((resolve) => setTimeout(resolve, milliseconds)),
+) {
+  for (const milliseconds of password ? [0, 25, 50, 100, 250, 500, 1_000] : [0]) {
+    if (milliseconds > 0) await delay(milliseconds)
+    if (await check(url, username, password)) return true
+  }
+  return false
+}
+
 export async function runPackagedWslAcceptance(
   input: WslAcceptanceInput,
   dependencies?: WslAcceptanceDependencies,
@@ -425,6 +440,8 @@ async function createProductionDependencies(input: WslAcceptanceInput): Promise<
             arch: process.arch as "x64" | "arm64",
             channel: CHANNEL,
             hostEnv: process.env,
+            healthCheck: (url, username, password) =>
+              waitForAcceptanceHealth(server.checkHealth, url, username, password),
           })
           const nextGeneration = ++generation
           const effect: RuntimeEffect = {

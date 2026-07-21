@@ -4,7 +4,12 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-import { completeWslAcceptanceOutput, resolveWslAcceptanceInvocation, runPackagedWslAcceptance } from "./wsl-acceptance"
+import {
+  completeWslAcceptanceOutput,
+  resolveWslAcceptanceInvocation,
+  runPackagedWslAcceptance,
+  waitForAcceptanceHealth,
+} from "./wsl-acceptance"
 
 const validArguments = [
   "--bharatcode-wsl-acceptance-case",
@@ -256,6 +261,44 @@ describe("packaged WSL acceptance entrypoint", () => {
     }
   })
 
+  test("bounds only the authenticated acceptance loopback-forwarding wait", async () => {
+    const calls: Array<{ username?: string | null; password?: string | null }> = []
+    const waits: number[] = []
+    const check = async (_url: string, username?: string | null, password?: string | null) => {
+      calls.push({ username, password })
+      return password ? calls.filter((item) => item.password).length === 2 : false
+    }
+    expect(
+      await waitForAcceptanceHealth(check, "http://127.0.0.1:43123", null, null, async (ms) => waits.push(ms)),
+    ).toBe(false)
+    expect(calls).toEqual([{ username: null, password: null }])
+    expect(waits).toEqual([])
+
+    expect(
+      await waitForAcceptanceHealth(check, "http://127.0.0.1:43123", "bharatcode", "private", async (ms) =>
+        waits.push(ms),
+      ),
+    ).toBe(true)
+    expect(calls.slice(1)).toEqual([
+      { username: "bharatcode", password: "private" },
+      { username: "bharatcode", password: "private" },
+    ])
+    expect(waits).toEqual([25])
+
+    calls.length = 0
+    waits.length = 0
+    expect(
+      await waitForAcceptanceHealth(
+        async () => false,
+        "http://127.0.0.1:43123",
+        "bharatcode",
+        "private",
+        async (ms) => waits.push(ms),
+      ),
+    ).toBe(false)
+    expect(waits.reduce((sum, value) => sum + value, 0)).toBeLessThanOrEqual(2_000)
+  })
+
   test("derives scenario 9 only from production-shaped identity, authorization, health, and path effects", async () => {
     const fixture = behavioralFixture()
     const dispatch = resolveWslAcceptanceInvocation(validArguments, { packaged: true, platform: "win32" })
@@ -385,7 +428,9 @@ describe("packaged WSL acceptance entrypoint", () => {
     expect(adapter).toContain("createWslLifecycle")
     expect(adapter).toContain("translateWslProjectPath")
     expect(adapter).toContain("spawned.authorization")
+    expect(adapter).toContain("waitForAcceptanceHealth(server.checkHealth")
     expect(adapter).not.toContain("createSidecarAuthorizationPolicy")
     expect(server).toContain("selectedIdentity: selected")
+    expect(server).toContain("healthCheck: options.healthCheck ?? checkHealth")
   })
 })
