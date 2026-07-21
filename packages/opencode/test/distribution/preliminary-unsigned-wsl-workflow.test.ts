@@ -761,7 +761,7 @@ describe("preliminary unsigned Windows/WSL acceptance workflow", () => {
       "Install exact dependencies and stage same-source runtime",
     ).run
     expect(staging).toContain(
-      '$env:ELECTRON_BUILDER_CACHE = Join-Path $env:RUNNER_TEMP "bharatcode-preliminary-electron-builder-cache"',
+      '$env:ELECTRON_BUILDER_CACHE = [IO.Path]::Combine($env:RUNNER_TEMP, "bharatcode-preliminary-electron-builder-cache", "nsis-3.0.4.1")',
     )
     expect(staging).toContain(
       '"ELECTRON_BUILDER_CACHE=$env:ELECTRON_BUILDER_CACHE" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append',
