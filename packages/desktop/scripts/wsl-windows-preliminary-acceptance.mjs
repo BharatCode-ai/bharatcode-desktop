@@ -95,8 +95,13 @@ async function runExecutableCase(input) {
       env: acceptanceChildEnvironment(process.env),
     },
   )
-  if (result.stderr) throw new Error("Preliminary packaged acceptance case wrote stderr")
-  const line = result.stdout.endsWith("\n") ? result.stdout.slice(0, -1) : result.stdout
+  return parsePreliminaryPackagedCaseOutput(result.stdout, result.stderr)
+}
+
+export function parsePreliminaryPackagedCaseOutput(stdout, stderr) {
+  if (stderr) throw new Error("Preliminary packaged acceptance case wrote stderr")
+  const output = stdout.startsWith("\r\n") ? stdout.slice(2) : stdout
+  const line = output.endsWith("\n") ? output.slice(0, -1) : output
   if (!line || /\r|\n/u.test(line) || Buffer.byteLength(line) > 8_192) {
     throw new Error("Preliminary packaged acceptance case output is not one bounded JSON record")
   }

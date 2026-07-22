@@ -2,7 +2,10 @@ import { describe, expect, test } from "bun:test"
 import { createHash } from "node:crypto"
 
 import { validatePreliminaryUnsignedWslReceipt } from "../../opencode/script/lean-preliminary-unsigned-wsl.mjs"
-import { runPreliminaryWindowsAcceptance } from "./wsl-windows-preliminary-acceptance.mjs"
+import {
+  parsePreliminaryPackagedCaseOutput,
+  runPreliminaryWindowsAcceptance,
+} from "./wsl-windows-preliminary-acceptance.mjs"
 
 const sourceSha = "9".repeat(40)
 const desktopSha256 = "a".repeat(64)
@@ -109,6 +112,18 @@ function dependencies(overrides: Record<string, unknown> = {}) {
 }
 
 describe("preliminary unsigned WSL observation adapter", () => {
+  test("accepts only the exact Electron Windows CRLF prelude around one canonical record", () => {
+    const record = observation("scenario-9")
+    const line = JSON.stringify(record)
+    expect(parsePreliminaryPackagedCaseOutput(`${line}\n`, "")).toEqual(record)
+    expect(parsePreliminaryPackagedCaseOutput(`\r\n${line}\n`, "")).toEqual(record)
+    for (const output of [`\n${line}\n`, `\r\n\r\n${line}\n`, ` ${line}\n`, `\r\n${line}\n\n`]) {
+      expect(() => parsePreliminaryPackagedCaseOutput(output, "")).toThrow()
+    }
+    expect(() => parsePreliminaryPackagedCaseOutput(`\r\n${line}\n`, "foreign stderr")).toThrow()
+    expect(() => parsePreliminaryPackagedCaseOutput(`\r\n${"x".repeat(16_385)}\n`, "")).toThrow()
+  })
+
   test("projects only observations accepted by the unchanged diagnostic harness", async () => {
     const result = await runPreliminaryWindowsAcceptance(argv, dependencies())
     expect(result).toEqual({
