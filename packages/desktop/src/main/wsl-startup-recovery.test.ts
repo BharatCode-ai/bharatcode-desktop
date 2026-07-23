@@ -133,7 +133,7 @@ describe("pre-window WSL startup recovery", () => {
     expect(prompt).toContain("Failure category: ${code}")
     expect(prompt).toContain("defaultId: 0")
     expect(prompt).toContain("cancelId: 2")
-    expect(prompt).not.toMatch(/error\\.message|selectedDisplayName|distribution|stdout|stderr|path|email/iu)
+    expect(prompt).not.toMatch(/error\.message|selectedDisplayName|distribution|stdout|stderr|path|email/iu)
   })
 
   test("enabled startup recovers before sidecar readiness and never enters the local fallback branch", async () => {
