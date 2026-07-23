@@ -51,6 +51,14 @@ function terminal(label: string, effects: string[]): Promise<never> {
   return Promise.reject(new Error(`terminal:${label}`))
 }
 
+async function waitForEffect(effects: string[], effect: string) {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    if (effects.includes(effect)) return
+    await new Promise<void>((resolve) => setImmediate(resolve))
+  }
+  throw new Error(`effect not observed: ${effect}`)
+}
+
 describe("pre-window WSL startup recovery", () => {
   test("successful WSL startup resolves without prompting", async () => {
     const effects: string[] = []
@@ -113,25 +121,25 @@ describe("pre-window WSL startup recovery", () => {
     const effects: string[] = []
     const actions: WslStartupRecoveryAction[] = ["disable-and-restart", "disable-and-restart"]
     let disables = 0
-    await expect(
-      recoverWslStartup({
-        start: async () => {
-          effects.push("start")
-          throw new WslLifecycleFailure("selection-invalid")
-        },
-        prompt: async (code) => {
-          effects.push(`prompt:${code}`)
-          return actions.shift() ?? "quit"
-        },
-        disableAndRestart: async () => {
-          disables += 1
-          effects.push(`disable:${disables}`)
-          if (disables === 1) throw new Error("private persistence detail")
-          return terminal("relaunch", effects)
-        },
-        quit: () => terminal("quit", effects),
-      }),
-    ).rejects.toThrow("terminal:relaunch")
+    const recovery = recoverWslStartup({
+      start: async () => {
+        effects.push("start")
+        throw new WslLifecycleFailure("selection-invalid")
+      },
+      prompt: async (code) => {
+        effects.push(`prompt:${code}`)
+        return actions.shift() ?? "quit"
+      },
+      disableAndRestart: async () => {
+        disables += 1
+        effects.push(`disable:${disables}`)
+        if (disables === 1) throw new Error("private persistence detail")
+        effects.push("relaunch")
+        return new Promise<never>(() => {})
+      },
+      quit: () => terminal("quit", effects),
+    })
+    await waitForEffect(effects, "relaunch")
     expect(effects).toEqual([
       "start",
       "prompt:selection-invalid",
@@ -140,6 +148,15 @@ describe("pre-window WSL startup recovery", () => {
       "disable:2",
       "relaunch",
     ])
+    await expect(
+      Promise.race([
+        recovery.then(
+          () => "settled",
+          () => "settled",
+        ),
+        new Promise<"pending">((resolve) => setImmediate(() => resolve("pending"))),
+      ]),
+    ).resolves.toBe("pending")
   })
 
   test("unknown startup errors project only to start-failed", () => {
