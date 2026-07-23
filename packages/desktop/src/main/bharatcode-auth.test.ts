@@ -124,4 +124,37 @@ describe("Desktop client of the shared BharatCode account runtime", () => {
     const source = await readFile(join(import.meta.dir, "bharatcode-auth.ts"), "utf8")
     expect(source).not.toMatch(/\.bharatcode|opencode\.jsonc|credentials\.json|writeFile|mkdir|pluginSpec/)
   })
+
+  test("completes a Windows cold-start auth callback before creating the first window", async () => {
+    const source = await readFile(join(import.meta.dir, "index.ts"), "utf8")
+
+    expect(source).toContain("async function processIncomingDeepLinks(urls: string[])")
+    expect(source).toMatch(/await requireAccountClient\(\)\s*\.completeSignIn\(url\)/)
+    expect(source).toContain("pendingIncomingDeepLinks.push(...supportedDeepLinks(process.argv))")
+    expect(source).toContain("if (!incomingDeepLinksReady)")
+    expect(source).toContain("pendingIncomingDeepLinks.push(...urls)")
+    expect(source).toContain("processIncomingDeepLinks(pendingIncomingDeepLinks.splice(0))")
+
+    const sidecarReady = source.indexOf("yield* Fiber.await(loadingTask)")
+    const overlayComplete = source.indexOf("if (overlay) yield* Deferred.await(loadingComplete)")
+    const startupReplay = source.indexOf("processIncomingDeepLinks(pendingIncomingDeepLinks.splice(0))")
+    const callbackReadiness = source.indexOf("incomingDeepLinksReady = true")
+    const windowCreation = source.indexOf("mainWindow = createMainWindow")
+    expect(sidecarReady).toBeGreaterThan(-1)
+    expect(overlayComplete).toBeGreaterThan(sidecarReady)
+    expect(startupReplay).toBeGreaterThan(overlayComplete)
+    expect(callbackReadiness).toBeGreaterThan(startupReplay)
+    expect(windowCreation).toBeGreaterThan(callbackReadiness)
+  })
+
+  test("never logs OAuth callback codes or other complete protocol URLs", async () => {
+    const source = await readFile(join(import.meta.dir, "index.ts"), "utf8")
+
+    expect(source).toContain('logger.log("deep link received via second-instance", { count: urls.length })')
+    expect(source).toContain(
+      'logger.log("deep link received via open-url", { authCallback: isBharatCodeAuthCallback(url) })',
+    )
+    expect(source).not.toContain('logger.log("deep link received via second-instance", { urls })')
+    expect(source).not.toContain('logger.log("deep link received via open-url", { url })')
+  })
 })

@@ -71,9 +71,10 @@ let mainWindow: BrowserWindow | null = null
 let server: SidecarListener | null = null
 let sidecarAuthorization: SidecarAuthorizationPolicy | undefined
 let accountClient: ReturnType<typeof createBharatCodeAccountClient> | undefined
+let incomingDeepLinksReady = false
 let wslLifecycle: ReturnType<typeof createWslLifecycle> | undefined
 let selectedWslDisplayName: string | undefined
-const pendingAccountCallbacks: string[] = []
+const pendingIncomingDeepLinks: string[] = []
 
 const initEmitter = new EventEmitter()
 let initStep: InitStep = { phase: "server_waiting" }
@@ -128,20 +129,26 @@ async function emitDeepLinks(urls: string[]) {
   if (mainWindow) sendDeepLinks(mainWindow, translated)
 }
 
-function handleIncomingDeepLinks(urls: string[]) {
+async function processIncomingDeepLinks(urls: string[]) {
   for (const url of urls) {
     if (!isBharatCodeAuthCallback(url)) {
-      void emitDeepLinks([url]).catch((error) => logger.warn("failed to translate WSL project deep link", error))
+      await emitDeepLinks([url]).catch((error) => logger.warn("failed to translate WSL project deep link", error))
       continue
     }
-    if (!accountClient) {
-      pendingAccountCallbacks.push(url)
-      continue
-    }
-    void accountClient.completeSignIn(url).catch((error) => {
-      logger.warn("failed to handle BharatCode auth callback", error)
-    })
+    await requireAccountClient()
+      .completeSignIn(url)
+      .catch((error) => {
+        logger.warn("failed to handle BharatCode auth callback", error)
+      })
   }
+}
+
+function handleIncomingDeepLinks(urls: string[]) {
+  if (!incomingDeepLinksReady) {
+    pendingIncomingDeepLinks.push(...urls)
+    return Promise.resolve()
+  }
+  return processIncomingDeepLinks(urls)
 }
 
 function supportedDeepLinks(argv: string[]) {
@@ -157,6 +164,7 @@ function setInitStep(step: InitStep) {
 async function killSidecar() {
   sidecarAuthorization?.invalidate()
   sidecarAuthorization = undefined
+  incomingDeepLinksReady = false
   accountClient = undefined
   if (!server) return
   const current = server
@@ -277,6 +285,7 @@ const main = Effect.gen(function* () {
     app.quit()
     return
   }
+  pendingIncomingDeepLinks.push(...supportedDeepLinks(process.argv))
 
   preferAppEnv(app.getPath("userData"))
   const startupRecovery = createStartupRecovery({
@@ -286,8 +295,8 @@ const main = Effect.gen(function* () {
   app.on("second-instance", (_event: Event, argv: string[]) => {
     const urls = supportedDeepLinks(argv)
     if (urls.length) {
-      logger.log("deep link received via second-instance", { urls })
-      handleIncomingDeepLinks(urls)
+      logger.log("deep link received via second-instance", { count: urls.length })
+      void handleIncomingDeepLinks(urls)
     }
     if (mainWindow) {
       mainWindow.show()
@@ -297,8 +306,8 @@ const main = Effect.gen(function* () {
 
   app.on("open-url", (event: Event, url: string) => {
     event.preventDefault()
-    logger.log("deep link received via open-url", { url })
-    handleIncomingDeepLinks([url])
+    logger.log("deep link received via open-url", { authCallback: isBharatCodeAuthCallback(url) })
+    void handleIncomingDeepLinks([url])
   })
 
   app.on("before-quit", () => {
@@ -582,11 +591,10 @@ const main = Effect.gen(function* () {
 
   if (overlay) yield* Deferred.await(loadingComplete)
 
-  for (const callback of pendingAccountCallbacks.splice(0)) {
-    void requireAccountClient()
-      .completeSignIn(callback)
-      .catch((error) => logger.warn("failed to complete BharatCode sign-in", error))
+  while (pendingIncomingDeepLinks.length) {
+    yield* Effect.promise(() => processIncomingDeepLinks(pendingIncomingDeepLinks.splice(0)))
   }
+  incomingDeepLinksReady = true
 
   mainWindow = createMainWindow(() => sidecarAuthorization)
   if (mainWindow) {
