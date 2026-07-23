@@ -12,6 +12,7 @@ import { exportDebugLogs, write as writeLog } from "./logging"
 import { getStore } from "./store"
 import { createUnresponsiveSampler } from "./unresponsive"
 import type { SidecarAuthorizationPolicy } from "./sidecar-auth"
+import type { WslStartupRecoveryAction, WslStartupRecoveryCode } from "./wsl-startup-recovery"
 
 const root = dirname(fileURLToPath(import.meta.url))
 const rendererRoot = join(root, "../renderer")
@@ -118,6 +119,23 @@ export function setDockIcon() {
   if (process.platform !== "darwin") return
   const icon = nativeImage.createFromPath(join(iconsDir(), "dock.png"))
   if (!icon.isEmpty()) app.dock?.setIcon(icon)
+}
+
+export async function showWslStartupRecoveryDialog(code: WslStartupRecoveryCode): Promise<WslStartupRecoveryAction> {
+  const buttons = ["Retry WSL", "Disable WSL and restart", "Quit"]
+  const result = await dialog.showMessageBox({
+    type: "error",
+    title: "BharatCode WSL startup",
+    buttons,
+    defaultId: 0,
+    cancelId: 2,
+    noLink: true,
+    message: "BharatCode could not start its WSL runtime.",
+    detail: `Failure category: ${code}\n\nBharatCode did not switch to the Windows runtime automatically.`,
+  })
+  if (result.response === 0) return "retry"
+  if (result.response === 1) return "disable-and-restart"
+  return "quit"
 }
 
 export function createMainWindow(

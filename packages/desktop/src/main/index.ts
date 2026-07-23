@@ -46,6 +46,7 @@ import {
   setRelaunchHandler,
   setBackgroundColor,
   setDockIcon,
+  showWslStartupRecoveryDialog,
 } from "./windows"
 import { migrate } from "./migrate"
 import { getStore } from "./store"
@@ -53,6 +54,7 @@ import { checkUpdate, checkForUpdates, installUpdate, setupAutoUpdater } from ".
 import { Deferred, Effect, Fiber } from "effect"
 import { bundledRecoveryExecutable, createStartupRecovery } from "./startup-recovery"
 import { createWslService } from "./wsl-distro"
+import { recoverWslStartup } from "./wsl-startup-recovery"
 import {
   configureWslForControlledRelaunch,
   WslLifecycleFailure,
@@ -172,6 +174,10 @@ async function killSidecar() {
   await current.stop()
 }
 
+function neverCompletes(): Promise<never> {
+  return new Promise<never>(() => undefined)
+}
+
 async function relaunchDesktop() {
   try {
     await killSidecar()
@@ -179,6 +185,12 @@ async function relaunchDesktop() {
     app.relaunch()
     app.exit(0)
   }
+  return neverCompletes()
+}
+
+function quitBeforeStartup(): Promise<never> {
+  app.quit()
+  return neverCompletes()
 }
 
 function requireAccountClient() {
@@ -538,7 +550,22 @@ const main = Effect.gen(function* () {
     const wslSnapshot = yield* Effect.promise(() => wslService.snapshot())
     const spawned = yield* Effect.promise(async () => {
       if (wslSnapshot.enabled) {
-        await wslLifecycle!.start()
+        await recoverWslStartup({
+          start: () => wslLifecycle!.start(),
+          prompt: showWslStartupRecoveryDialog,
+          disableAndRestart: async () => {
+            const current = await wslService.snapshot()
+            const disabled = await wslService.configure({
+              enabled: false,
+              expectedRevision: current.revision,
+            })
+            if (disabled.enabled || disabled.revision !== current.revision + 1) {
+              throw new Error("WSL disable did not reach the exact next revision.")
+            }
+            return relaunchDesktop()
+          },
+          quit: quitBeforeStartup,
+        })
         return {
           listener: { stop: () => wslLifecycle!.stop() },
           health: { wait: Promise.resolve() },

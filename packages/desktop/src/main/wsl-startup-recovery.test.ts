@@ -105,12 +105,55 @@ describe("pre-window WSL startup recovery", () => {
       "relaunch",
     ])
     await expect(
-      Promise.race([recovery.then(() => "settled", () => "settled"), new Promise<"pending">((resolve) => setImmediate(() => resolve("pending")))]),
+      Promise.race([
+        recovery.then(
+          () => "settled",
+          () => "settled",
+        ),
+        new Promise<"pending">((resolve) => setImmediate(() => resolve("pending"))),
+      ]),
     ).resolves.toBe("pending")
   })
 
   test("unknown startup errors project only to start-failed", () => {
     expect(projectWslStartupRecoveryCode(new Error("C:\\private\\repo secret@example.com"))).toBe("start-failed")
     expect(projectWslStartupRecoveryCode(new WslLifecycleFailure("root-user"))).toBe("root-user")
+  })
+
+  test("native prompt has only the approved safe actions and copy", async () => {
+    const source = await Bun.file(new URL("./windows.ts", import.meta.url)).text()
+    const start = source.indexOf("export async function showWslStartupRecoveryDialog")
+    const end = source.indexOf("\n}\n", start)
+    const prompt = source.slice(start, end + 2)
+
+    expect(start).toBeGreaterThan(-1)
+    expect(prompt).toContain('["Retry WSL", "Disable WSL and restart", "Quit"]')
+    expect(prompt).toContain('message: "BharatCode could not start its WSL runtime."')
+    expect(prompt).toContain("BharatCode did not switch to the Windows runtime automatically.")
+    expect(prompt).toContain("Failure category: ${code}")
+    expect(prompt).toContain("defaultId: 0")
+    expect(prompt).toContain("cancelId: 2")
+    expect(prompt).not.toMatch(/error\\.message|selectedDisplayName|distribution|stdout|stderr|path|email/iu)
+  })
+
+  test("enabled startup recovers before sidecar readiness and never enters the local fallback branch", async () => {
+    const source = await Bun.file(new URL("./index.ts", import.meta.url)).text()
+    const enabled = source.indexOf("if (wslSnapshot.enabled)")
+    const recovery = source.indexOf("await recoverWslStartup(", enabled)
+    const localAuthorization = source.indexOf("sidecarAuthorization = createSidecarAuthorizationPolicy", enabled)
+    const serverReady = source.indexOf("yield* Deferred.succeed(serverReady", enabled)
+    const windowCreation = source.indexOf("mainWindow = createMainWindow", enabled)
+
+    expect(enabled).toBeGreaterThan(-1)
+    expect(recovery).toBeGreaterThan(enabled)
+    expect(source.slice(recovery, localAuthorization)).toContain("start: () => wslLifecycle!.start()")
+    expect(source.slice(recovery, localAuthorization)).toContain("prompt: showWslStartupRecoveryDialog")
+    expect(source.slice(recovery, localAuthorization)).toContain("enabled: false")
+    expect(source.slice(recovery, localAuthorization)).toContain("expectedRevision: current.revision")
+    expect(source.slice(recovery, localAuthorization)).toContain("return relaunchDesktop()")
+    expect(source.slice(recovery, localAuthorization)).toContain("quit: quitBeforeStartup")
+    expect(localAuthorization).toBeGreaterThan(recovery)
+    expect(serverReady).toBeGreaterThan(localAuthorization)
+    expect(windowCreation).toBeGreaterThan(serverReady)
   })
 })
