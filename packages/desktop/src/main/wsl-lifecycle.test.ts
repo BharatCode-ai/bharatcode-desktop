@@ -579,7 +579,7 @@ describe("lean WSL owned-child lifecycle", () => {
     expect(index).toContain("retainWslAuthorizationWhileRunning")
     expect(index).not.toMatch(/configureWsl:[\s\S]*?wslLifecycle\.(?:stop|restart)\(\)/u)
     expect(index).toMatch(
-      /async function relaunchDesktop\(\) \{\s*try \{\s*await killSidecar\(\)\s*\} finally \{\s*app\.relaunch\(\)\s*app\.exit\(0\)\s*\}/u,
+      /async function relaunchDesktop\(\) \{\s*try \{\s*await killSidecar\(\)\s*\} finally \{\s*app\.relaunch\(\{ args: desktopRelaunchArgs\(process\.argv, pendingIncomingDeepLinks\) \}\)\s*app\.exit\(0\)\s*\}/u,
     )
     expect(index).toContain("createMainWindow(() => sidecarAuthorization)")
     expect(ipc).toContain("deps.translateProjectPaths")

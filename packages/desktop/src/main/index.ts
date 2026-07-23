@@ -25,6 +25,7 @@ import {
 import type { InitStep, ServerReadyData, SqliteMigrationProgress } from "../preload/types"
 import { checkAppExists, resolveAppPath } from "./apps"
 import { CHANNEL, UPDATER_ENABLED } from "./constants"
+import { desktopRelaunchArgs } from "./desktop-relaunch"
 import { transcribeDictationAudio } from "./dictation"
 import { registerIpcHandlers, sendDeepLinks, sendMenuCommand, sendSqliteMigrationProgress } from "./ipc"
 import { exportDebugLogs, initCrashReporter, initLogging, startNetLog, write as writeLog } from "./logging"
@@ -182,7 +183,7 @@ async function relaunchDesktop() {
   try {
     await killSidecar()
   } finally {
-    app.relaunch()
+    app.relaunch({ args: desktopRelaunchArgs(process.argv, pendingIncomingDeepLinks) })
     app.exit(0)
   }
   return neverCompletes()
@@ -438,6 +439,7 @@ const main = Effect.gen(function* () {
   yield* Effect.promise(() => app.whenReady())
 
   let overlay: BrowserWindow | null = null
+  let wslStartupRecoveryActive = false
   const recoveryStatus = yield* Effect.promise(() => startupRecovery.inspect())
   if (recoveryStatus.state !== "ready") {
     setInitStep({ phase: "recovery_waiting" })
@@ -552,6 +554,11 @@ const main = Effect.gen(function* () {
       if (wslSnapshot.enabled) {
         await recoverWslStartup({
           start: () => wslLifecycle!.start(),
+          onRecoveryStart: () => {
+            wslStartupRecoveryActive = true
+            overlay?.destroy()
+            overlay = null
+          },
           prompt: showWslStartupRecoveryDialog,
           disableAndRestart: async () => {
             const current = await wslService.snapshot()
@@ -566,6 +573,7 @@ const main = Effect.gen(function* () {
           },
           quit: quitBeforeStartup,
         })
+        wslStartupRecoveryActive = false
         return {
           listener: { stop: () => wslLifecycle!.stop() },
           health: { wait: Promise.resolve() },
@@ -607,7 +615,7 @@ const main = Effect.gen(function* () {
       Effect.as(false),
       Effect.catch(() => Effect.succeed(true)),
     )
-    if (show) {
+    if (show && !wslStartupRecoveryActive) {
       overlay = createLoadingWindow()
       yield* Effect.sleep("1 second")
     }

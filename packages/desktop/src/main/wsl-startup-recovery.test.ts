@@ -22,6 +22,9 @@ describe("pre-window WSL startup recovery", () => {
       start: async () => {
         effects.push("start")
       },
+      onRecoveryStart: () => {
+        effects.push("recovery-start")
+      },
       prompt: async () => {
         effects.push("prompt")
         return "quit"
@@ -41,6 +44,9 @@ describe("pre-window WSL startup recovery", () => {
         effects.push(`start:${starts}`)
         if (starts === 1) throw new WslLifecycleFailure("prerequisite-missing")
       },
+      onRecoveryStart: () => {
+        effects.push("recovery-start")
+      },
       prompt: async (code) => {
         effects.push(`prompt:${code}`)
         return "retry"
@@ -48,10 +54,10 @@ describe("pre-window WSL startup recovery", () => {
       disableAndRestart: () => terminal("disable", effects),
       quit: () => terminal("quit", effects),
     })
-    expect(effects).toEqual(["start:1", "prompt:prerequisite-missing", "start:2"])
+    expect(effects).toEqual(["start:1", "recovery-start", "prompt:prerequisite-missing", "start:2"])
   })
 
-  test("a failed retry presents the newly classified safe code", async () => {
+  test("a failed retry presents the newly classified safe code without starting recovery again", async () => {
     const effects: string[] = []
     const actions: WslStartupRecoveryAction[] = ["retry", "quit"]
     let starts = 0
@@ -62,6 +68,9 @@ describe("pre-window WSL startup recovery", () => {
           effects.push(`start:${starts}`)
           throw starts === 1 ? new WslLifecycleFailure("connection-lost") : new WslLifecycleFailure("runtime-integrity")
         },
+        onRecoveryStart: () => {
+          effects.push("recovery-start")
+        },
         prompt: async (code) => {
           effects.push(`prompt:${code}`)
           return actions.shift() ?? "quit"
@@ -70,7 +79,14 @@ describe("pre-window WSL startup recovery", () => {
         quit: () => terminal("quit", effects),
       }),
     ).rejects.toThrow("terminal:quit")
-    expect(effects).toEqual(["start:1", "prompt:connection-lost", "start:2", "prompt:runtime-integrity", "quit"])
+    expect(effects).toEqual([
+      "start:1",
+      "recovery-start",
+      "prompt:connection-lost",
+      "start:2",
+      "prompt:runtime-integrity",
+      "quit",
+    ])
   })
 
   test("disable is terminal and a persistence failure keeps recovery available", async () => {
@@ -81,6 +97,9 @@ describe("pre-window WSL startup recovery", () => {
       start: async () => {
         effects.push("start")
         throw new WslLifecycleFailure("selection-invalid")
+      },
+      onRecoveryStart: () => {
+        effects.push("recovery-start")
       },
       prompt: async (code) => {
         effects.push(`prompt:${code}`)
@@ -98,6 +117,7 @@ describe("pre-window WSL startup recovery", () => {
     await waitForEffect(effects, "relaunch")
     expect(effects).toEqual([
       "start",
+      "recovery-start",
       "prompt:selection-invalid",
       "disable:1",
       "prompt:configuration-failed",
@@ -152,8 +172,34 @@ describe("pre-window WSL startup recovery", () => {
     expect(source.slice(recovery, localAuthorization)).toContain("expectedRevision: current.revision")
     expect(source.slice(recovery, localAuthorization)).toContain("return relaunchDesktop()")
     expect(source.slice(recovery, localAuthorization)).toContain("quit: quitBeforeStartup")
+    expect(source.slice(recovery, localAuthorization)).toMatch(
+      /onRecoveryStart: \(\) => \{\s*wslStartupRecoveryActive = true\s*overlay\?\.destroy\(\)\s*overlay = null\s*\}/u,
+    )
+    expect(source.slice(recovery, localAuthorization)).toMatch(
+      /await recoverWslStartup\([\s\S]*?\}\)\s*wslStartupRecoveryActive = false/u,
+    )
     expect(localAuthorization).toBeGreaterThan(recovery)
     expect(serverReady).toBeGreaterThan(localAuthorization)
     expect(windowCreation).toBeGreaterThan(serverReady)
+  })
+
+  test("loading overlays are suppressed while native WSL startup recovery is active", async () => {
+    const source = await Bun.file(new URL("./index.ts", import.meta.url)).text()
+    const overlay = source.indexOf("let overlay: BrowserWindow | null = null")
+    const recoveryState = source.indexOf("let wslStartupRecoveryActive = false", overlay)
+    const recovery = source.indexOf("await recoverWslStartup(", recoveryState)
+    const recoveryStart = source.indexOf("onRecoveryStart: () => {", recovery)
+    const markActive = source.indexOf("wslStartupRecoveryActive = true", recoveryStart)
+    const destroyOverlay = source.indexOf("overlay?.destroy()", markActive)
+    const clearOverlay = source.indexOf("overlay = null", destroyOverlay)
+    const migrationTimeout = source.indexOf('Effect.timeout("1 second")', recovery)
+    const gatedOverlay = source.indexOf("if (show && !wslStartupRecoveryActive)", migrationTimeout)
+
+    expect(recoveryState).toBeGreaterThan(overlay)
+    expect(recoveryStart).toBeGreaterThan(recovery)
+    expect(markActive).toBeGreaterThan(recoveryStart)
+    expect(destroyOverlay).toBeGreaterThan(markActive)
+    expect(clearOverlay).toBeGreaterThan(destroyOverlay)
+    expect(gatedOverlay).toBeGreaterThan(migrationTimeout)
   })
 })

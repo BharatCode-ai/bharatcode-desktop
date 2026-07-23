@@ -10,6 +10,7 @@ export function projectWslStartupRecoveryCode(error: unknown): WslErrorCode {
 
 export async function recoverWslStartup(options: {
   start: () => Promise<void>
+  onRecoveryStart: () => void
   prompt: (code: WslStartupRecoveryCode) => Promise<WslStartupRecoveryAction>
   disableAndRestart: () => Promise<never>
   quit: () => Promise<never>
@@ -22,6 +23,7 @@ export async function recoverWslStartup(options: {
     code = projectWslStartupRecoveryCode(error)
   }
 
+  options.onRecoveryStart()
   while (true) {
     const action = await options.prompt(code)
     if (action === "retry") {
