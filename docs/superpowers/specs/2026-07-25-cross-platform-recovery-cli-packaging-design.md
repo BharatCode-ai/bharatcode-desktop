@@ -53,6 +53,10 @@ The shared Electron Builder configuration will copy the staged executable
 through `extraResources` so the installed filename exactly matches
 `bundledRecoveryExecutable(process.resourcesPath)`.
 
+The generated executable will be excluded from the ordinary `files` glob so it
+is not duplicated inside `app.asar`; the `extraResources` copy is the only
+packaged copy.
+
 An `afterPack` verifier will resolve the real unpacked application layout for
 Windows, macOS, and Linux and validate:
 
@@ -95,6 +99,7 @@ Automated tests will cover:
 - exact byte copying from a single build output;
 - rejection of missing and ambiguous build outputs;
 - executable permissions on Unix;
+- exclusion from `app.asar` and exactly one `extraResources` mapping;
 - Windows, macOS, and Linux installed-layout resolution;
 - PE, Mach-O, and ELF validation;
 - packaging rejection for missing, malformed, or non-executable files;
