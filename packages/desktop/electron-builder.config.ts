@@ -265,13 +265,14 @@ export const verifyRecoveryCliAfterPack: NonNullable<Configuration["afterPack"]>
     throw new Error(`Packaged recovery CLI is not executable: ${target}`)
   }
   const handle = await open(target, "r")
-  const header = Buffer.alloc(4)
+  const header = Buffer.alloc(4096)
+  let bytesRead = 0
   try {
-    await handle.read(header, 0, header.length, 0)
+    bytesRead = (await handle.read(header, 0, header.length, 0)).bytesRead
   } finally {
     await handle.close()
   }
-  validateRecoveryCliHeader(platform, header)
+  validateRecoveryCliHeader(platform, header.subarray(0, bytesRead))
 }
 
 const getBase = (): Configuration => ({
