@@ -37,7 +37,7 @@ describe("recovery CLI staging", () => {
       "bharatcode.exe",
       Uint8Array.from([0x4d, 0x5a, 0x01, 0x02]),
     )
-    const result = await stageRecoveryCli({ ...value, platform: "win32" })
+    const result = await stageRecoveryCli({ ...value, platform: "win32", arch: "x64" })
 
     expect(result).toEqual({
       source,
@@ -54,31 +54,32 @@ describe("recovery CLI staging", () => {
       "bharatcode",
       Uint8Array.from([0x7f, 0x45, 0x4c, 0x46, 0x01]),
     )
-    const result = await stageRecoveryCli({ ...value, platform: "linux" })
+    const result = await stageRecoveryCli({ ...value, platform: "linux", arch: "x64" })
 
     expect(result.source).toBe(source)
     expect(await readFile(result.destination)).toEqual(Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0x01]))
     expect((await stat(result.destination)).mode & 0o111).not.toBe(0)
   })
 
-  test("rejects missing and ambiguous native build outputs", async () => {
+  test("rejects a missing exact target and ignores other build variants", async () => {
     const missing = await fixture()
-    await mkdir(missing.distDir, { recursive: true })
-    await expect(stageRecoveryCli({ ...missing, platform: "darwin" })).rejects.toThrow(
-      "Expected exactly one native recovery CLI, found 0",
+    await binary(missing.distDir, "bharatcode-darwin-x64", "bharatcode", Uint8Array.from([0xcf, 0xfa, 0xed, 0xfe]))
+    await expect(stageRecoveryCli({ ...missing, platform: "darwin", arch: "x64" })).rejects.toThrow(
+      "Native recovery CLI is missing",
     )
 
-    const ambiguous = await fixture()
-    await binary(ambiguous.distDir, "bharatcode-darwin-x64", "bharatcode", Uint8Array.from([0xcf, 0xfa, 0xed, 0xfe]))
-    await binary(
-      ambiguous.distDir,
-      "bharatcode-darwin-x64-baseline",
+    const variants = await fixture()
+    await binary(variants.distDir, "bharatcode-linux-x64", "bharatcode", Uint8Array.from([0x01]))
+    await binary(variants.distDir, "bharatcode-linux-x64-baseline-musl", "bharatcode", Uint8Array.from([0x02]))
+    const source = await binary(
+      variants.distDir,
+      "bharatcode-linux-x64-baseline",
       "bharatcode",
-      Uint8Array.from([0xcf, 0xfa, 0xed, 0xfe]),
+      Uint8Array.from([0x7f, 0x45, 0x4c, 0x46]),
     )
-    await expect(stageRecoveryCli({ ...ambiguous, platform: "darwin" })).rejects.toThrow(
-      "Expected exactly one native recovery CLI, found 2",
-    )
+    const result = await stageRecoveryCli({ ...variants, platform: "linux", arch: "x64" })
+    expect(result.source).toBe(source)
+    expect(await readFile(result.destination)).toEqual(Buffer.from([0x7f, 0x45, 0x4c, 0x46]))
   })
 
   test("builds the native CLI before rebuilding the Node service", async () => {

@@ -29,6 +29,14 @@ function context(platform: "win32" | "darwin" | "linux", appOutDir: string) {
   }
 }
 
+function validPeHeader() {
+  const bytes = new Uint8Array(128)
+  bytes.set([0x4d, 0x5a])
+  new DataView(bytes.buffer).setUint32(0x3c, 0x40, true)
+  bytes.set([0x50, 0x45, 0x00, 0x00], 0x40)
+  return bytes
+}
+
 async function executable(target: string, bytes: Uint8Array, mode = 0o755) {
   await mkdir(path.dirname(target), { recursive: true })
   await writeFile(target, bytes)
@@ -72,7 +80,7 @@ describe("packaged recovery CLI", () => {
 
   test("accepts valid PE, Mach-O, and ELF files at the installed path", async () => {
     for (const [platform, bytes] of [
-      ["win32", Uint8Array.from([0x4d, 0x5a, 0x01, 0x02])],
+      ["win32", validPeHeader()],
       ["darwin", Uint8Array.from([0xcf, 0xfa, 0xed, 0xfe])],
       ["linux", Uint8Array.from([0x7f, 0x45, 0x4c, 0x46])],
     ] as const) {
@@ -89,6 +97,10 @@ describe("packaged recovery CLI", () => {
     const malformed = context("linux", await output())
     await executable(packagedRecoveryCliPath(malformed), Uint8Array.from([0x4d, 0x5a]))
     await expect(verifyRecoveryCliAfterPack(malformed as never)).rejects.toThrow("invalid Linux ELF header")
+
+    const truncatedPe = context("win32", await output())
+    await executable(packagedRecoveryCliPath(truncatedPe), Uint8Array.from([0x4d, 0x5a]))
+    await expect(verifyRecoveryCliAfterPack(truncatedPe as never)).rejects.toThrow("invalid Windows PE header")
 
     const permission = context("darwin", await output())
     await executable(packagedRecoveryCliPath(permission), Uint8Array.from([0xcf, 0xfa, 0xed, 0xfe]), 0o644)
