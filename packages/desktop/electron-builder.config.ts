@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process"
-import { access, mkdtemp, readFile, readdir, rm } from "node:fs/promises"
+import { access, mkdtemp, open, readFile, readdir, rm, stat } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -14,6 +14,11 @@ import {
   packageNameForChannel,
   productNameForChannel,
 } from "./src/main/branding"
+import {
+  recoveryCliFilename,
+  requireRecoveryCliPlatform,
+  validateRecoveryCliHeader,
+} from "./scripts/recovery-cli-contract"
 import { verifyWslArtifact, wslRuntimeFilename, type WslRuntimeArch } from "./src/main/wsl-artifact"
 
 const execFileAsync = promisify(execFile)
@@ -233,15 +238,52 @@ const verifyWslBeforePack: NonNullable<Configuration["beforePack"]> = async (con
   })
 }
 
+export function recoveryCliExtraResource(platform = process.platform) {
+  const filename = recoveryCliFilename(platform)
+  return { from: `resources/${filename}`, to: filename }
+}
+
+export function packagedRecoveryCliPath(context: {
+  appOutDir: string
+  electronPlatformName?: string
+  packager?: { appInfo?: { productFilename?: string } }
+}) {
+  const platform = requireRecoveryCliPlatform(context.electronPlatformName ?? "")
+  const filename = recoveryCliFilename(platform)
+  if (platform !== "darwin") return path.join(context.appOutDir, "resources", filename)
+  const product = context.packager?.appInfo?.productFilename
+  if (!product) throw new Error("Packaged recovery CLI macOS product filename is missing")
+  return path.join(context.appOutDir, `${product}.app`, "Contents", "Resources", filename)
+}
+
+export const verifyRecoveryCliAfterPack: NonNullable<Configuration["afterPack"]> = async (context) => {
+  const platform = requireRecoveryCliPlatform(context.electronPlatformName)
+  const target = packagedRecoveryCliPath(context)
+  const info = await stat(target).catch(() => undefined)
+  if (!info?.isFile()) throw new Error(`Packaged recovery CLI is missing: ${target}`)
+  if (platform !== "win32" && (info.mode & 0o111) === 0) {
+    throw new Error(`Packaged recovery CLI is not executable: ${target}`)
+  }
+  const handle = await open(target, "r")
+  const header = Buffer.alloc(4)
+  try {
+    await handle.read(header, 0, header.length, 0)
+  } finally {
+    await handle.close()
+  }
+  validateRecoveryCliHeader(platform, header)
+}
+
 const getBase = (): Configuration => ({
   beforePack: verifyWslBeforePack,
+  afterPack: verifyRecoveryCliAfterPack,
   afterSign: process.platform === "darwin" && !allowUnsignedMac ? notarizeMac : undefined,
   artifactName: "bharatcode-desktop-${os}-${arch}.${ext}",
   directories: {
     output: "dist",
     buildResources: "resources",
   },
-  files: ["out/**/*", "resources/**/*"],
+  files: ["out/**/*", "resources/**/*", "!resources/bharatcode-opencode-cli*"],
   extraResources: [
     {
       from: "native/",
@@ -258,6 +300,7 @@ const getBase = (): Configuration => ({
       to: "capabilities",
       filter: ["**/*"],
     },
+    recoveryCliExtraResource(),
   ],
   mac: {
     category: "public.app-category.developer-tools",
