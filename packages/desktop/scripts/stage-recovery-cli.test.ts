@@ -33,7 +33,7 @@ describe("recovery CLI staging", () => {
     const value = await fixture()
     const source = await binary(
       value.distDir,
-      "bharatcode-windows-x64-baseline",
+      "bharatcode-windows-x64",
       "bharatcode.exe",
       Uint8Array.from([0x4d, 0x5a, 0x01, 0x02]),
     )
@@ -50,7 +50,7 @@ describe("recovery CLI staging", () => {
     const value = await fixture()
     const source = await binary(
       value.distDir,
-      "bharatcode-linux-x64-baseline",
+      "bharatcode-linux-x64",
       "bharatcode",
       Uint8Array.from([0x7f, 0x45, 0x4c, 0x46, 0x01]),
     )
@@ -63,17 +63,22 @@ describe("recovery CLI staging", () => {
 
   test("rejects a missing exact target and ignores other build variants", async () => {
     const missing = await fixture()
-    await binary(missing.distDir, "bharatcode-darwin-x64", "bharatcode", Uint8Array.from([0xcf, 0xfa, 0xed, 0xfe]))
+    await binary(
+      missing.distDir,
+      "bharatcode-darwin-x64-baseline",
+      "bharatcode",
+      Uint8Array.from([0xcf, 0xfa, 0xed, 0xfe]),
+    )
     await expect(stageRecoveryCli({ ...missing, platform: "darwin", arch: "x64" })).rejects.toThrow(
       "Native recovery CLI is missing",
     )
 
     const variants = await fixture()
-    await binary(variants.distDir, "bharatcode-linux-x64", "bharatcode", Uint8Array.from([0x01]))
+    await binary(variants.distDir, "bharatcode-linux-x64-baseline", "bharatcode", Uint8Array.from([0x01]))
     await binary(variants.distDir, "bharatcode-linux-x64-baseline-musl", "bharatcode", Uint8Array.from([0x02]))
     const source = await binary(
       variants.distDir,
-      "bharatcode-linux-x64-baseline",
+      "bharatcode-linux-x64",
       "bharatcode",
       Uint8Array.from([0x7f, 0x45, 0x4c, 0x46]),
     )
@@ -94,7 +99,8 @@ describe("recovery CLI staging", () => {
   test("uses the frozen workspace install instead of mutating native dependencies during packaging", async () => {
     const source = await Bun.file(new URL("./stage-recovery-cli.ts", import.meta.url)).text()
 
-    expect(source).toContain("bun script/build.ts --single --baseline --skip-install")
-    expect(source).not.toContain("bun script/build.ts --single --baseline`")
+    expect(source).toContain("bun script/build.ts --single --skip-install")
+    expect(source).not.toContain("--baseline")
+    expect(source).not.toContain("bun script/build.ts --single`")
   })
 })
