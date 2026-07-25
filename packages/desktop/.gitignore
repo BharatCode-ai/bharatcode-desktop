@@ -25,6 +25,7 @@ dist-ssr
 out/
 
 resources/opencode-cli*
+resources/bharatcode-opencode-cli*
 resources/icons
 resources/*.metainfo.xml
 resources/wsl-runtime/
