@@ -60,3 +60,16 @@ describe("electron vite publicDir", () => {
     expect(existsSync(join(resolved, "oc-theme-preload.js"))).toBe(true)
   })
 })
+
+describe("packaged renderer protocol", () => {
+  test("registers the custom scheme before any startup-recovery window loads it", async () => {
+    const source = await Bun.file(join(root, "src/main/index.ts")).text()
+    const ready = source.indexOf("app.whenReady()")
+    const register = source.indexOf("registerRendererProtocol()", ready)
+    const recovery = source.indexOf("startupRecovery.inspect()", ready)
+
+    expect(ready).toBeGreaterThan(-1)
+    expect(register).toBeGreaterThan(ready)
+    expect(register).toBeLessThan(recovery)
+  })
+})
