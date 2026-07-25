@@ -90,4 +90,11 @@ describe("recovery CLI staging", () => {
     expect(recovery).toBeGreaterThan(-1)
     expect(node).toBeGreaterThan(recovery)
   })
+
+  test("uses the frozen workspace install instead of mutating native dependencies during packaging", async () => {
+    const source = await Bun.file(new URL("./stage-recovery-cli.ts", import.meta.url)).text()
+
+    expect(source).toContain("bun script/build.ts --single --baseline --skip-install")
+    expect(source).not.toContain("bun script/build.ts --single --baseline`")
+  })
 })
