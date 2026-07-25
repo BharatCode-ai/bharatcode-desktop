@@ -35,13 +35,14 @@ export type DiagnoseMarkerInput = {
   databasePath: string
   candidates: readonly ReleasedSchemaCandidate[]
   open: (path: string, options: { readonly: boolean }) => SchemaDatabase
+  platform?: NodeJS.Platform
 }
 export type RepairMarkerInput = DiagnoseMarkerInput & { confirmed: true }
 
 type MarkerInspection = { state: Exclude<MarkerState, "healthy" | "schema-mismatch" | "corrupt">; version?: string }
 
 export function diagnoseSchemaMarker(input: DiagnoseMarkerInput): MarkerDiagnosis {
-  const marker = inspectMarker(markerPath(input.databasePath))
+  const marker = inspectMarker(markerPath(input.databasePath), input.platform)
   const before = inspectDatabase(input.databasePath)
   if (!before) return { state: "corrupt" }
   const database = (() => {
@@ -92,22 +93,27 @@ export function repairSchemaMarker(input: RepairMarkerInput): {
       const marker = markerPath(input.databasePath)
       if (existsSync(marker)) {
         quarantine = quarantineMarker(marker)
-        syncDirectory(path.dirname(marker))
+        syncDirectory(path.dirname(marker), input.platform)
       }
       if (!sameDatabase(identity, inspectDatabase(input.databasePath))) {
         return { state: "failed", diagnosis: { state: "corrupt" }, ...(quarantine ? { quarantine } : {}) }
       }
-      writeMarker(marker, diagnosis.inferredVersion, () => sameDatabase(identity, inspectDatabase(input.databasePath)))
+      writeMarker(
+        marker,
+        diagnosis.inferredVersion,
+        () => sameDatabase(identity, inspectDatabase(input.databasePath)),
+        input.platform,
+      )
       published = true
       if (!sameDatabase(identity, inspectDatabase(input.databasePath))) {
         quarantine = quarantineMarker(marker)
-        syncDirectory(path.dirname(marker))
+        syncDirectory(path.dirname(marker), input.platform)
         return { state: "failed", diagnosis: { state: "corrupt" }, quarantine }
       }
       const verified = diagnoseSchemaMarker(input)
       if (verified.state !== "healthy") {
         quarantine = quarantineMarker(marker)
-        syncDirectory(path.dirname(marker))
+        syncDirectory(path.dirname(marker), input.platform)
         return { state: "failed", diagnosis: verified, quarantine }
       }
       return { state: "repaired", diagnosis: verified, ...(quarantine ? { quarantine } : {}) }
@@ -115,7 +121,7 @@ export function repairSchemaMarker(input: RepairMarkerInput): {
       const marker = markerPath(input.databasePath)
       if (published && existsSync(marker)) {
         quarantine = quarantineMarker(marker)
-        syncDirectory(path.dirname(marker))
+        syncDirectory(path.dirname(marker), input.platform)
       }
       return { state: "failed", diagnosis, ...(quarantine ? { quarantine } : {}) }
     }
@@ -187,7 +193,7 @@ export function releasedSchemaCandidatesFromMigrations(
   }
 }
 
-function inspectMarker(marker: string): MarkerInspection {
+function inspectMarker(marker: string, platform: NodeJS.Platform = process.platform): MarkerInspection {
   const info = (() => {
     try {
       return lstatSync(marker)
@@ -201,8 +207,8 @@ function inspectMarker(marker: string): MarkerInspection {
   if (!info.isFile()) return { state: info.isSymbolicLink() ? "permission-invalid" : "invalid" }
   if (
     info.nlink !== 1 ||
-    (info.mode & 0o777) !== 0o600 ||
-    (typeof process.getuid === "function" && info.uid !== process.getuid())
+    (platform !== "win32" &&
+      ((info.mode & 0o777) !== 0o600 || (typeof process.getuid === "function" && info.uid !== process.getuid())))
   ) {
     return { state: "permission-invalid" }
   }
@@ -244,7 +250,12 @@ function quarantineMarker(marker: string) {
   return quarantine
 }
 
-function writeMarker(marker: string, version: string, validate: () => boolean) {
+function writeMarker(
+  marker: string,
+  version: string,
+  validate: () => boolean,
+  platform: NodeJS.Platform = process.platform,
+) {
   const temporary = `${marker}.tmp-${randomUUID()}`
   try {
     const descriptor = openSync(temporary, "wx", 0o600)
@@ -257,14 +268,15 @@ function writeMarker(marker: string, version: string, validate: () => boolean) {
     chmodSync(temporary, 0o600)
     if (!validate()) throw new Error("database changed")
     renameSync(temporary, marker)
-    syncDirectory(path.dirname(marker))
+    syncDirectory(path.dirname(marker), platform)
   } catch (error) {
     if (existsSync(temporary)) unlinkSync(temporary)
     throw error
   }
 }
 
-function syncDirectory(directory: string) {
+function syncDirectory(directory: string, platform: NodeJS.Platform = process.platform) {
+  if (platform === "win32") return
   const descriptor = openSync(directory, "r")
   try {
     fsyncSync(descriptor)

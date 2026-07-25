@@ -69,6 +69,20 @@ describe("schema marker diagnosis and repair", () => {
     expect(diagnoseSchemaMarker(diagnoseInput(directoryDatabase)).state).toBe("invalid")
   })
 
+  test("uses Windows file invariants without applying POSIX marker permissions", async () => {
+    await using tmp = await tmpdir()
+    const databasePath = path.join(tmp.path, "bharatcode.db")
+    createDatabase(databasePath)
+    const marker = path.join(tmp.path, ".schema-version")
+    await writeFile(marker, "v1\n", { mode: 0o644 })
+    const input = { ...diagnoseInput(databasePath), platform: "win32" as const }
+    expect(diagnoseSchemaMarker(input)).toEqual({ state: "healthy", inferredVersion: "v1" })
+
+    await writeFile(marker, "broken", { mode: 0o644 })
+    expect(repairSchemaMarker({ ...input, confirmed: true }).state).toBe("repaired")
+    expect(diagnoseSchemaMarker(input)).toEqual({ state: "healthy", inferredVersion: "v1" })
+  })
+
   test("repairs only the marker after exact integrity/schema proof and is idempotent after durable edges", async () => {
     await using tmp = await tmpdir()
     const databasePath = path.join(tmp.path, "bharatcode.db")
