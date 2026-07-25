@@ -13,7 +13,7 @@ export function recoveryCliPackageName(value: string, arch: string) {
   const platform = requireRecoveryCliPlatform(value)
   if (arch !== "x64" && arch !== "arm64") throw new Error(`Unsupported recovery CLI architecture: ${arch}`)
   const os = platform === "win32" ? "windows" : platform
-  return `bharatcode-${os}-${arch}${arch === "x64" ? "-baseline" : ""}`
+  return `bharatcode-${os}-${arch}`
 }
 
 export function validateRecoveryCliHeader(value: string, bytes: Uint8Array) {

@@ -18,10 +18,10 @@ describe("recovery CLI packaging contract", () => {
     expect(() => recoveryCliFilename("aix")).toThrow("Unsupported recovery CLI platform")
   })
 
-  test("selects only the compatibility build for the host platform and architecture", () => {
-    expect(recoveryCliPackageName("win32", "x64")).toBe("bharatcode-windows-x64-baseline")
-    expect(recoveryCliPackageName("darwin", "x64")).toBe("bharatcode-darwin-x64-baseline")
-    expect(recoveryCliPackageName("linux", "x64")).toBe("bharatcode-linux-x64-baseline")
+  test("selects only the ordinary host-native build for the platform and architecture", () => {
+    expect(recoveryCliPackageName("win32", "x64")).toBe("bharatcode-windows-x64")
+    expect(recoveryCliPackageName("darwin", "x64")).toBe("bharatcode-darwin-x64")
+    expect(recoveryCliPackageName("linux", "x64")).toBe("bharatcode-linux-x64")
     expect(recoveryCliPackageName("win32", "arm64")).toBe("bharatcode-windows-arm64")
     expect(recoveryCliPackageName("darwin", "arm64")).toBe("bharatcode-darwin-arm64")
     expect(recoveryCliPackageName("linux", "arm64")).toBe("bharatcode-linux-arm64")

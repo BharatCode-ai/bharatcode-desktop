@@ -28,7 +28,7 @@ export async function stageRecoveryCli(input: {
 }
 
 export async function buildAndStageRecoveryCli() {
-  await $`bun script/build.ts --single --baseline --skip-install`.cwd(opencodeDir)
+  await $`bun script/build.ts --single --skip-install`.cwd(opencodeDir)
   return stageRecoveryCli({
     distDir: path.join(opencodeDir, "dist"),
     resourcesDir: path.join(desktopDir, "resources"),
