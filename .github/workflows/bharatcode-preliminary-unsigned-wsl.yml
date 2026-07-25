@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 env:
-  ACCEPTED_WSL_SOURCE_SHA: bd1df7ee671190b799322eab3c124ace8db57d9c
+  ACCEPTED_WSL_SOURCE_SHA: c6a680e3ef486d85a91844276cb843de81c2de09
   BHARATCODE_CHANNEL: beta
   OPENCODE_CHANNEL: beta
   SOURCE_SHA: ${{ inputs.source_sha }}
