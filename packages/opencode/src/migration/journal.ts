@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto"
 import { chmod, lstat, mkdir, open, readFile, rename } from "node:fs/promises"
 import path from "node:path"
 
+import { syncDirectory } from "./durability"
+
 export type MigrationPhase = "captured" | "prepared" | "activated" | "validated" | "complete" | "starting-fresh"
 
 export type MigrationJournal = {
@@ -146,15 +148,6 @@ function safeArtifact(value: string) {
 function canonical(value: MigrationJournal | undefined) {
   if (!value) return ""
   return JSON.stringify(Object.fromEntries(KEYS.map((key) => [key, value[key]])))
-}
-
-async function syncDirectory(directory: string) {
-  const handle = await open(directory, "r")
-  try {
-    await handle.sync()
-  } finally {
-    await handle.close()
-  }
 }
 
 function record(value: unknown): value is Record<string, unknown> {

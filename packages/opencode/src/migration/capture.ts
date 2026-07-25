@@ -4,6 +4,7 @@ import { chmod, lstat, mkdir, open, readFile, readdir, rename, rm } from "node:f
 import path from "node:path"
 import { parse as parseJsonc, type ParseError } from "jsonc-parser"
 
+import { syncDirectory } from "./durability"
 import { sanitizeMigrationRecord } from "./sanitize"
 import type { MigrationSource } from "./source"
 
@@ -884,15 +885,6 @@ async function writeDurable(file: string, bytes: Uint8Array) {
   }
   await chmod(file, 0o600)
   await syncDirectory(path.dirname(file))
-}
-
-async function syncDirectory(directory: string) {
-  const handle = await open(directory, "r")
-  try {
-    await handle.sync()
-  } finally {
-    await handle.close()
-  }
 }
 
 function safeRelative(value: string) {

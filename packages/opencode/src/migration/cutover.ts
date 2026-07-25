@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto"
-import { chmod, lstat, mkdir, open, readFile, readdir, rename, rm, writeFile } from "node:fs/promises"
+import { chmod, lstat, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { Database } from "bun:sqlite"
 
@@ -9,6 +9,7 @@ import {
   verifyCapturedSnapshot,
   type MigrationDestination,
 } from "./capture"
+import { syncDirectory } from "./durability"
 import { advanceMigrationJournal, readMigrationJournal, type MigrationJournal } from "./journal"
 import type { MigrationChoice, MigrationSource } from "./source"
 import { withMigrationMaintenanceLock } from "../storage/migration-maintenance-lock"
@@ -421,15 +422,6 @@ function digestBytes(bytes: Uint8Array) {
 
 function maintenanceEntry(name: string) {
   return name.startsWith("lean-migration-maintenance.sqlite")
-}
-
-async function syncDirectory(directory: string) {
-  const handle = await open(directory, "r")
-  try {
-    await handle.sync()
-  } finally {
-    await handle.close()
-  }
 }
 
 function snapshotInput(journal: MigrationJournal, destination: MigrationDestination) {
