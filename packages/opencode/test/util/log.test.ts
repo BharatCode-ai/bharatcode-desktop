@@ -75,3 +75,18 @@ it.live("local dev log is not truncated twice for the same run", () =>
     expect(yield* Effect.promise(() => fs.readFile(path.join(dir, "dev.log"), "utf8"))).toContain("main startup")
   }),
 )
+
+it.live("init creates a missing log directory before opening the run log", () =>
+  Effect.gen(function* () {
+    const log = Global.Path.log
+    yield* Effect.addFinalizer(() => Effect.sync(() => (Global.Path.log = log)))
+    const dir = yield* tmpdirScoped()
+    const missing = path.join(dir, "missing", "Log")
+    Global.Path.log = missing
+
+    yield* Effect.promise(() => Log.init({ print: false, dev: false }))
+
+    expect((yield* Effect.promise(() => fs.stat(missing))).isDirectory()).toBe(true)
+    expect(path.dirname(Log.file())).toBe(missing)
+  }),
+)
