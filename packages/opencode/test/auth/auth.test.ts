@@ -244,37 +244,57 @@ describe("Auth secure native store", () => {
     expect(JSON.stringify(failure.cause)).not.toContain("symlink-secret")
   })
 
-  test("exercises the current-user ACL verifier for a Windows fixture", async () => {
+  test("uses the production current-user ACL path for a Windows fixture", async () => {
     await using tmp = await tmpdir()
     await seedPrivateCredential(tmp.path, JSON.stringify({ bharatcode: { type: "api", key: "windows-private" } }))
-    const unavailable = await expectAuthError(
-      runAuth(
-        tmp.path,
-        Auth.Service.use((auth) => Effect.exit(auth.all())),
-        undefined,
-        { platform: "win32" },
-      ),
-    )
-    expect(unavailable.error).toMatchObject({ operation: "read", reason: "permission" })
-
     const verified: string[] = []
     const result = await runAuth(
       tmp.path,
       Auth.Service.use((auth) => auth.all()),
       undefined,
       {
-        credentialAccess: {
-          verify(input) {
-            expect(input.platform).toBe("win32")
-            verified.push(input.file)
+        platform: "win32",
+        windowsCredentialAcl: {
+          verify(paths) {
+            verified.push(...paths)
           },
         },
-        platform: "win32",
       },
     )
 
     expect(result.bharatcode).toMatchObject({ type: "api", key: "windows-private" })
-    expect(verified).toEqual([completeGlobal(tmp.path).auth])
+    expect(verified).toEqual([completeGlobal(tmp.path).data, completeGlobal(tmp.path).auth])
+  })
+
+  test("a fresh Windows profile reads signed-out and validates its directory before the first write", async () => {
+    await using tmp = await tmpdir()
+    const verified: string[][] = []
+    const options: AuthLayerOptions = {
+      platform: "win32",
+      windowsCredentialAcl: {
+        verify(paths) {
+          verified.push([...paths])
+        },
+      },
+    }
+
+    expect(
+      await runAuth(
+        tmp.path,
+        Auth.Service.use((auth) => auth.all()),
+        undefined,
+        options,
+      ),
+    ).toEqual({})
+    expect(verified).toEqual([])
+
+    await runAuth(
+      tmp.path,
+      Auth.Service.use((auth) => auth.set("bharatcode", api("windows-private"))),
+      undefined,
+      options,
+    )
+    expect(verified).toContainEqual([completeGlobal(tmp.path).data])
   })
 
   test("malformed JSON is a typed store error, not signed out", async () => {

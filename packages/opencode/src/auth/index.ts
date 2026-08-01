@@ -1,4 +1,5 @@
 import path from "node:path"
+import { spawnSync } from "node:child_process"
 import { randomUUID } from "node:crypto"
 import { closeSync, fsyncSync, lstatSync, openSync, renameSync } from "node:fs"
 import { Cause, Context, Effect, Layer, Option, Result, Schema } from "effect"
@@ -74,11 +75,16 @@ export interface CredentialAccess {
   }) => void
 }
 
+export interface WindowsCredentialAcl {
+  readonly verify: (paths: readonly string[]) => void
+}
+
 export interface LayerOptions {
   readonly onLockWait?: AuthLock.Options["onWait"]
   readonly acquireLock?: typeof AuthLock.acquire
   readonly credentialFileOps?: CredentialFileOps
   readonly credentialAccess?: CredentialAccess
+  readonly windowsCredentialAcl?: WindowsCredentialAcl
   readonly platform?: NodeJS.Platform
   readonly onPrepared?: () => void
 }
@@ -110,7 +116,7 @@ export const layerWith = (options: LayerOptions = {}) =>
       const lockFile = path.join(lockDirectory, "auth-store.sqlite")
       const credentialFileOps = options.credentialFileOps ?? defaultCredentialFileOps
       const platform = options.platform ?? process.platform
-      const credentialAccess = options.credentialAccess ?? defaultCredentialAccess
+      const credentialAccess = options.credentialAccess ?? defaultCredentialAccess(options.windowsCredentialAcl)
 
       const verifyAccess = (operation: "read" | "write") =>
         Effect.try({
@@ -406,26 +412,73 @@ function lockError(action: "acquired" | "released") {
   })
 }
 
-const defaultCredentialAccess: CredentialAccess = {
+const defaultCredentialAccess = (windowsAcl: WindowsCredentialAcl = defaultWindowsCredentialAcl): CredentialAccess => ({
   verify({ file, parent, platform, operation }) {
-    if (platform === "win32") throw new Error("A current-user credential ACL verifier is required.")
-    const uid = process.getuid?.()
-    if (uid === undefined) throw new Error("Credential ownership is unverifiable.")
-
     const credential = lstatOrMissing(file)
     if (!credential && operation === "read") return
 
     const directory = lstatOrMissing(parent)
     if (directory) {
       if (directory.isSymbolicLink() || !directory.isDirectory()) throw new Error("Credential directory is unsafe.")
-      if (directory.uid !== uid || (directory.mode & 0o077) !== 0) throw new Error("Credential directory is shared.")
     }
 
-    if (!credential) return
-    if (credential.isSymbolicLink() || !credential.isFile() || credential.nlink !== 1) {
+    if (
+      credential &&
+      (credential.isSymbolicLink() ||
+        !credential.isFile() ||
+        (credential.nlink !== undefined && credential.nlink !== 1))
+    ) {
       throw new Error("Credential file is unsafe.")
     }
+
+    if (platform === "win32") {
+      windowsAcl.verify([...(directory ? [parent] : []), ...(credential ? [file] : [])])
+      return
+    }
+
+    const uid = process.getuid?.()
+    if (uid === undefined) throw new Error("Credential ownership is unverifiable.")
+    if (directory && (directory.uid !== uid || (directory.mode & 0o077) !== 0)) {
+      throw new Error("Credential directory is shared.")
+    }
+    if (!credential) return
     if (credential.uid !== uid || (credential.mode & 0o077) !== 0) throw new Error("Credential file is shared.")
+  },
+})
+
+const windowsAclScript = String.raw`
+$ErrorActionPreference = 'Stop'
+$currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$allowedSids = @($currentSid, 'S-1-5-18', 'S-1-5-32-544', 'S-1-3-0')
+$targets = @(ConvertFrom-Json $env:BHARATCODE_CREDENTIAL_ACL_TARGETS)
+foreach ($target in $targets) {
+  if (-not (Test-Path -LiteralPath $target)) { exit 21 }
+  $item = Get-Item -LiteralPath $target -Force
+  if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { exit 22 }
+  $acl = Get-Acl -LiteralPath $target
+  if ($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $currentSid) { exit 23 }
+  foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+    if ($rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow) { continue }
+    if ($allowedSids -contains $rule.IdentityReference.Value) { continue }
+    if (($rule.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) -ne 0) { continue }
+    exit 24
+  }
+}
+`
+
+const defaultWindowsCredentialAcl: WindowsCredentialAcl = {
+  verify(paths) {
+    if (paths.length === 0) return
+    const systemRoot = process.env.SystemRoot ?? process.env.WINDIR
+    if (!systemRoot) throw new Error("The Windows system root is unavailable.")
+    const executable = path.win32.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+    const result = spawnSync(executable, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", windowsAclScript], {
+      env: { ...process.env, BHARATCODE_CREDENTIAL_ACL_TARGETS: JSON.stringify(paths) },
+      stdio: "ignore",
+      timeout: 10_000,
+      windowsHide: true,
+    })
+    if (result.status !== 0) throw new Error("Credential ACL verification failed.")
   },
 }
 

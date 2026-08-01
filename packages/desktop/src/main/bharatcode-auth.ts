@@ -50,11 +50,23 @@ export function createBharatCodeAccountClient(options: ClientOptions) {
     }
     const body = await response.text()
     const value = body ? parseJson(body) : {}
-    if (!response.ok) throw new Error(safeErrorMessage(value, response.status))
+    if (!response.ok) throw new SidecarRequestError(response.status, safeErrorMessage(value, response.status))
     return value
   }
 
-  const getAccountStatus = async () => projectStatus(await request("/account/status"), now())
+  const getAccountStatus = async () => {
+    try {
+      return projectStatus(await request("/account/status"), now())
+    } catch (error) {
+      if (!(error instanceof SidecarRequestError) || error.status !== 503) throw error
+      return {
+        state: "connection_issue",
+        authenticated: false,
+        checkedAt: now().toISOString(),
+        message: error.message,
+      } satisfies BharatCodeAccountStatus
+    }
+  }
   const refreshAccountStatus = getAccountStatus
 
   const beginSignIn = async (input: { selectAccount?: boolean } = {}) => {
@@ -129,6 +141,15 @@ function parseJson(input: string): unknown {
 function safeErrorMessage(input: unknown, status: number) {
   if (isRecord(input) && isRecord(input.error) && typeof input.error.message === "string") return input.error.message
   return `BharatCode account request failed (${status}).`
+}
+
+class SidecarRequestError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message)
+  }
 }
 
 function isRecord(input: unknown): input is Record<string, unknown> {

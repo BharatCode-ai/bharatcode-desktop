@@ -65,6 +65,22 @@ describe("Desktop client of the shared BharatCode account runtime", () => {
     expect((await client.getAccountStatus()).state).toBe("signed_out")
   })
 
+  test("keeps a temporarily unavailable account status on the sign-in surface", async () => {
+    const client = createBharatCodeAccountClient({
+      getConnection: async () => connection,
+      fetchImpl: async () => json({ error: { message: "BharatCode account storage is unavailable." } }, 503),
+      now: () => new Date("2026-08-01T00:00:00.000Z"),
+    })
+
+    expect(await client.getAccountStatus()).toEqual({
+      state: "connection_issue",
+      authenticated: false,
+      checkedAt: "2026-08-01T00:00:00.000Z",
+      message: "BharatCode account storage is unavailable.",
+    })
+    await expect(client.beginSignIn()).rejects.toThrow("BharatCode account storage is unavailable.")
+  })
+
   test("uses the closed authorize, callback, refresh-status, and logout contracts", async () => {
     const requests: Array<{ url: string; method: string; body?: string }> = []
     const client = createBharatCodeAccountClient({
