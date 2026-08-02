@@ -268,10 +268,14 @@ describe("Auth secure native store", () => {
 
   test("a fresh Windows profile reads signed-out and validates its directory before the first write", async () => {
     await using tmp = await tmpdir()
+    const protectedPaths: string[] = []
     const verified: string[][] = []
     const options: AuthLayerOptions = {
       platform: "win32",
       windowsCredentialAcl: {
+        protect(path) {
+          protectedPaths.push(path)
+        },
         verify(paths) {
           verified.push([...paths])
         },
@@ -294,7 +298,25 @@ describe("Auth secure native store", () => {
       undefined,
       options,
     )
+    expect(protectedPaths).toEqual([completeGlobal(tmp.path).data])
     expect(verified).toContainEqual([completeGlobal(tmp.path).data])
+  })
+
+  test("a fresh Windows profile persists credentials through the production ACL verifier", async () => {
+    if (process.platform !== "win32") return
+    await using tmp = await tmpdir()
+
+    await runAuth(
+      tmp.path,
+      Auth.Service.use((auth) => auth.set("bharatcode", api("windows-private"))),
+    )
+
+    expect(
+      await runAuth(
+        tmp.path,
+        Auth.Service.use((auth) => auth.get("bharatcode")),
+      ),
+    ).toMatchObject({ type: "api", key: "windows-private" })
   })
 
   test("malformed JSON is a typed store error, not signed out", async () => {

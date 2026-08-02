@@ -76,6 +76,7 @@ export interface CredentialAccess {
 }
 
 export interface WindowsCredentialAcl {
+  readonly protect?: (path: string) => void
   readonly verify: (paths: readonly string[]) => void
 }
 
@@ -432,6 +433,7 @@ const defaultCredentialAccess = (windowsAcl: WindowsCredentialAcl = defaultWindo
     }
 
     if (platform === "win32") {
+      if (operation === "write" && directory) windowsAcl.protect?.(parent)
       windowsAcl.verify([...(directory ? [parent] : []), ...(credential ? [file] : [])])
       return
     }
@@ -446,16 +448,47 @@ const defaultCredentialAccess = (windowsAcl: WindowsCredentialAcl = defaultWindo
   },
 })
 
-const windowsAclScript = String.raw`
+const windowsAclProtectScript = String.raw`
+$ErrorActionPreference = 'Stop'
+$currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+$allowedSids = @($currentSid.Value, 'S-1-5-18', 'S-1-5-32-544', 'S-1-3-0')
+$target = @(ConvertFrom-Json $env:BHARATCODE_CREDENTIAL_ACL_TARGETS)[0]
+if (-not [IO.Directory]::Exists($target)) { exit 21 }
+if (([IO.File]::GetAttributes($target) -band [IO.FileAttributes]::ReparsePoint) -ne 0) { exit 22 }
+$acl = [IO.Directory]::GetAccessControl($target)
+if ($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $currentSid.Value) { exit 23 }
+foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+  if ($rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow) { continue }
+  if ($allowedSids -contains $rule.IdentityReference.Value) { continue }
+  if ($rule.IsInherited) { continue }
+  exit 24
+}
+if ($acl.AreAccessRulesProtected) { exit 0 }
+$protectedAcl = [Security.AccessControl.DirectorySecurity]::new()
+$protectedAcl.SetOwner($currentSid)
+$protectedAcl.SetAccessRuleProtection($true, $false)
+foreach ($sid in @($currentSid, [Security.Principal.SecurityIdentifier]::new('S-1-5-18'), [Security.Principal.SecurityIdentifier]::new('S-1-5-32-544'))) {
+  $protectedAcl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+    $sid,
+    [Security.AccessControl.FileSystemRights]::FullControl,
+    [Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit',
+    [Security.AccessControl.PropagationFlags]::None,
+    [Security.AccessControl.AccessControlType]::Allow
+  ))
+}
+[IO.Directory]::SetAccessControl($target, $protectedAcl)
+`
+
+const windowsAclVerifyScript = String.raw`
 $ErrorActionPreference = 'Stop'
 $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 $allowedSids = @($currentSid, 'S-1-5-18', 'S-1-5-32-544', 'S-1-3-0')
-$targets = @(ConvertFrom-Json $env:BHARATCODE_CREDENTIAL_ACL_TARGETS)
+$targets = ConvertFrom-Json $env:BHARATCODE_CREDENTIAL_ACL_TARGETS
 foreach ($target in $targets) {
-  if (-not (Test-Path -LiteralPath $target)) { exit 21 }
-  $item = Get-Item -LiteralPath $target -Force
-  if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { exit 22 }
-  $acl = Get-Acl -LiteralPath $target
+  $directory = [IO.Directory]::Exists($target)
+  if (-not $directory -and -not [IO.File]::Exists($target)) { exit 21 }
+  if (([IO.File]::GetAttributes($target) -band [IO.FileAttributes]::ReparsePoint) -ne 0) { exit 22 }
+  $acl = if ($directory) { [IO.Directory]::GetAccessControl($target) } else { [IO.File]::GetAccessControl($target) }
   if ($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $currentSid) { exit 23 }
   foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
     if ($rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow) { continue }
@@ -467,19 +500,29 @@ foreach ($target in $targets) {
 `
 
 const defaultWindowsCredentialAcl: WindowsCredentialAcl = {
+  protect(path) {
+    runWindowsAcl(windowsAclProtectScript, [path])
+  },
   verify(paths) {
     if (paths.length === 0) return
-    const systemRoot = process.env.SystemRoot ?? process.env.WINDIR
-    if (!systemRoot) throw new Error("The Windows system root is unavailable.")
-    const executable = path.win32.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
-    const result = spawnSync(executable, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", windowsAclScript], {
+    runWindowsAcl(windowsAclVerifyScript, paths)
+  },
+}
+
+function runWindowsAcl(script: string, paths: readonly string[]) {
+  const systemRoot = process.env.SystemRoot ?? process.env.WINDIR
+  if (!systemRoot) throw new Error("The Windows system root is unavailable.")
+  const result = spawnSync(
+    path.win32.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+    ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
+    {
       env: { ...process.env, BHARATCODE_CREDENTIAL_ACL_TARGETS: JSON.stringify(paths) },
       stdio: "ignore",
       timeout: 10_000,
       windowsHide: true,
-    })
-    if (result.status !== 0) throw new Error("Credential ACL verification failed.")
-  },
+    },
+  )
+  if (result.status !== 0) throw new Error("Credential ACL operation failed.")
 }
 
 function lstatOrMissing(pathname: string) {
