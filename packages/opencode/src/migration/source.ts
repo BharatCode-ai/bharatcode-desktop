@@ -38,7 +38,7 @@ export async function discoverMigrationSources(input: DiscoveryInput): Promise<r
       const entries = await Promise.all(
         Object.entries(candidate.roots).map(async ([name, root]) => {
           if (!root) return
-          const inspected = await inspectRoot(root)
+          const inspected = await inspectRoot(root, input.platform)
           if (!inspected) return
           if (destinationRoots.some((destination) => overlaps(inspected.identity, destination))) {
             throw new MigrationSourceError("A migration source overlaps the BharatCode destination.")
@@ -95,7 +95,7 @@ function requireAbsolute(value: string, name: string) {
   if (!path.isAbsolute(value)) throw new MigrationSourceError(`${name} must be an absolute path.`)
 }
 
-async function inspectRoot(root: string) {
+async function inspectRoot(root: string, platform: DiscoveryInput["platform"]) {
   requireAbsolute(root, "source root")
   const info = await lstat(root).catch((error) => {
     if (nodeError(error, "ENOENT")) return undefined
@@ -104,7 +104,11 @@ async function inspectRoot(root: string) {
   if (!info) return
   if (info.isSymbolicLink()) throw new MigrationSourceError("A migration source root is an unsupported link.")
   if (!info.isDirectory()) throw new MigrationSourceError("A migration source root is not a directory.")
-  if ((info.mode & 0o500) !== 0o500) throw new MigrationSourceError("A migration source root is not privately readable.")
+  // Node's POSIX execute bits are not meaningful for Windows directories.
+  // Applying the Unix 0500 check there rejects ordinary private AppData roots.
+  if (platform !== "win32" && (info.mode & 0o500) !== 0o500) {
+    throw new MigrationSourceError("A migration source root is not privately readable.")
+  }
   const identity = await realpath(root).catch(() => {
     throw new MigrationSourceError("BharatCode could not resolve a migration source root.")
   })

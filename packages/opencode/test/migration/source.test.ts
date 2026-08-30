@@ -48,6 +48,24 @@ describe("migration source discovery", () => {
     expect(first[0]?.roots).toEqual({ data: path.join(data, "opencode"), config: path.join(config, "opencode") })
   })
 
+  test("does not interpret Windows directory modes as POSIX execute bits", async () => {
+    await using tmp = await tmpdir()
+    const legacyDesktop = path.join(tmp.path, ".bharatcode")
+    await mkdir(legacyDesktop)
+    await chmod(legacyDesktop, 0o600)
+    try {
+      const result = await discoverMigrationSources({
+        platform: "win32",
+        home: tmp.path,
+        env: {},
+        destinationRoots: [path.join(tmp.path, "destination")],
+      })
+      expect(result.map((source) => source.kind)).toContain("bharatcode-desktop")
+    } finally {
+      await chmod(legacyDesktop, 0o700)
+    }
+  })
+
   test("fails closed for relative, linked, overlapping, duplicate, and unreadable roots", async () => {
     await using tmp = await tmpdir()
     await expect(
