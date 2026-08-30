@@ -7,6 +7,10 @@ function Assert-True([bool]$Condition, [string]$Message) {
   if (-not $Condition) { throw $Message }
 }
 
+$controllerSource = [IO.File]::ReadAllText((Join-Path $PSScriptRoot "wsl-windows-preliminary-controller.ps1"))
+Assert-True ($controllerSource.Contains('result != STATUS_CANNOT_DELETE || attempt >= DELETE_IMAGE_RELEASE_RETRIES')) "controller must bound retries to transient image-section release"
+Assert-True ($controllerSource.Contains('Thread.Sleep(DELETE_IMAGE_RELEASE_RETRY_MS)')) "controller must wait between transient image-section retries"
+
 function Assert-Throws([scriptblock]$Action, [string]$Message) {
   try { & $Action; throw "Expected failure: $Message" }
   catch { if ($_.Exception.Message -eq "Expected failure: $Message") { throw } }

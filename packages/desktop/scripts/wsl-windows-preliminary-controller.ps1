@@ -420,6 +420,9 @@ namespace BharatCode.Preliminary {
     private const uint FILE_DISPOSITION_FLAG_DELETE = 0x00000001;
     private const uint FILE_DISPOSITION_FLAG_POSIX_SEMANTICS = 0x00000002;
     private const uint FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE = 0x00000010;
+    private const int STATUS_CANNOT_DELETE = unchecked((int)0xC0000121);
+    private const int DELETE_IMAGE_RELEASE_RETRIES = 50;
+    private const int DELETE_IMAGE_RELEASE_RETRY_MS = 100;
     private const uint FILE_RENAME_FLAG_POSIX_SEMANTICS = 0x00000002;
     private const uint DUPLICATE_SAME_ACCESS = 0x00000002;
     private const uint CREATE_SUSPENDED = 0x00000004;
@@ -981,9 +984,19 @@ namespace BharatCode.Preliminary {
       var pointer = Marshal.AllocHGlobal(Marshal.SizeOf(typeof(FILE_DISPOSITION_INFO_EX)));
       try {
         Marshal.StructureToPtr(value, pointer, false);
-        IO_STATUS_BLOCK status;
-        var result = NtSetInformationFile(handle, out status, pointer, (uint)Marshal.SizeOf(typeof(FILE_DISPOSITION_INFO_EX)), FILE_DISPOSITION_INFORMATION_EX);
-        if (result < 0) throw new InvalidOperationException("Preliminary handle-relative deletion failed with NTSTATUS 0x" + unchecked((uint)result).ToString("X8") + "; " + DescribeHandle(handle));
+        for (var attempt = 0; ; attempt++) {
+          IO_STATUS_BLOCK status;
+          var result = NtSetInformationFile(handle, out status, pointer, (uint)Marshal.SizeOf(typeof(FILE_DISPOSITION_INFO_EX)), FILE_DISPOSITION_INFORMATION_EX);
+          if (result >= 0) {
+            if (attempt != 0) Diagnostic("preliminary_controller_delete_image_release_retries=" + attempt.ToString());
+            return;
+          }
+          // Windows can keep an exited executable's image section mapped for a
+          // short period. Retry only that transient status through the already
+          // pinned handle; every other failure remains immediate and fail-closed.
+          if (result != STATUS_CANNOT_DELETE || attempt >= DELETE_IMAGE_RELEASE_RETRIES) throw new InvalidOperationException("Preliminary handle-relative deletion failed with NTSTATUS 0x" + unchecked((uint)result).ToString("X8") + "; " + DescribeHandle(handle));
+          Thread.Sleep(DELETE_IMAGE_RELEASE_RETRY_MS);
+        }
       }
       finally { Marshal.FreeHGlobal(pointer); }
     }
