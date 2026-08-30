@@ -94,6 +94,25 @@ describe("bharatcode doctor and recovery adapter", () => {
     expect(await controller.inspect()).toEqual({ state: "ready" })
   })
 
+  test("excludes an incompatible source without hiding a valid recovery choice", async () => {
+    const fixture = await setup()
+    const validSource = path.join(fixture.home, ".bharatcode")
+    await mkdir(validSource, { recursive: true, mode: 0o700 })
+    await writeFile(path.join(validSource, "settings.json"), "{}", { mode: 0o600 })
+
+    const invalidData = path.join(fixture.home, ".local", "share", "opencode")
+    await mkdir(invalidData, { recursive: true, mode: 0o700 })
+    const invalidDatabase = new Database(path.join(invalidData, "opencode.db"), { create: true })
+    invalidDatabase.run("CREATE TABLE runtime_capability(id TEXT PRIMARY KEY, data TEXT NOT NULL)")
+    invalidDatabase.close()
+
+    const result = await createRecoveryController(fixture.input).inspect()
+    expect(result.state).toBe("choose-source")
+    if (result.state !== "choose-source") throw new Error("expected source choice")
+    expect(result.sources).toHaveLength(1)
+    expect(result.sources[0]?.id.startsWith("bharatcode-desktop-")).toBe(true)
+  })
+
   test("Start Fresh is marker-independent, confirmation-bound, and idempotent", async () => {
     const fixture = await setup()
     const controller = createRecoveryController(fixture.input)

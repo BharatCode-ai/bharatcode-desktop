@@ -74,15 +74,18 @@ export function createRecoveryController(input: RecoveryControllerInput) {
 
     const sources = await safeSources(input)
     if (sources.length === 0) return { state: "start-fresh", reason: "no-source" }
+    const choices = await Promise.allSettled(
+      sources.map(async (source) => ({
+        id: source.id,
+        label: source.label,
+        contentFingerprint: await fingerprintMigrationSource(source),
+      })),
+    )
+    const valid = choices.flatMap((choice) => (choice.status === "fulfilled" ? [choice.value] : []))
+    if (valid.length === 0) return { state: "start-fresh", reason: "ambiguous" }
     return {
       state: "choose-source",
-      sources: await Promise.all(
-        sources.map(async (source) => ({
-          id: source.id,
-          label: source.label,
-          contentFingerprint: await fingerprintMigrationSource(source),
-        })),
-      ),
+      sources: valid,
     }
   }
 
