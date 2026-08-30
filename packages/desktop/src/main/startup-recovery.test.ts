@@ -113,9 +113,12 @@ describe("Desktop startup recovery", () => {
       readFile(path.join(import.meta.dir, "ipc.ts"), "utf8"),
     ])
     expect(main).toContain("bundledRecoveryExecutable(desktopResourcesPath())")
+    const protocol = main.indexOf("registerRendererProtocol()")
     const gate = main.indexOf("const recoveryStatus = yield* Effect.promise(() => startupRecovery.inspect())")
     const account = main.indexOf("accountClient = createBharatCodeAccountClient")
     const sidecar = main.indexOf("spawnLocalServer(hostname")
+    expect(protocol).toBeGreaterThan(0)
+    expect(protocol).toBeLessThan(gate)
     expect(gate).toBeGreaterThan(0)
     expect(account).toBeGreaterThan(gate)
     expect(sidecar).toBeGreaterThan(gate)

@@ -416,6 +416,7 @@ const main = Effect.gen(function* () {
   })
 
   yield* Effect.promise(() => app.whenReady())
+  registerRendererProtocol()
 
   let overlay: BrowserWindow | null = null
   const recoveryStatus = yield* Effect.promise(() => startupRecovery.inspect())
@@ -436,7 +437,6 @@ const main = Effect.gen(function* () {
 
   if (!TEST_ONBOARDING) migrate()
   app.setAsDefaultProtocolClient(BRANDING.protocol)
-  registerRendererProtocol()
   setDockIcon()
   setupAutoUpdater()
   yield* Effect.promise(() => startNetLog()).pipe(
