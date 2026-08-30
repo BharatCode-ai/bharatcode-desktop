@@ -52,7 +52,7 @@ jobs:
           [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]]
           [[ "$(git status --porcelain)" == "" ]]
           git merge-base --is-ancestor "$ACCEPTED_WSL_SOURCE_SHA" "$SOURCE_SHA"
-          [[ "$(git diff --name-only "$ACCEPTED_WSL_SOURCE_SHA" "$SOURCE_SHA" | grep -Ev '^(bun.lock|packages/desktop/|.github/workflows/bharatcode-preliminary-unsigned-wsl.yml)$' || true)" == "" ]]
+          [[ "$(git diff --name-only "$ACCEPTED_WSL_SOURCE_SHA" "$SOURCE_SHA" | grep -Ev '^(bun.lock|packages/desktop/.*|.github/workflows/bharatcode-preliminary-unsigned-wsl.yml)$' || true)" == "" ]]
           [[ "$(git diff --name-only "$ACCEPTED_WSL_SOURCE_SHA" "$SOURCE_SHA" | grep -E '^(packages/opencode/|packages/app/|packages/core/)' || true)" == "" ]]
           grep -F '"packageManager": "bun@1.3.14"' package.json
           [[ "$(bun --version)" == "1.3.14" ]]
