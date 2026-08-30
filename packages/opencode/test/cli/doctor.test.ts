@@ -106,7 +106,7 @@ describe("bharatcode doctor and recovery adapter", () => {
     invalidDatabase.run("CREATE TABLE runtime_capability(id TEXT PRIMARY KEY, data TEXT NOT NULL)")
     invalidDatabase.close()
 
-    const result = await createRecoveryController(fixture.input).inspect()
+    const result = await createRecoveryController({ ...fixture.input, platform: "win32" }).inspect()
     expect(result.state).toBe("choose-source")
     if (result.state !== "choose-source") throw new Error("expected source choice")
     expect(result.sources).toHaveLength(1)
