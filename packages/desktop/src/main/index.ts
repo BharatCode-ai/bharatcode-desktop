@@ -8,7 +8,7 @@ import { dirname, join, resolve } from "node:path"
 import { getCACertificates, setDefaultCACertificates } from "node:tls"
 import { fileURLToPath } from "node:url"
 import type { Event } from "electron"
-import { app, BrowserWindow, shell } from "electron"
+import { app, BrowserWindow, dialog, shell } from "electron"
 
 import contextMenu from "electron-context-menu"
 
@@ -52,6 +52,7 @@ import { getStore } from "./store"
 import { checkUpdate, checkForUpdates, installUpdate, setupAutoUpdater } from "./updater"
 import { Deferred, Effect, Fiber } from "effect"
 import { bundledRecoveryExecutable, createStartupRecovery } from "./startup-recovery"
+import { reportStartupFailure } from "./startup-failure"
 import { createWslService } from "./wsl-distro"
 import {
   configureWslForControlledRelaunch,
@@ -633,5 +634,14 @@ if (dispatch.kind === "acceptance") {
     },
   )
 } else if (dispatch.kind === "ordinary") {
-  Effect.runFork(main)
+  void Effect.runPromise(main).catch((error) =>
+    reportStartupFailure(
+      {
+        log: (failure) => logger?.error("desktop startup failed", failure),
+        showError: (title, message) => dialog.showErrorBox(title, message),
+        exit: (code) => app.exit(code),
+      },
+      error,
+    ),
+  )
 }

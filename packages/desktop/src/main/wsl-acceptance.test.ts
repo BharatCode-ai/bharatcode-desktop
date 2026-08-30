@@ -197,7 +197,7 @@ describe("packaged WSL acceptance entrypoint", () => {
     const adapterSource = readFileSync(new URL("./wsl-acceptance.ts", import.meta.url), "utf8")
     const dispatch = indexSource.lastIndexOf("resolveWslAcceptanceInvocation")
     const acceptance = indexSource.indexOf('dispatch.kind === "acceptance"')
-    const ordinaryMain = indexSource.indexOf("Effect.runFork(main)")
+    const ordinaryMain = indexSource.indexOf("Effect.runPromise(main)")
 
     expect(dispatch).toBeGreaterThanOrEqual(0)
     expect(acceptance).toBeGreaterThan(dispatch)
