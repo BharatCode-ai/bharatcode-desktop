@@ -54,6 +54,7 @@ import { Deferred, Effect, Fiber } from "effect"
 import { bundledRecoveryExecutable, createStartupRecovery } from "./startup-recovery"
 import { reportStartupFailure } from "./startup-failure"
 import { awaitInitialization } from "./initialization"
+import { openExternalUrl } from "./external-browser"
 import { createWslService } from "./wsl-distro"
 import {
   configureWslForControlledRelaunch,
@@ -394,7 +395,7 @@ const main = Effect.gen(function* () {
       const authorization = await requireAccountClient().beginSignIn({
         selectAccount: options?.selectAccount === true,
       })
-      await shell.openExternal(authorization.url)
+      await openExternalUrl(authorization.url, { openExternal: (url) => shell.openExternal(url) })
       return {
         state: options?.selectAccount ? ("switching" as const) : ("authorizing" as const),
         authenticated: false,
