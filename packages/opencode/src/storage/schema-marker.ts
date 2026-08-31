@@ -13,8 +13,10 @@ import {
   writeSync,
 } from "node:fs"
 import path from "node:path"
+import { windowsCredentialStore } from "@opencode-ai/core/util/windows-credential-store"
 
 import { withMigrationMaintenanceLockSync } from "./migration-maintenance-lock"
+import { quarantineWindowsMarker } from "./schema-marker.windows"
 
 export type MarkerState =
   | "healthy"
@@ -84,6 +86,8 @@ export function repairSchemaMarker(input: RepairMarkerInput): {
     const diagnosis = diagnoseSchemaMarker(input)
     if (diagnosis.state === "healthy") return { state: "unchanged", diagnosis }
     if (!diagnosis.inferredVersion || diagnosis.state === "corrupt") return { state: "failed", diagnosis }
+    if (process.platform === "win32" && (diagnosis.state === "permission-invalid" || diagnosis.state === "unreadable"))
+      return { state: "failed", diagnosis }
     if (!sameDatabase(identity, inspectDatabase(input.databasePath)))
       return { state: "failed", diagnosis: { state: "corrupt" } }
     let quarantine: string | undefined
@@ -92,7 +96,6 @@ export function repairSchemaMarker(input: RepairMarkerInput): {
       const marker = markerPath(input.databasePath)
       if (existsSync(marker)) {
         quarantine = quarantineMarker(marker)
-        syncDirectory(path.dirname(marker))
       }
       if (!sameDatabase(identity, inspectDatabase(input.databasePath))) {
         return { state: "failed", diagnosis: { state: "corrupt" }, ...(quarantine ? { quarantine } : {}) }
@@ -101,13 +104,11 @@ export function repairSchemaMarker(input: RepairMarkerInput): {
       published = true
       if (!sameDatabase(identity, inspectDatabase(input.databasePath))) {
         quarantine = quarantineMarker(marker)
-        syncDirectory(path.dirname(marker))
         return { state: "failed", diagnosis: { state: "corrupt" }, quarantine }
       }
       const verified = diagnoseSchemaMarker(input)
       if (verified.state !== "healthy") {
         quarantine = quarantineMarker(marker)
-        syncDirectory(path.dirname(marker))
         return { state: "failed", diagnosis: verified, quarantine }
       }
       return { state: "repaired", diagnosis: verified, ...(quarantine ? { quarantine } : {}) }
@@ -115,7 +116,6 @@ export function repairSchemaMarker(input: RepairMarkerInput): {
       const marker = markerPath(input.databasePath)
       if (published && existsSync(marker)) {
         quarantine = quarantineMarker(marker)
-        syncDirectory(path.dirname(marker))
       }
       return { state: "failed", diagnosis, ...(quarantine ? { quarantine } : {}) }
     }
@@ -201,17 +201,20 @@ function inspectMarker(marker: string): MarkerInspection {
   if (!info.isFile()) return { state: info.isSymbolicLink() ? "permission-invalid" : "invalid" }
   if (
     info.nlink !== 1 ||
-    (info.mode & 0o777) !== 0o600 ||
-    (typeof process.getuid === "function" && info.uid !== process.getuid())
+    (process.platform !== "win32" &&
+      ((info.mode & 0o777) !== 0o600 || (typeof process.getuid === "function" && info.uid !== process.getuid())))
   ) {
     return { state: "permission-invalid" }
   }
   try {
-    const value = readFileSync(marker, "utf8")
+    // Windows mode bits are synthetic, not ACL evidence. This reads and validates
+    // the same held single-link/no-reparse object and its retained private parent.
+    const value = process.platform === "win32" ? windowsCredentialStore(marker).read() : readFileSync(marker, "utf8")
+    if (value === undefined) return { state: "missing" }
     if (!/^[A-Za-z0-9._-]{1,128}\n$/.test(value)) return { state: "invalid" }
     return { state: "invalid", version: value.trim() }
   } catch {
-    return { state: "unreadable" }
+    return { state: process.platform === "win32" ? "permission-invalid" : "unreadable" }
   }
 }
 
@@ -240,11 +243,23 @@ function quarantineMarker(marker: string) {
     .slice(0, 16)
   const base = `${marker}.quarantine-${digest}`
   const quarantine = existsSync(base) ? `${base}-${randomUUID()}` : base
-  renameSync(marker, quarantine)
+  if (process.platform === "win32") quarantineWindowsMarker(marker, quarantine)
+  else {
+    renameSync(marker, quarantine)
+    syncDirectory(path.dirname(marker))
+  }
   return quarantine
 }
 
 function writeMarker(marker: string, version: string, validate: () => boolean) {
+  if (process.platform === "win32") {
+    if (!validate()) throw new Error("database changed")
+    // Private held-parent publication: write-through file, flush before/after
+    // native rename. Errors (including uncertain activation) propagate, never
+    // become successful repair or a directory-fsync suppression.
+    windowsCredentialStore(marker).publish(`${version}\n`)
+    return
+  }
   const temporary = `${marker}.tmp-${randomUUID()}`
   try {
     const descriptor = openSync(temporary, "wx", 0o600)

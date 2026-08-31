@@ -5,7 +5,11 @@ import { spawnSync } from "node:child_process"
 // travel only over private stdin/stdout pipes, never argv, environment or disk scripts.
 // ACL decisions and credential reads operate on the same retained file handle.
 export function windowsCredentialStore(file: string, options: { spawn?: typeof spawnSync } = {}) {
-  const invoke = (operation: "read" | "publish" | "prepare", content?: string): string | undefined => {
+  const invoke = (
+    operation: "read" | "publish" | "prepare" | "quarantine-marker",
+    content?: string,
+    quarantine?: { destination: string; identity: string },
+  ): string | undefined => {
     if (process.platform !== "win32" || !path.win32.isAbsolute(file))
       throw new Error("Windows credential access unavailable")
     const root = process.env.SystemRoot ?? process.env.WINDIR
@@ -18,6 +22,7 @@ export function windowsCredentialStore(file: string, options: { spawn?: typeof s
           operation,
           file,
           content: content === undefined ? null : Buffer.from(content).toString("base64"),
+          ...quarantine,
         }),
         encoding: "utf8",
         windowsHide: true,
@@ -28,9 +33,11 @@ export function windowsCredentialStore(file: string, options: { spawn?: typeof s
     )
     if (result.status !== 0 || result.error) {
       throw new Error(
-        operation === "publish"
-          ? "Windows credential publication was not confirmed. Re-read account state before retrying."
-          : "Windows credential permissions or access could not be verified.",
+        operation === "quarantine-marker"
+          ? "Windows schema marker quarantine was not confirmed. Recheck recovery state before retrying."
+          : operation === "publish"
+            ? "Windows credential publication was not confirmed. Re-read account state before retrying."
+            : "Windows credential permissions or access could not be verified.",
       )
     }
     const response: unknown = JSON.parse(result.stdout)
@@ -54,6 +61,16 @@ export function windowsCredentialStore(file: string, options: { spawn?: typeof s
     read: () => invoke("read"),
     publish: (content: string) => {
       invoke("publish", content)
+    },
+    quarantineMarker: (destination: string, identity: string) => {
+      if (
+        path.win32.basename(file) !== ".schema-version" ||
+        path.win32.dirname(file) !== path.win32.dirname(destination) ||
+        !path.win32.basename(destination).startsWith(".schema-version.quarantine-") ||
+        !/^[0-9]+$/.test(identity)
+      )
+        throw new Error("Invalid schema marker quarantine.")
+      invoke("quarantine-marker", undefined, { destination, identity })
     },
   }
 }
@@ -233,7 +250,7 @@ public static class BharatCodeCredentialFile {
       return result;
     } finally { pinned.Free(); Marshal.FreeHGlobal(pointer); Marshal.FreeHGlobal(text); }
   }
-  static void RenameRelative(SafeFileHandle file, SafeFileHandle parent, string name) {
+  static void RenameRelative(SafeFileHandle file, SafeFileHandle parent, string name, bool replace = true) {
     // Reuse the controller's retained-handle NtSetInformationFile rename boundary.
     // The file is opened WRITE_THROUGH and flushed before and after publication.
     var offset = Marshal.OffsetOf(typeof(RenameInfo), "Name").ToInt32();
@@ -242,13 +259,44 @@ public static class BharatCodeCredentialFile {
     var pointer = Marshal.AllocHGlobal(size);
     try {
       for(int i=0;i<size;i++)Marshal.WriteByte(pointer,i,0);
-      Marshal.WriteInt32(pointer, 0, 3); // REPLACE_IF_EXISTS | POSIX_SEMANTICS: the pinned previous handle retains its old object.
+      Marshal.WriteInt32(pointer, 0, replace ? 3 : 0); // Publication replaces; quarantine must never overwrite.
       Marshal.WriteIntPtr(pointer, Marshal.OffsetOf(typeof(RenameInfo), "Root").ToInt32(), parent.DangerousGetHandle());
       Marshal.WriteInt32(pointer, Marshal.OffsetOf(typeof(RenameInfo), "Length").ToInt32(), bytes.Length);
       Marshal.Copy(bytes, 0, IntPtr.Add(pointer, offset), bytes.Length);
       IOStatus status;
       if (NtSetInformationFile(file, out status, pointer, (uint)size, 65) < 0) throw new IOException("Credential activation failed");
     } finally { Marshal.FreeHGlobal(pointer); }
+  }
+  public static void QuarantineMarker(string input, string destination, string expectedIdentity) {
+    var file = Full(input);
+    var target = Full(destination);
+    if (Path.GetFileName(file) != ".schema-version" ||
+        !String.Equals(Path.GetDirectoryName(file), Path.GetDirectoryName(target), StringComparison.OrdinalIgnoreCase) ||
+        !Path.GetFileName(target).StartsWith(".schema-version.quarantine-", StringComparison.Ordinal)) throw new IOException("Invalid marker quarantine");
+    using (var parent = PinParent(file, false)) {
+      if (parent.Missing) throw new IOException("Marker parent missing");
+      var parentSecurity = Security(parent.Parent);
+      // Retain the original object and all ancestors, with no delete/write sharing.
+      // Do not apply a pathname rename after releasing the identity/security checks.
+      using (var handle = CreateFileW(file, READ | WRITE | DELETE | READ_CONTROL, SHARE_READ, IntPtr.Zero, 3, 0x80000000 | 0x00200000, IntPtr.Zero)) {
+        if (handle.IsInvalid) throw new IOException("Marker quarantine unavailable");
+        var info = Inspect(handle, false);
+        var identity = (((ulong)info.IndexHigh << 32) | info.IndexLow).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        if (identity != expectedIdentity || !String.Equals(Final(handle), file, StringComparison.OrdinalIgnoreCase)) throw new IOException("Marker identity changed");
+        var security = Security(handle);
+        using (var stream = new FileStream(handle, FileAccess.ReadWrite)) {
+          stream.Flush(true);
+          Unchanged(parentSecurity, Security(parent.Parent));
+          Unchanged(security, Security(handle));
+          RenameRelative(handle, parent.Parent, Path.GetFileName(target), false);
+          stream.Flush(true);
+          Inspect(handle, false);
+          if (!String.Equals(Final(handle), target, StringComparison.OrdinalIgnoreCase)) throw new IOException("Marker quarantine identity changed");
+          Unchanged(parentSecurity, Security(parent.Parent));
+          Unchanged(security, Security(handle));
+        }
+      }
+    }
   }
   public static void Publish(string input, string content) {
     var file = Full(input);
@@ -294,6 +342,7 @@ public static class BharatCodeCredentialFile {
   if ($request.operation -eq 'read') { $content = [BharatCodeCredentialFile]::Read([string]$request.file) }
   elseif ($request.operation -eq 'prepare') { [BharatCodeCredentialFile]::Prepare([string]$request.file); $content = $null }
   elseif ($request.operation -eq 'publish') { [BharatCodeCredentialFile]::Publish([string]$request.file, [string]$request.content); $content = $null }
+  elseif ($request.operation -eq 'quarantine-marker') { [BharatCodeCredentialFile]::QuarantineMarker([string]$request.file, [string]$request.destination, [string]$request.identity); $content = $null }
   else { throw 'Invalid operation' }
   [Console]::Out.Write((@{ok=$true;content=$content} | ConvertTo-Json -Compress))
 } catch { exit 1 }
