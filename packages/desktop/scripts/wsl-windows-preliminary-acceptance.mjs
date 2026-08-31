@@ -113,12 +113,12 @@ export function parsePreliminaryPackagedCaseOutput(stdout, stderr) {
 
 function preliminaryAuthority(env, sourceSha) {
   const repository = "BharatCode-ai/bharatcode-desktop"
-  const workflow = `${repository}/.github/workflows/bharatcode-preliminary-unsigned-wsl.yml@refs/heads/dev`
+  const workflow = `${repository}/.github/workflows/bharatcode-preliminary-unsigned-wsl.yml@refs/heads/codex/windows-startup-hotfix-1.15.22`
   if (
     env.GITHUB_ACTIONS !== "true" ||
     env.RUNNER_OS !== "Windows" ||
     env.GITHUB_REPOSITORY !== repository ||
-    env.GITHUB_REF !== "refs/heads/dev" ||
+    env.GITHUB_REF !== "refs/heads/codex/windows-startup-hotfix-1.15.22" ||
     env.GITHUB_WORKFLOW_REF !== workflow ||
     env.GITHUB_SHA !== sourceSha
   ) {

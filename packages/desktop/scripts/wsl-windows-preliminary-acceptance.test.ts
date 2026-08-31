@@ -38,10 +38,10 @@ const env = {
   GITHUB_RUN_ID: "123456789",
   GITHUB_RUN_ATTEMPT: "2",
   GITHUB_REPOSITORY: "BharatCode-ai/bharatcode-desktop",
-  GITHUB_REF: "refs/heads/dev",
+  GITHUB_REF: "refs/heads/codex/windows-startup-hotfix-1.15.22",
   GITHUB_SHA: sourceSha,
   GITHUB_WORKFLOW_REF:
-    "BharatCode-ai/bharatcode-desktop/.github/workflows/bharatcode-preliminary-unsigned-wsl.yml@refs/heads/dev",
+    "BharatCode-ai/bharatcode-desktop/.github/workflows/bharatcode-preliminary-unsigned-wsl.yml@refs/heads/codex/windows-startup-hotfix-1.15.22",
 }
 
 type CaseName = "scenario-9" | "scenario-10-before-restart" | "scenario-10-after-restart"
@@ -204,6 +204,13 @@ describe("preliminary unsigned WSL observation adapter", () => {
   test("rejects foreign authority, non-diagnostic harness results, missing phases, and identity substitution", async () => {
     for (const hostile of [
       dependencies({ env: { ...env, GITHUB_RUN_ATTEMPT: "01" } }),
+      dependencies({
+        env: {
+          ...env,
+          GITHUB_REF: "refs/heads/dev",
+          GITHUB_WORKFLOW_REF: env.GITHUB_WORKFLOW_REF.replace("codex/windows-startup-hotfix-1.15.22", "dev"),
+        },
+      }),
       dependencies({
         env: { ...env, GITHUB_WORKFLOW_REF: env.GITHUB_WORKFLOW_REF.replace("preliminary-unsigned", "next-beta") },
       }),

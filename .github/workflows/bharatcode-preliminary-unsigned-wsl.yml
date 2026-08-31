@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 env:
-  ACCEPTED_WSL_SOURCE_SHA: 2ec7cff9a1ec8ca277c68f3f4c3c8797cc3f428f
+  ACCEPTED_WSL_SOURCE_SHA: ee5e9a6351edea2e6c71af56de1d2f554ae8ce09
   BHARATCODE_CHANNEL: beta
   OPENCODE_CHANNEL: beta
   SOURCE_SHA: ${{ inputs.source_sha }}
@@ -53,7 +53,7 @@ jobs:
           [[ "$(git status --porcelain)" == "" ]]
           git merge-base --is-ancestor "$ACCEPTED_WSL_SOURCE_SHA" "$SOURCE_SHA"
           [[ "$(git rev-parse "$SOURCE_SHA^")" == "$ACCEPTED_WSL_SOURCE_SHA" ]]
-          [[ "$(git diff --name-only "$ACCEPTED_WSL_SOURCE_SHA" "$SOURCE_SHA")" == $'.github/workflows/bharatcode-next-beta-candidate.yml\n.github/workflows/bharatcode-preliminary-unsigned-wsl.yml\npackages/desktop/scripts/preliminary-wsl-jit-host-controller.ps1\npackages/desktop/scripts/preliminary-wsl-jit-host-controller.test.ps1' ]]
+          [[ "$(git diff --name-only "$ACCEPTED_WSL_SOURCE_SHA" "$SOURCE_SHA")" == $'.github/workflows/bharatcode-next-beta-candidate.yml\n.github/workflows/bharatcode-preliminary-unsigned-wsl.yml\npackages/desktop/scripts/wsl-windows-preliminary-acceptance.mjs\npackages/desktop/scripts/wsl-windows-preliminary-acceptance.test.ts' ]]
           grep -F '"packageManager": "bun@1.3.14"' package.json
           [[ "$(bun --version)" == "1.3.14" ]]
           desktop_version="$(bun -e 'process.stdout.write((await Bun.file("packages/desktop/package.json").json()).version)')"
