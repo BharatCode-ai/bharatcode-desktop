@@ -12,7 +12,8 @@ import { app, BrowserWindow, dialog, shell } from "electron"
 
 import contextMenu from "electron-context-menu"
 
-import { createBharatCodeAccountClient, isBharatCodeAuthCallback } from "./bharatcode-auth"
+import { createBharatCodeAccountClient } from "./bharatcode-auth"
+import { createDeepLinkEvents } from "./deep-link-events"
 import { createSidecarAuthorizationPolicy, type SidecarAuthorizationPolicy } from "./sidecar-auth"
 import { BRANDING, appIdForChannel, productNameForChannel } from "./branding"
 import {
@@ -131,25 +132,13 @@ async function emitDeepLinks(urls: string[]) {
   if (mainWindow) sendDeepLinks(mainWindow, translated)
 }
 
-function handleIncomingDeepLinks(urls: string[]) {
-  for (const url of urls) {
-    if (!isBharatCodeAuthCallback(url)) {
-      void emitDeepLinks([url]).catch((error) => logger.warn("failed to translate WSL project deep link", error))
-      continue
-    }
-    if (!accountClient) {
-      pendingAccountCallbacks.push(url)
-      continue
-    }
-    void accountClient.completeSignIn(url).catch((error) => {
-      logger.warn("failed to handle BharatCode auth callback", error)
-    })
-  }
-}
-
-function supportedDeepLinks(argv: string[]) {
-  return argv.filter((arg: string) => arg.startsWith(`${BRANDING.protocol}://`))
-}
+const deepLinkEvents = createDeepLinkEvents({
+  protocol: BRANDING.protocol,
+  pending: pendingAccountCallbacks,
+  client: () => accountClient,
+  forward: emitDeepLinks,
+  log: (event) => logger.log(event),
+})
 
 function setInitStep(step: InitStep) {
   initStep = step
@@ -287,11 +276,7 @@ const main = Effect.gen(function* () {
   })
 
   app.on("second-instance", (_event: Event, argv: string[]) => {
-    const urls = supportedDeepLinks(argv)
-    if (urls.length) {
-      logger.log("deep link received via second-instance", { urls })
-      handleIncomingDeepLinks(urls)
-    }
+    void deepLinkEvents.secondInstance(argv).catch(() => logger.warn("Desktop deep-link handling failed."))
     if (mainWindow) {
       mainWindow.show()
       mainWindow.focus()
@@ -299,9 +284,7 @@ const main = Effect.gen(function* () {
   })
 
   app.on("open-url", (event: Event, url: string) => {
-    event.preventDefault()
-    logger.log("deep link received via open-url", { url })
-    handleIncomingDeepLinks([url])
+    void deepLinkEvents.openUrl(event, url).catch(() => logger.warn("Desktop deep-link handling failed."))
   })
 
   app.on("before-quit", () => {
@@ -599,11 +582,7 @@ const main = Effect.gen(function* () {
 
   if (overlay) yield* Deferred.await(loadingComplete)
 
-  for (const callback of pendingAccountCallbacks.splice(0)) {
-    void requireAccountClient()
-      .completeSignIn(callback)
-      .catch((error) => logger.warn("failed to complete BharatCode sign-in", error))
-  }
+  void deepLinkEvents.flush().catch(() => logger.warn("Desktop pending callback handling failed."))
 
   mainWindow = createMainWindow(() => sidecarAuthorization)
   if (mainWindow) {
