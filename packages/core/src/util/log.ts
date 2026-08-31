@@ -2,7 +2,6 @@ export * as Log from "./log"
 
 import path from "path"
 import fs from "fs/promises"
-import { createWriteStream } from "fs"
 import * as Global from "../global"
 import { Schema } from "effect"
 import { Glob } from "./glob"
@@ -73,9 +72,19 @@ export async function init(options: Options) {
   )
   const runID = process.env.OPENCODE_RUN_ID
   const shouldTruncate = !options.dev || !runID || process.env[initializedRunID] !== runID
-  if (shouldTruncate) await fs.truncate(logpath).catch(() => {})
+  // Recovery/metadata inspection deliberately does not initialize runtime folders.
+  // Own the log parent here, and await open errors so sidecar startup can report
+  // them safely instead of crashing from an unhandled WriteStream error.
+  const handle = await (async () => {
+    try {
+      await fs.mkdir(Global.Path.log, { recursive: true, mode: 0o700 })
+      return await fs.open(logpath, shouldTruncate ? "w" : "a", 0o600)
+    } catch {
+      throw new Error("BharatCode could not open its log. Check disk space and write access.")
+    }
+  })()
   if (options.dev && runID) process.env[initializedRunID] = runID
-  const stream = createWriteStream(logpath, { flags: "a" })
+  const stream = handle.createWriteStream({ autoClose: true })
   write = async (msg: any) => {
     return new Promise((resolve, reject) => {
       stream.write(msg, (err) => {
