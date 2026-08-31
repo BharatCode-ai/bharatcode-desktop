@@ -53,6 +53,7 @@ import { checkUpdate, checkForUpdates, installUpdate, setupAutoUpdater } from ".
 import { Deferred, Effect, Fiber } from "effect"
 import { bundledRecoveryExecutable, createStartupRecovery } from "./startup-recovery"
 import { reportStartupFailure } from "./startup-failure"
+import { awaitInitialization } from "./initialization"
 import { createWslService } from "./wsl-distro"
 import {
   configureWslForControlledRelaunch,
@@ -329,29 +330,30 @@ const main = Effect.gen(function* () {
   }
   process.on("exit", () => wslLifecycle?.closeInput())
 
-  const serverReady = Deferred.makeUnsafe<ServerReadyData>()
+  const serverReady = Deferred.makeUnsafe<ServerReadyData, unknown>()
+  const initializationDone = Deferred.makeUnsafe<void, unknown>()
   const loadingComplete = Deferred.makeUnsafe<void>()
+  let initializationSucceeded = false
+  let overlay: BrowserWindow | null = null
 
   registerIpcHandlers({
     inspectRecovery: () => startupRecovery.inspect(),
     runRecovery: (action) => startupRecovery.run(action),
     killSidecar: () => killSidecar(),
-    awaitInitialization: Effect.fnUntraced(
-      function* (sendStep) {
-        sendStep(initStep)
-        const listener = (step: InitStep) => sendStep(step)
-        initEmitter.on("step", listener)
-        try {
-          logger.log("awaiting server ready")
-          const res = yield* Deferred.await(serverReady)
-          logger.log("server ready", { url: res.url })
-          return res
-        } finally {
-          initEmitter.off("step", listener)
-        }
-      },
-      (e) => Effect.runPromise(e),
-    ),
+    awaitInitialization: (send, signal) =>
+      awaitInitialization({
+        current: () => initStep,
+        subscribe: (listener) => {
+          initEmitter.on("step", listener)
+          return () => {
+            initEmitter.off("step", listener)
+          }
+        },
+        server: Effect.runPromise(Deferred.await(serverReady)),
+        terminal: Effect.runPromise(Deferred.await(initializationDone)),
+        send,
+        signal,
+      }),
     getWindowConfig: () => ({ updaterEnabled: UPDATER_ENABLED }),
     consumeInitialDeepLinks: () => pendingDeepLinks.splice(0),
     getDefaultServerUrl: () => getDefaultServerUrl(),
@@ -376,7 +378,11 @@ const main = Effect.gen(function* () {
     parseMarkdown: async (markdown) => parseMarkdown(markdown),
     checkAppExists: (appName) => checkAppExists(appName),
     resolveAppPath: async (appName) => resolveAppPath(appName),
-    loadingWindowComplete: () => Deferred.doneUnsafe(loadingComplete, Effect.void),
+    loadingWindowComplete: (senderID) => {
+      if (initializationSucceeded && overlay?.webContents.id === senderID) {
+        Deferred.doneUnsafe(loadingComplete, Effect.void)
+      }
+    },
     runUpdater: async (alertOnFail) => checkForUpdates(alertOnFail, killSidecar),
     checkUpdate: async () => checkUpdate(),
     installUpdate: async () => installUpdate(killSidecar),
@@ -418,7 +424,6 @@ const main = Effect.gen(function* () {
   yield* Effect.promise(() => app.whenReady())
   registerRendererProtocol()
 
-  let overlay: BrowserWindow | null = null
   const recoveryStatus = yield* Effect.promise(() => startupRecovery.inspect())
   if (recoveryStatus.state !== "ready") {
     setInitStep({ phase: "recovery_waiting" })
@@ -555,7 +560,7 @@ const main = Effect.gen(function* () {
 
     yield* Effect.promise(() => health.wait).pipe(
       Effect.timeout("30 seconds"),
-      Effect.catch((e) =>
+      Effect.tapCause((e) =>
         Effect.sync(() => {
           logger.error("sidecar health check failed", e.toString())
         }),
@@ -578,8 +583,18 @@ const main = Effect.gen(function* () {
     }
   }
 
-  yield* Fiber.await(loadingTask)
+  yield* Fiber.join(loadingTask).pipe(
+    Effect.catchCause((cause) =>
+      Effect.gen(function* () {
+        yield* Deferred.failCause(serverReady, cause)
+        yield* Deferred.failCause(initializationDone, cause)
+        return yield* Effect.failCause(cause)
+      }),
+    ),
+  )
+  initializationSucceeded = true
   setInitStep({ phase: "done" })
+  yield* Deferred.succeed(initializationDone, undefined)
 
   if (overlay) yield* Deferred.await(loadingComplete)
 

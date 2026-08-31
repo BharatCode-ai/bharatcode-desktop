@@ -6,9 +6,10 @@ import { Splash } from "@opencode-ai/ui/logo"
 import { Progress } from "@opencode-ai/ui/progress"
 import { Button } from "@opencode-ai/ui/button"
 import "./styles.css"
-import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js"
+import { createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js"
 import type { InitStep, RecoveryAction, SqliteMigrationProgress } from "../preload/types"
 import { availableRecoveryActions, createRecoveryController, type RecoveryView } from "./loading-recovery"
+import { startLoadingInitialization } from "./loading-initialization"
 
 const root = document.getElementById("root")!
 const lines = ["Just a moment...", "Migrating your BharatCode database", "This may take a couple of minutes"]
@@ -40,7 +41,14 @@ render(() => {
     return Math.max(25, Math.min(100, percent()))
   })
 
-  window.api.awaitInitialization((next) => setStep(next as InitStep)).catch(() => undefined)
+  onCleanup(
+    startLoadingInitialization({
+      wait: (send) => window.api.awaitInitialization(send),
+      update: setStep,
+      complete: () => window.api.loadingWindowComplete(),
+      failed: (error) => setView((current) => ({ ...current, error })),
+    }),
+  )
   void controller.inspect()
   const runRecovery = (action: RecoveryAction) => {
     if (inFlight()) return
@@ -58,7 +66,6 @@ render(() => {
       if (progress.type === "InProgress") setPercent(Math.max(0, Math.min(100, progress.value)))
       if (progress.type === "Done") {
         setPercent(100)
-        setStep({ phase: "done" })
       }
     })
 
@@ -66,13 +73,6 @@ render(() => {
       listener()
       timers.forEach(clearTimeout)
     })
-  })
-
-  createEffect(() => {
-    if (phase() !== "done") return
-
-    const timer = setTimeout(() => window.api.loadingWindowComplete(), 1000)
-    onCleanup(() => clearTimeout(timer))
   })
 
   const status = createMemo(() => {

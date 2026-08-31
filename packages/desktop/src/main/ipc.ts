@@ -32,7 +32,7 @@ type Deps = {
   inspectRecovery: () => Promise<RecoveryStatus>
   runRecovery: (action: RecoveryAction) => Promise<RecoveryStatus>
   killSidecar: () => Promise<void> | void
-  awaitInitialization: (sendStep: (step: InitStep) => void) => Promise<ServerReadyData>
+  awaitInitialization: (sendStep: (step: InitStep) => void, signal?: AbortSignal) => Promise<ServerReadyData>
   getWindowConfig: () => Promise<WindowConfig> | WindowConfig
   consumeInitialDeepLinks: () => Promise<string[]> | string[]
   getDefaultServerUrl: () => Promise<string | null> | string | null
@@ -46,7 +46,7 @@ type Deps = {
   parseMarkdown: (markdown: string) => Promise<string> | string
   checkAppExists: (appName: string) => Promise<boolean> | boolean
   resolveAppPath: (appName: string) => Promise<string | null>
-  loadingWindowComplete: () => void
+  loadingWindowComplete: (senderID: number) => void
   runUpdater: (alertOnFail: boolean) => Promise<void> | void
   checkUpdate: () => Promise<{ updateAvailable: boolean; version?: string }>
   installUpdate: () => Promise<void> | void
@@ -73,8 +73,13 @@ export function registerIpcHandlers(deps: Deps) {
   )
   ipcMain.handle("kill-sidecar", () => deps.killSidecar())
   ipcMain.handle("await-initialization", (event: IpcMainInvokeEvent) => {
+    const observer = new AbortController()
+    const dispose = () => observer.abort()
+    event.sender.once("destroyed", dispose)
     const send = (step: InitStep) => event.sender.send("init-step", step)
-    return deps.awaitInitialization(send)
+    return deps.awaitInitialization(send, observer.signal).finally(() => {
+      event.sender.removeListener("destroyed", dispose)
+    })
   })
   ipcMain.handle("get-window-config", () => deps.getWindowConfig())
   ipcMain.handle("consume-initial-deep-links", () => deps.consumeInitialDeepLinks())
@@ -94,7 +99,7 @@ export function registerIpcHandlers(deps: Deps) {
   ipcMain.handle("parse-markdown", (_event: IpcMainInvokeEvent, markdown: string) => deps.parseMarkdown(markdown))
   ipcMain.handle("check-app-exists", (_event: IpcMainInvokeEvent, appName: string) => deps.checkAppExists(appName))
   ipcMain.handle("resolve-app-path", (_event: IpcMainInvokeEvent, appName: string) => deps.resolveAppPath(appName))
-  ipcMain.on("loading-window-complete", () => deps.loadingWindowComplete())
+  ipcMain.on("loading-window-complete", (event: IpcMainEvent) => deps.loadingWindowComplete(event.sender.id))
   ipcMain.handle("run-updater", (_event: IpcMainInvokeEvent, alertOnFail: boolean) => deps.runUpdater(alertOnFail))
   ipcMain.handle("check-update", () => deps.checkUpdate())
   ipcMain.handle("install-update", () => deps.installUpdate())
