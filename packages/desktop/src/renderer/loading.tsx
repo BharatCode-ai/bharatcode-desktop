@@ -4,10 +4,11 @@ import "@opencode-ai/app/index.css"
 import { Font } from "@opencode-ai/ui/font"
 import { Splash } from "@opencode-ai/ui/logo"
 import { Progress } from "@opencode-ai/ui/progress"
+import { Button } from "@opencode-ai/ui/button"
 import "./styles.css"
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js"
-import type { InitStep, RecoveryAction, RecoveryStatus, SqliteMigrationProgress } from "../preload/types"
-import { availableRecoveryActions } from "./loading-recovery"
+import type { InitStep, RecoveryAction, SqliteMigrationProgress } from "../preload/types"
+import { availableRecoveryActions, createRecoveryController, type RecoveryView } from "./loading-recovery"
 
 const root = document.getElementById("root")!
 const lines = ["Just a moment...", "Migrating your BharatCode database", "This may take a couple of minutes"]
@@ -17,8 +18,15 @@ render(() => {
   const [step, setStep] = createSignal<InitStep | null>(null)
   const [line, setLine] = createSignal(0)
   const [percent, setPercent] = createSignal(0)
-  const [recovery, setRecovery] = createSignal<RecoveryStatus | null>(null)
-  const [inFlight, setInFlight] = createSignal(false)
+  const [view, setView] = createSignal<RecoveryView>({ status: null, busy: null, error: null })
+  const [confirmFresh, setConfirmFresh] = createSignal(false)
+  const recovery = () => view().status
+  const inFlight = () => view().busy !== null
+  const controller = createRecoveryController({
+    inspect: () => window.api.inspectRecovery(),
+    run: (action) => window.api.runRecovery(action),
+    update: setView,
+  })
 
   const phase = createMemo(() => step()?.phase)
   const sourceChoices = createMemo(() => {
@@ -33,21 +41,11 @@ render(() => {
   })
 
   window.api.awaitInitialization((next) => setStep(next as InitStep)).catch(() => undefined)
-  window.api
-    .inspectRecovery()
-    .then(setRecovery)
-    .catch(() => setRecovery({ state: "blocked", reason: "corrupt" }))
-
-  const runRecovery = async (action: RecoveryAction) => {
+  void controller.inspect()
+  const runRecovery = (action: RecoveryAction) => {
     if (inFlight()) return
-    setInFlight(true)
-    try {
-      setRecovery(await window.api.runRecovery(action))
-    } catch {
-      setRecovery({ state: "blocked", reason: "corrupt" })
-    } finally {
-      setInFlight(false)
-    }
+    setConfirmFresh(false)
+    return controller.run(action)
   }
 
   onMount(() => {
@@ -91,16 +89,24 @@ render(() => {
 
   return (
     <MetaProvider>
-      <div class="w-screen h-screen bg-background-base flex items-center justify-center">
+      <div class="recovery-shell bg-background-base">
         <Font />
-        <div class="flex flex-col items-center gap-11">
-          <Splash class="w-20 h-25 opacity-15" />
-          <div class="w-60 flex flex-col items-center gap-4" aria-live="polite">
-            <span class="w-full overflow-hidden text-center text-ellipsis whitespace-nowrap text-text-strong text-14-normal">
-              {status()}
-            </span>
+        <div class="recovery-content">
+          <Splash class="w-12 h-15 opacity-30 shrink-0" />
+          <div class="recovery-panel" aria-live="polite" aria-busy={inFlight()}>
+            <h1 class="recovery-heading text-text-strong">{status()}</h1>
+            <Show when={view().error}>
+              <p role="alert" class="recovery-message text-text-strong">
+                {view().error}
+              </p>
+            </Show>
+            <Show when={inFlight()}>
+              <p role="status" class="text-text-base text-14-normal">
+                {view().busy === "inspect" ? "Checking recovery…" : "Working… Please keep this window open."}
+              </p>
+            </Show>
             <Show
-              when={recovery() && recovery()?.state !== "ready"}
+              when={(recovery() && recovery()?.state !== "ready") || view().error}
               fallback={
                 <Progress
                   value={value()}
@@ -110,11 +116,13 @@ render(() => {
                 />
               }
             >
-              <div class="flex w-full flex-col gap-2">
+              <div class="recovery-actions">
                 <Show when={recoveryActions().includes("choose-source")}>
                   <For each={sourceChoices()}>
                     {(source) => (
-                      <button
+                      <Button
+                        variant="primary"
+                        size="large"
                         type="button"
                         disabled={inFlight()}
                         onClick={() =>
@@ -125,13 +133,15 @@ render(() => {
                           })
                         }
                       >
-                        Choose Source · {source.label}
-                      </button>
+                        Continue with {source.label}
+                      </Button>
                     )}
                   </For>
                 </Show>
                 <Show when={recoveryActions().includes("retry")}>
-                  <button
+                  <Button
+                    variant="primary"
+                    size="large"
                     type="button"
                     disabled={inFlight()}
                     onClick={() => {
@@ -141,25 +151,68 @@ render(() => {
                     }}
                   >
                     Retry
-                  </button>
+                  </Button>
                 </Show>
                 <Show when={recoveryActions().includes("repair-marker")}>
-                  <button
+                  <Button
+                    variant="primary"
+                    size="large"
                     type="button"
                     disabled={inFlight()}
                     onClick={() => runRecovery({ type: "repair-marker", confirmed: true })}
                   >
                     Repair Database Marker
-                  </button>
+                  </Button>
                 </Show>
                 <Show when={recoveryActions().includes("start-fresh")}>
-                  <button
-                    type="button"
-                    disabled={inFlight()}
-                    onClick={() => runRecovery({ type: "start-fresh", confirmed: true })}
+                  <Show
+                    when={confirmFresh()}
+                    fallback={
+                      <Button
+                        type="button"
+                        size="large"
+                        variant="secondary"
+                        disabled={inFlight()}
+                        onClick={() => setConfirmFresh(true)}
+                      >
+                        Start Fresh
+                      </Button>
+                    }
                   >
-                    Start Fresh
-                  </button>
+                    <p class="recovery-message text-text-base">
+                      Start with empty BharatCode data? Existing source data stays unchanged; incomplete destination
+                      data is kept in recovery quarantine.
+                    </p>
+                    <Button
+                      type="button"
+                      size="large"
+                      variant="primary"
+                      disabled={inFlight()}
+                      onClick={() => runRecovery({ type: "start-fresh", confirmed: true })}
+                    >
+                      Confirm Start Fresh
+                    </Button>
+                    <Button
+                      type="button"
+                      size="large"
+                      variant="secondary"
+                      disabled={inFlight()}
+                      onClick={() => setConfirmFresh(false)}
+                    >
+                      Keep recovery choices
+                    </Button>
+                  </Show>
+                </Show>
+                <Show when={view().error}>
+                  <Button
+                    type="button"
+                    size="large"
+                    variant="secondary"
+                    disabled={inFlight()}
+                    onClick={() => controller.inspect()}
+                  >
+                    Check again
+                  </Button>
                 </Show>
               </div>
             </Show>

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto"
-import { chmod, lstat, mkdir, open, readFile, rename } from "node:fs/promises"
+import { chmod, lstat, mkdir, open, readFile } from "node:fs/promises"
 import path from "node:path"
+import { renameDurable } from "./durable-fs"
 
 export type MigrationPhase = "captured" | "prepared" | "activated" | "validated" | "complete" | "starting-fresh"
 
@@ -33,7 +34,14 @@ const KEYS = [
   "destinationFingerprint",
   "artifacts",
 ] as const
-const PHASES: readonly MigrationPhase[] = ["captured", "prepared", "activated", "validated", "complete", "starting-fresh"]
+const PHASES: readonly MigrationPhase[] = [
+  "captured",
+  "prepared",
+  "activated",
+  "validated",
+  "complete",
+  "starting-fresh",
+]
 
 export class MigrationJournalError extends Error {
   constructor(message: string) {
@@ -49,7 +57,8 @@ export async function readMigrationJournal(stateRoot: string): Promise<Migration
     throw new MigrationJournalError("BharatCode could not inspect its migration journal.")
   })
   if (!info) return
-  if (!info.isFile() || info.isSymbolicLink()) throw new MigrationJournalError("The migration journal was not a regular file.")
+  if (!info.isFile() || info.isSymbolicLink())
+    throw new MigrationJournalError("The migration journal was not a regular file.")
   if (info.size > MAX_BYTES) throw new MigrationJournalError("The migration journal was too large.")
   const bytes = await readFile(file)
   if (bytes.byteLength > MAX_BYTES) throw new MigrationJournalError("The migration journal was too large.")
@@ -63,10 +72,13 @@ export async function readMigrationJournal(stateRoot: string): Promise<Migration
 
 export async function advanceMigrationJournal(input: AdvanceInput): Promise<MigrationJournal> {
   const current = await readMigrationJournal(input.stateRoot)
-  if (canonical(current) !== canonical(input.expected)) throw new MigrationJournalError("The migration journal changed.")
+  if (canonical(current) !== canonical(input.expected))
+    throw new MigrationJournalError("The migration journal changed.")
   const next = parseJournal(input.next)
-  if (!canStart(current?.phase, next.phase)) throw new MigrationJournalError("The migration journal transition was invalid.")
-  if (current && !sameOperation(current, next)) throw new MigrationJournalError("The migration journal identity changed.")
+  if (!canStart(current?.phase, next.phase))
+    throw new MigrationJournalError("The migration journal transition was invalid.")
+  if (current && !sameOperation(current, next))
+    throw new MigrationJournalError("The migration journal identity changed.")
   await mkdir(input.stateRoot, { recursive: true, mode: 0o700 })
   await chmod(input.stateRoot, 0o700)
   const temporary = path.join(input.stateRoot, `.${FILENAME}.${randomUUID()}`)
@@ -77,8 +89,7 @@ export async function advanceMigrationJournal(input: AdvanceInput): Promise<Migr
   } finally {
     await handle.close()
   }
-  await rename(temporary, path.join(input.stateRoot, FILENAME))
-  await syncDirectory(input.stateRoot)
+  await renameDurable(temporary, path.join(input.stateRoot, FILENAME), true)
   return next
 }
 
@@ -108,7 +119,10 @@ function parseJournal(value: unknown): MigrationJournal {
   if (typeof value.phase !== "string" || !PHASES.includes(value.phase as MigrationPhase)) {
     throw new MigrationJournalError("The migration journal phase was invalid.")
   }
-  if (typeof value.operationID !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.operationID)) {
+  if (
+    typeof value.operationID !== "string" ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.operationID)
+  ) {
     throw new MigrationJournalError("The migration journal operation ID was invalid.")
   }
   if (typeof value.sourceID !== "string" || value.sourceID.length < 1 || value.sourceID.length > 160) {
@@ -119,7 +133,10 @@ function parseJournal(value: unknown): MigrationJournal {
       throw new MigrationJournalError("The migration journal digest was invalid.")
     }
   }
-  if (!Array.isArray(value.artifacts) || !value.artifacts.every((item) => typeof item === "string" && safeArtifact(item))) {
+  if (
+    !Array.isArray(value.artifacts) ||
+    !value.artifacts.every((item) => typeof item === "string" && safeArtifact(item))
+  ) {
     throw new MigrationJournalError("The migration journal artifact provenance was invalid.")
   }
   if (new Set(value.artifacts).size !== value.artifacts.length) {
@@ -140,21 +157,17 @@ function sameOperation(left: MigrationJournal, right: MigrationJournal) {
 }
 
 function safeArtifact(value: string) {
-  return value.length > 0 && value.length <= 512 && !path.isAbsolute(value) && !value.split(/[\\/]/).some((part) => !part || part === "." || part === "..")
+  return (
+    value.length > 0 &&
+    value.length <= 512 &&
+    !path.isAbsolute(value) &&
+    !value.split(/[\\/]/).some((part) => !part || part === "." || part === "..")
+  )
 }
 
 function canonical(value: MigrationJournal | undefined) {
   if (!value) return ""
   return JSON.stringify(Object.fromEntries(KEYS.map((key) => [key, value[key]])))
-}
-
-async function syncDirectory(directory: string) {
-  const handle = await open(directory, "r")
-  try {
-    await handle.sync()
-  } finally {
-    await handle.close()
-  }
 }
 
 function record(value: unknown): value is Record<string, unknown> {

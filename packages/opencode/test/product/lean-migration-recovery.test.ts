@@ -221,7 +221,11 @@ describe("lean next-beta migration and recovery scenarios 6-7", () => {
     const sourceConfig = path.join(fixture.home, ".config", "opencode")
     await writeFile(path.join(sourceConfig, "bharatcode.json"), '{"snapshot":true}', { mode: 0o600 })
 
-    await expect(createRecoveryController(fixture.input).inspect()).rejects.toThrow("canonical destination collision")
+    // Inspection excludes a rejected source; it must never offer the colliding bytes.
+    expect(await createRecoveryController(fixture.input).inspect()).toEqual({
+      state: "start-fresh",
+      reason: "ambiguous",
+    })
     expect(await Bun.file(path.join(fixture.destination.config, "bharatcode.json")).exists()).toBe(false)
     expect(await Bun.file(path.join(sourceConfig, "opencode.json")).exists()).toBe(true)
     expect(await Bun.file(path.join(sourceConfig, "bharatcode.json")).exists()).toBe(true)

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto"
-import { chmod, lstat, mkdir, open, readFile, readdir, rename, rm, writeFile } from "node:fs/promises"
+import { chmod, lstat, mkdir, readFile, readdir, rm } from "node:fs/promises"
 import path from "node:path"
 import { Database } from "bun:sqlite"
 
@@ -12,6 +12,7 @@ import {
 import { advanceMigrationJournal, readMigrationJournal, type MigrationJournal } from "./journal"
 import type { MigrationChoice, MigrationSource } from "./source"
 import { withMigrationMaintenanceLock } from "../storage/migration-maintenance-lock"
+import { renameDurable, writeNewDurable } from "./durable-fs"
 
 export type RecoveryAction =
   | { type: "choose-source"; sources: readonly { id: string; label: string; contentFingerprint: string }[] }
@@ -41,9 +42,12 @@ export async function prepareMigration(
     const existing = await readMigrationJournal(input.destination.state)
     if (existing) return { type: "retry", operationID: existing.operationID }
     if (input.sources.length === 0) return { type: "start-fresh", reason: "no-source" }
+    const candidates = input.choice ? input.sources.filter((source) => source.id === input.choice!.id) : input.sources
+    if (input.choice && candidates.length !== 1)
+      throw new MigrationCutoverError("The selected migration source is no longer available.")
     const choices = (
       await Promise.all(
-        input.sources.map(async (source) => ({
+        candidates.map(async (source) => ({
           id: source.id,
           label: source.label,
           contentFingerprint: await fingerprintMigrationSource(source),
@@ -51,7 +55,7 @@ export async function prepareMigration(
       )
     ).toSorted((left, right) => left.id.localeCompare(right.id))
     const selected = input.choice
-      ? input.sources.find(
+      ? candidates.find(
           (source) =>
             source.id === input.choice?.id &&
             choices.find((choice) => choice.id === source.id)?.contentFingerprint === input.choice.contentFingerprint,
@@ -61,6 +65,8 @@ export async function prepareMigration(
         : undefined
     if (!selected) return { type: "choose-source", sources: choices }
     const captured = await captureMigrationSource(selected, input.destination)
+    if (input.choice && captured.contentFingerprint !== input.choice.contentFingerprint)
+      throw new MigrationCutoverError("The selected migration source changed during capture.")
     const operationID = randomUUID()
     const journal: MigrationJournal = {
       version: 1,
@@ -95,8 +101,25 @@ export async function activateMigration(
       throw new MigrationCutoverError("The migration destination changed.")
     }
     if (journal.phase === "complete") return { state: "complete", sourceID: journal.sourceID }
+    if (journal.phase === "starting-fresh" && journal.sourceID === "start-fresh") {
+      if (!(await freshDestinationIsEmpty(input.destination)) || !(await validateFreshDestination(input.destination)))
+        throw new MigrationCutoverError("The interrupted fresh destination changed. Start Fresh requires review.")
+      await advanceMigrationJournal({
+        stateRoot: input.destination.state,
+        expected: journal,
+        next: { ...journal, phase: "complete" },
+      })
+      return { state: "complete", sourceID: "start-fresh" }
+    }
     if (!(await verifyCapturedSnapshot(snapshotInput(journal, input.destination)))) {
       throw new MigrationCutoverError("The sealed migration snapshot failed verification.")
+    }
+    if (journal.phase === "captured") {
+      journal = await advanceMigrationJournal({
+        stateRoot: input.destination.state,
+        expected: journal,
+        next: { ...journal, phase: "prepared" },
+      })
     }
     if (journal.phase === "prepared") {
       await activateSnapshot(journal, input.destination)
@@ -162,14 +185,14 @@ export async function startFresh(input: StartFreshInput): Promise<{ state: "fres
       artifacts: moved ? [`migration-quarantine/${operationID}`] : [],
     }
     await advanceMigrationJournal({ stateRoot: input.destination.state, expected: undefined, next: journal })
+    if (!(await validateFreshDestination(input.destination))) {
+      throw new MigrationCutoverError("The fresh destination failed validation.")
+    }
     await advanceMigrationJournal({
       stateRoot: input.destination.state,
       expected: journal,
       next: { ...journal, phase: "complete" },
     })
-    if (!(await validateFreshDestination(input.destination))) {
-      throw new MigrationCutoverError("The fresh destination failed validation.")
-    }
     return { state: "fresh", ...(moved ? { quarantine } : {}) }
   })
 }
@@ -208,7 +231,7 @@ async function activateSnapshot(journal: MigrationJournal, destination: Migratio
   for (const entry of manifest.entries) {
     const target = path.join(staging, entry.relative)
     await mkdir(path.dirname(target), { recursive: true, mode: 0o700 })
-    await writeFile(target, await readFile(path.join(records, entry.relative)), { mode: 0o600, flag: "wx" })
+    await writeNewDurable(target, await readFile(path.join(records, entry.relative)))
   }
   await moveRole(path.join(staging, "config"), destination.config)
   const databaseName = path.basename(destination.database)
@@ -245,9 +268,8 @@ async function moveRole(source: string, destination: string, ignoreDestination =
       for (const name of sourceEntries) {
         const target = path.join(destination, name)
         if (await exists(target)) throw new MigrationCutoverError("The migration destination changed.")
-        await rename(path.join(source, name), target)
+        await renameDurable(path.join(source, name), target)
       }
-      await syncDirectory(destination)
       await rm(source, { recursive: true })
       return
     }
@@ -255,8 +277,7 @@ async function moveRole(source: string, destination: string, ignoreDestination =
     await rm(destination, { recursive: true })
   }
   await mkdir(path.dirname(destination), { recursive: true, mode: 0o700 })
-  await rename(source, destination)
-  await syncDirectory(path.dirname(destination))
+  await renameDurable(source, destination)
 }
 
 async function moveDatabase(source: string, destination: string) {
@@ -270,8 +291,7 @@ async function moveDatabase(source: string, destination: string) {
     return
   }
   await mkdir(path.dirname(destination), { recursive: true, mode: 0o700 })
-  await rename(source, destination)
-  await syncDirectory(path.dirname(destination))
+  await renameDurable(source, destination)
 }
 
 async function validateKnownDestinations(destination: MigrationDestination) {
@@ -308,18 +328,15 @@ async function quarantinePartials(destination: MigrationDestination, quarantine:
   }
   if (present.length === 0) return false
   await mkdir(quarantine, { recursive: true, mode: 0o700 })
+  await writeNewDurable(
+    path.join(quarantine, "manifest.json"),
+    JSON.stringify({ version: 1, artifacts: present.map(({ relative, sha256 }) => ({ relative, sha256 })) }),
+  )
   for (const item of present) {
     const target = path.join(quarantine, item.relative)
     await mkdir(path.dirname(target), { recursive: true, mode: 0o700 })
-    await rename(item.source, target)
+    await renameDurable(item.source, target)
   }
-  await writeFile(
-    path.join(quarantine, "manifest.json"),
-    JSON.stringify({ version: 1, artifacts: present.map(({ relative, sha256 }) => ({ relative, sha256 })) }),
-    { mode: 0o600 },
-  )
-  await syncDirectory(quarantine)
-  await syncDirectory(destination.state)
   return true
 }
 
@@ -421,15 +438,6 @@ function digestBytes(bytes: Uint8Array) {
 
 function maintenanceEntry(name: string) {
   return name.startsWith("lean-migration-maintenance.sqlite")
-}
-
-async function syncDirectory(directory: string) {
-  const handle = await open(directory, "r")
-  try {
-    await handle.sync()
-  } finally {
-    await handle.close()
-  }
 }
 
 function snapshotInput(journal: MigrationJournal, destination: MigrationDestination) {

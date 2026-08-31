@@ -1,11 +1,12 @@
 import { Database } from "bun:sqlite"
 import { createHash, randomUUID } from "node:crypto"
-import { chmod, lstat, mkdir, open, readFile, readdir, rename, rm } from "node:fs/promises"
+import { chmod, lstat, mkdir, readFile, readdir, rm } from "node:fs/promises"
 import path from "node:path"
 import { parse as parseJsonc, type ParseError } from "jsonc-parser"
 
 import { sanitizeMigrationRecord } from "./sanitize"
 import type { MigrationSource } from "./source"
+import { renameDurable, writeNewDurable as writeDurable } from "./durable-fs"
 
 export type CapturedSource = {
   sourceID: string
@@ -168,19 +169,17 @@ export async function captureMigrationSource(
     await mkdir(path.join(staging, "records"), { mode: 0o700 })
     for (const entry of entries) await writeDurable(path.join(staging, "records", entry.relative), entry.bytes)
     await writeDurable(path.join(staging, "manifest.json"), manifest)
-    await syncDirectory(staging)
     const current = await scanSource(source)
     if (fingerprint(current) !== contentFingerprint) {
       throw new MigrationCaptureError("The migration source changed while BharatCode was sealing it.")
     }
-    await rename(staging, snapshotDirectory).catch(async (error) => {
+    await renameDurable(staging, snapshotDirectory).catch(async (error) => {
       if (!nodeError(error, "EEXIST") && !nodeError(error, "ENOTEMPTY")) throw error
       if (!(await snapshotMatches(snapshotDirectory, snapshotDigest))) {
         throw new MigrationCaptureError("A migration snapshot collision failed verification.")
       }
       await rm(staging, { recursive: true })
     })
-    await syncDirectory(parent)
   } catch (error) {
     await rm(staging, { recursive: true, force: true })
     if (error instanceof MigrationCaptureError) throw error
@@ -871,28 +870,6 @@ async function snapshotFiles(root: string) {
   }
   await visit(root, "")
   return files
-}
-
-async function writeDurable(file: string, bytes: Uint8Array) {
-  await mkdir(path.dirname(file), { recursive: true, mode: 0o700 })
-  const handle = await open(file, "wx", 0o600)
-  try {
-    await handle.writeFile(bytes)
-    await handle.sync()
-  } finally {
-    await handle.close()
-  }
-  await chmod(file, 0o600)
-  await syncDirectory(path.dirname(file))
-}
-
-async function syncDirectory(directory: string) {
-  const handle = await open(directory, "r")
-  try {
-    await handle.sync()
-  } finally {
-    await handle.close()
-  }
 }
 
 function safeRelative(value: string) {
