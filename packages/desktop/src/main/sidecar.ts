@@ -59,7 +59,8 @@ async function start(command: StartCommand) {
     ensureLoopbackNoProxy()
     useSystemCertificates()
     useEnvProxy()
-    const { Database, JsonMigration, Log, Server } = await import("virtual:opencode-server")
+    const { Database, JsonMigration, Log, Server, ensureGlobalDirectories } = await import("virtual:opencode-server")
+    await ensureGlobalDirectories()
     await Log.init({ level: "WARN" })
 
     if (command.needsMigration) {

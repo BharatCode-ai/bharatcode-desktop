@@ -111,6 +111,8 @@ native(
         ).stdout
       const before = acl()
       expect(before.length).toBeGreaterThan(0)
+      windowsCredentialStore(file).prepareParent()
+      expect(acl()).toBe(before)
       expect(windowsCredentialStore(file).read()).toBeUndefined()
       expect(() => windowsCredentialStore(file).publish("{}")).toThrow("not confirmed")
       await writeFile(file, "{}")
@@ -148,6 +150,9 @@ native(
       expect(() => windowsCredentialStore(file).read()).toThrow("could not be verified")
       await rm(file)
       await symlink(path.dirname(file), path.join(root, "junction"), "junction")
+      expect(() => windowsCredentialStore(path.join(root, "junction", "auth.json")).prepareParent()).toThrow(
+        "could not be verified",
+      )
       expect(() => windowsCredentialStore(path.join(root, "junction", "auth.json")).read()).toThrow(
         "could not be verified",
       )

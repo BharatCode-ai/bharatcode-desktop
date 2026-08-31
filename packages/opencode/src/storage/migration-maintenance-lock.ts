@@ -1,6 +1,7 @@
 import { StorageSQLite } from "#storage-sqlite"
 import { mkdir } from "node:fs/promises"
 import path from "node:path"
+import { windowsCredentialStore } from "@opencode-ai/core/util/windows-credential-store"
 
 export class MigrationMaintenanceLockError extends Error {
   constructor() {
@@ -10,6 +11,7 @@ export class MigrationMaintenanceLockError extends Error {
 }
 
 export async function withMigrationMaintenanceLock<T>(stateRoot: string, operation: () => Promise<T>): Promise<T> {
+  if (process.platform === "win32") windowsCredentialStore(path.join(stateRoot, "auth.json")).prepareParent()
   await mkdir(stateRoot, { recursive: true, mode: 0o700 })
   const database = new StorageSQLite(path.join(stateRoot, "lean-migration-maintenance.sqlite"), { create: true })
   database.run("PRAGMA busy_timeout = 50")

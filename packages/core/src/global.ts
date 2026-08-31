@@ -5,6 +5,7 @@ import { Flock } from "./util/flock"
 import { Flag } from "./flag/flag"
 import { InstallationChannel } from "./installation/version"
 import { StoragePaths } from "./storage-paths"
+import { windowsCredentialStore } from "./util/windows-credential-store"
 
 const resolved = StoragePaths.resolve({
   channel: process.env.BHARATCODE_CHANNEL ?? InstallationChannel,
@@ -26,6 +27,7 @@ export const Path = paths
 Flock.setGlobal({ state: Path.state })
 
 export async function ensure() {
+  if (process.platform === "win32") windowsCredentialStore(Path.auth).prepareParent()
   await Promise.all(
     [Path.data, Path.config, Path.state, Path.tmp, Path.log, Path.bin, Path.repos, Path.storage].map((directory) =>
       fs.mkdir(directory, { recursive: true }),
