@@ -12,6 +12,7 @@ import { readFileSync, readdirSync, existsSync } from "fs"
 import { Flag } from "@opencode-ai/core/flag/flag"
 import { EffectBridge } from "@/effect/bridge"
 import { init } from "#db"
+import { StorageSQLite } from "#storage-sqlite"
 import { Effect, Schema } from "effect"
 import {
   diagnoseSchemaMarker,
@@ -194,11 +195,13 @@ export function close() {
   Client.reset()
 }
 
-function openSchemaDatabase(file: string, options: { readonly: boolean }): SchemaDatabase {
-  const database = init(file).$client
+export function openSchemaDatabase(file: string, options: { readonly: boolean }): SchemaDatabase {
   if (!options.readonly) throw new DatabaseRecoveryRequiredError()
+  // A read-write connection can checkpoint WAL on close and change the very
+  // file identity/size being diagnosed. Inspection must not mutate or create it.
+  const database = new StorageSQLite(file, { readonly: true })
   return {
-    rows: (sql) => database.prepare(sql).all() as Record<string, unknown>[],
+    rows: (sql) => database.query(sql).all() as Record<string, unknown>[],
     close: () => database.close(),
   }
 }

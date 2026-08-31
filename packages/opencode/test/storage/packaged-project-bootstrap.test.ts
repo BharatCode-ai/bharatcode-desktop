@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { spawnSync } from "node:child_process"
-import { mkdir, mkdtemp, readFile, realpath, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, stat } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 
@@ -38,22 +38,38 @@ test.skipIf(process.platform !== "win32" || !executable)(
       expect(prepared.status).toBe(0)
       expect(JSON.parse(prepared.stdout)).toEqual({ state: "ready" })
       const sidecar = path.join(path.dirname(executable!), "resources", "app.asar", "out", "main", "sidecar.js")
-      const run = () => {
+      const database = path.join(env.LOCALAPPDATA, "bharatcode-beta", "Data", "bharatcode.db")
+      const run = async () => {
+        const before = await stat(database).then(
+          (value) => value.size,
+          () => null,
+        )
         const result = spawnSync(
           executable!,
           [path.resolve(import.meta.dirname, "../fixture/packaged-project-bootstrap.mjs"), root, sidecar],
           { cwd: root, env, encoding: "utf8", windowsHide: true, timeout: 90_000 },
         )
-        if (result.status !== 0)
-          throw new Error(
-            `Packaged isolated project failed (exit ${result.status}); ${result.stderr.match(/PACKAGED_PROJECT_[^\r\n]*/g)?.join("; ") ?? "no fixture result"}`,
+        if (result.status !== 0) {
+          const logRoot = path.join(env.LOCALAPPDATA, "bharatcode-beta", "Log")
+          const logs = await Promise.all(
+            (await readdir(logRoot))
+              .filter((name) => name.endsWith(".log"))
+              .map((name) => readFile(path.join(logRoot, name), "utf8")),
           )
+          const after = await stat(database).then(
+            (value) => value.size,
+            () => null,
+          )
+          throw new Error(
+            `Packaged isolated project failed (exit ${result.status}); ${result.stderr.match(/PACKAGED_PROJECT_[^\r\n]*/g)?.join("; ") ?? "no fixture result"}; databaseRecovery=${logs.some((log) => log.includes("DatabaseRecoveryRequired"))}; mainBytes=${before}->${after}`,
+          )
+        }
         expect(result.stdout).toContain("PACKAGED_PROJECT_PASS")
       }
-      run()
+      await run()
       const marker = path.join(env.LOCALAPPDATA, "bharatcode-beta", "Data", ".schema-version")
       const before = await readFile(marker)
-      run()
+      await run()
       expect(await readFile(marker)).toEqual(before)
     } finally {
       expect(path.basename(root)).toStartWith("bc-project-packaged-")
