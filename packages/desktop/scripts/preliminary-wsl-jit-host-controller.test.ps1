@@ -194,6 +194,17 @@ $previousTestMode = [Environment]::GetEnvironmentVariable("BHARATCODE_PRELIMINAR
 [Environment]::SetEnvironmentVariable("BHARATCODE_PRELIMINARY_JIT_HOST_CONTROLLER_TEST", "1", [EnvironmentVariableTarget]::Process)
 . $controllerPath
 
+$applicationFixture = [IO.Path]::GetFullPath($controllerPath)
+$resolvedDuplicateApplication = Resolve-PreliminaryApplicationSource -Applications @(
+  [pscustomobject]@{ Source = $applicationFixture },
+  [pscustomobject]@{ Source = $applicationFixture }
+) -Name "fixture"
+Assert-True ($resolvedDuplicateApplication -is [string]) "duplicate PATH matches produced a non-scalar application path"
+Assert-True ($resolvedDuplicateApplication -ceq $applicationFixture) "duplicate PATH matches changed first-match application resolution"
+[void](Assert-Throws { Resolve-PreliminaryApplicationSource -Applications @() -Name "missing-fixture" } "missing application was accepted")
+$resolvedHostGit = Get-PreliminaryApplicationSource "git"
+Assert-True ($resolvedHostGit -is [string] -and [IO.File]::Exists($resolvedHostGit)) "host application resolution was not a single existing executable"
+
 $sourceSha = "7" * 40
 $basePath = Join-Path $PSScriptRoot "../../../.github/workflows/bharatcode-preliminary-unsigned-wsl.yml"
 $runnerPath = Join-Path $PSScriptRoot "../../opencode/script/lean-preliminary-jit-lifecycle.mjs"
@@ -642,7 +653,7 @@ try {
   Invoke-CorrectionCase "prepared process failure reports only exit metadata" {
     $context = [pscustomobject]@{ DeadlineUtc = [DateTime]::UtcNow.AddSeconds(30) }
     $error = Assert-Throws {
-      Invoke-PreliminaryProcess $context (Get-Command pwsh.exe -CommandType Application).Source @("-NoLogo", "-NoProfile", "-Command", "[Console]::Error.Write('diagnostic-only'); exit 7") $null
+      Invoke-PreliminaryProcess $context (Get-PreliminaryApplicationSource "pwsh.exe") @("-NoLogo", "-NoProfile", "-Command", "[Console]::Error.Write('diagnostic-only'); exit 7") $null
     } "failing prepared process returned success"
     Assert-True ($error.Message.Contains("exit code 7") -and $error.Message.Contains("stderr SHA-256")) "prepared process failure discarded non-secret exit metadata: $($error.Message)"
     Assert-True (-not $error.Message.Contains("diagnostic-only")) "prepared process failure exposed stderr contents"

@@ -23,6 +23,21 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
+function Resolve-PreliminaryApplicationSource {
+  param([object[]] $Applications, [string] $Name)
+  if ($Applications.Count -eq 0) { throw "Missing prepared prerequisite: $Name" }
+  $source = [string]$Applications[0].Source
+  if ([string]::IsNullOrWhiteSpace($source) -or -not [IO.Path]::IsPathFullyQualified($source)) {
+    throw "Prepared prerequisite path is invalid: $Name"
+  }
+  return [IO.Path]::GetFullPath($source)
+}
+
+function Get-PreliminaryApplicationSource {
+  param([string] $Name)
+  return Resolve-PreliminaryApplicationSource @(Get-Command $Name -CommandType Application -ErrorAction SilentlyContinue) $Name
+}
+
 function Invoke-PreliminaryWslJitHostController {
   [CmdletBinding()]
   param(
@@ -379,7 +394,7 @@ function Invoke-PreliminaryGhJson {
   $arguments = @("api", "--method", $Method, $Endpoint, "-H", "Accept: application/vnd.github+json", "-H", "X-GitHub-Api-Version: 2026-03-10")
   $input = $null
   if ($null -ne $Body) { $arguments += @("--input", "-"); $input = $Body | ConvertTo-Json -Depth 20 -Compress }
-  try { $raw = Invoke-PreliminaryProcess $Context (Get-Command gh -CommandType Application).Source $arguments $input }
+  try { $raw = Invoke-PreliminaryProcess $Context (Get-PreliminaryApplicationSource "gh") $arguments $input }
   catch { throw [InvalidOperationException]::new("GitHub API $Method $Endpoint failed", $_.Exception) }
   if ([string]::IsNullOrWhiteSpace($raw)) { return $null }
   return $raw | ConvertFrom-Json -Depth 30
@@ -451,7 +466,7 @@ function Resolve-PreliminaryOwnedVm {
 
 function Invoke-PreliminaryLifecycleAdapter {
   param([object] $Context, [ValidateSet("admission", "destruction", "receipt")] [string] $Operation, [object] $Payload)
-  $bun = (Get-Command bun -CommandType Application).Source
+  $bun = Get-PreliminaryApplicationSource "bun"
   $adapter = Join-Path $PSScriptRoot "../../opencode/script/preliminary-jit-evidence-cli.mjs"
   try { return Invoke-PreliminaryProcess $Context $bun @($adapter, $Operation) ($Payload | ConvertTo-Json -Depth 30 -Compress) }
   catch { throw [InvalidOperationException]::new("Preliminary lifecycle adapter $Operation failed", $_.Exception) }
@@ -463,15 +478,15 @@ function New-PreliminaryWslJitLiveOperations {
       $principal = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
       return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     }
-    GetLocalSourceSha = { param($Context) (Invoke-PreliminaryProcess $Context (Get-Command git -CommandType Application).Source @("rev-parse", "HEAD") $null).Trim() }
+    GetLocalSourceSha = { param($Context) (Invoke-PreliminaryProcess $Context (Get-PreliminaryApplicationSource "git") @("rev-parse", "HEAD") $null).Trim() }
     AssertPrerequisites = {
       param($Context)
       if ($ExecutionContext.SessionState.LanguageMode -ne [Management.Automation.PSLanguageMode]::FullLanguage) { throw "PowerShell FullLanguage is required" }
       foreach ($command in @("gh", "git", "bun", "Get-VM", "Get-VHD", "New-VHD", "New-VM", "Set-VM", "Set-VMProcessor", "Start-VM", "Stop-VM", "Remove-VM", "Get-VMHardDiskDrive", "Get-VMSwitch")) { if (-not (Get-Command $command -ErrorAction SilentlyContinue)) { throw "Missing prepared prerequisite: $command" } }
       if (-not ($Context.GuestCredential -is [pscredential])) { throw "PowerShell Direct guest credential is required" }
       if (-not (Get-VMSwitch -Name $Context.VmSwitchName -ErrorAction SilentlyContinue)) { throw "Prepared Hyper-V switch is unavailable" }
-      if ((Invoke-PreliminaryProcess $Context (Get-Command git -CommandType Application).Source @("status", "--porcelain") $null).Length -ne 0) { throw "Live controller checkout must be clean" }
-      $origin = (Invoke-PreliminaryProcess $Context (Get-Command git -CommandType Application).Source @("remote", "get-url", "origin") $null).Trim()
+      if ((Invoke-PreliminaryProcess $Context (Get-PreliminaryApplicationSource "git") @("status", "--porcelain") $null).Length -ne 0) { throw "Live controller checkout must be clean" }
+      $origin = (Invoke-PreliminaryProcess $Context (Get-PreliminaryApplicationSource "git") @("remote", "get-url", "origin") $null).Trim()
       if ($origin -notmatch 'BharatCode-ai[/:]bharatcode-desktop(?:\.git)?$') { throw "Live controller origin is invalid" }
       $vhd = Get-VHD -Path $Context.BaseVhdxPath
       if ($vhd.VhdType -notin @("Fixed", "Dynamic") -or $vhd.Size -gt $Context.VmDiskBytes) { throw "Prepared base VHDX exceeds the approved disk bound" }
@@ -604,7 +619,7 @@ function New-PreliminaryWslJitLiveOperations {
             $artifactName = "preliminary-wsl-evidence-$($Context.RunId)-$($Context.RunAttempt)"
             $artifactRoot = Join-Path $Owned.RootPath "workflow-evidence"
             [void][IO.Directory]::CreateDirectory($artifactRoot)
-            [void](Invoke-PreliminaryProcess $Context (Get-Command gh -CommandType Application).Source @("run", "download", $Context.RunId, "--repo", $Context.Repository, "--name", $artifactName, "--dir", $artifactRoot) $null)
+            [void](Invoke-PreliminaryProcess $Context (Get-PreliminaryApplicationSource "gh") @("run", "download", $Context.RunId, "--repo", $Context.Repository, "--name", $artifactName, "--dir", $artifactRoot) $null)
             $receiptPath = Join-Path $artifactRoot "bharatcode-wsl-preliminary-unsigned.json"
             if (-not [IO.File]::Exists($receiptPath)) { throw "Exact preliminary WSL receipt is absent" }
             $receipt = [IO.File]::ReadAllText($receiptPath)
