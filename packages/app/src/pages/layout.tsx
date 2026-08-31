@@ -67,6 +67,12 @@ import { useServer } from "@/context/server"
 import { useLanguage, type Locale } from "@/context/language"
 import { pathKey } from "@/utils/path-key"
 import {
+  createStartupRestoreGuard,
+  resolveDesktopStartupChatDirectory,
+  resolveStartupSession,
+  startupChatPath,
+} from "@/app-startup"
+import {
   displayName,
   effectiveWorkspaceOrder,
   errorMessage,
@@ -153,7 +159,7 @@ export default function Layout(props: ParentProps) {
   const currentDir = createMemo(() => route().dir)
 
   const [state, setState] = createStore({
-    autoselect: !initialDirectory && !USE_NEW_DESIGN,
+    autoselect: !initialDirectory && (platform.platform === "desktop" || !USE_NEW_DESIGN),
     busyWorkspaces: {} as Record<string, boolean>,
     hoverProject: undefined as string | undefined,
     scrollSessionKey: undefined as string | undefined,
@@ -555,23 +561,106 @@ export default function Layout(props: ParentProps) {
     return projects.find((p) => p.worktree === root)
   })
 
-  const [autoselecting] = createResource(async () => {
-    await ready.promise
-    await layout.ready.promise
-    if (!untrack(() => state.autoselect)) return
-
-    const list = layout.projects.list()
-    const last = server.projects.last()
-
-    if (list.length === 0) {
-      if (!last) return
-      await openProject(last, true)
-    } else {
-      const next = list.find((project) => project.worktree === last) ?? list[0]
-      if (!next) return
-      await openProject(next.worktree, true)
-    }
+  const startupAbort = new AbortController()
+  const startupGuard = createStartupRestoreGuard()
+  onCleanup(() => {
+    startupGuard.cancel()
+    startupAbort.abort()
   })
+  createEffect(
+    on(
+      () => [location.pathname, server.key],
+      () => startupGuard.cancel(),
+      { defer: true },
+    ),
+  )
+  const [autoselecting, { refetch: retryStartup }] = createResource(
+    () => pageReady() && layoutReady() && (platform.platform !== "desktop" || (server.ready() && globalSync.ready)),
+    async (ready) => {
+      if (!ready || !untrack(() => state.autoselect)) return
+
+      if (platform.platform === "desktop") {
+        const source = server.key
+        const current = startupGuard.begin(
+          () => !startupAbort.signal.aborted && state.autoselect && location.pathname === "/" && server.key === source,
+        )
+        const directory = resolveDesktopStartupChatDirectory({
+          platform: "desktop",
+          ready: true,
+          projects: layout.projects.list(),
+          lastProject: server.projects.last(),
+          home: globalSync.data.path.home,
+        })
+        if (!directory || !current()) return
+        layout.projects.open(directory)
+        const root = projectRoot(directory)
+        const project = layout.projects.list().find((item) => pathKey(item.worktree) === pathKey(root))
+        const signal = AbortSignal.any([startupAbort.signal, AbortSignal.timeout(15_000)])
+        try {
+          const session = await resolveStartupSession({
+            root,
+            directories: [root, ...(project?.sandboxes ?? [])],
+            remembered: store.lastProjectSession[root],
+            current,
+            worktrees: async () => {
+              const result = await globalSDK.client.worktree.list({ directory: root }, { throwOnError: false, signal })
+              if (!result.response.ok || !Array.isArray(result.data)) throw new Error("Session restore unavailable")
+              return result.data
+            },
+            get: async (target) => {
+              const result = await globalSDK.client.session.get(
+                { sessionID: target.id, directory: target.directory },
+                { throwOnError: false, signal },
+              )
+              if (result.response.status === 404) return undefined
+              if (!result.response.ok || !result.data) throw new Error("Session restore unavailable")
+              return result.data
+            },
+            list: async (directory) => {
+              const result = await globalSDK.client.session.list({ directory }, { throwOnError: false, signal })
+              if (!result.response.ok || !Array.isArray(result.data)) throw new Error("Session restore unavailable")
+              return result.data
+            },
+          })
+          if (!current()) return
+          server.projects.touch(root)
+          if (session) rememberSessionRoute(session.directory, session.id, root)
+          setState("autoselect", false)
+          navigate(startupChatPath(root, session), { replace: true })
+        } catch {
+          if (!current()) return
+          const toast = showToast({
+            persistent: true,
+            title: language.t("session.startup.restoreFailed.title"),
+            description: language.t("session.startup.restoreFailed.description"),
+            actions: [
+              {
+                label: language.t("session.startup.retry"),
+                onClick: () => {
+                  if (autoselecting.loading) return
+                  toaster.dismiss(toast)
+                  void retryStartup()
+                },
+              },
+            ],
+          })
+        }
+        return
+      }
+
+      const list = layout.projects.list()
+      const last = server.projects.last()
+
+      if (list.length === 0) {
+        if (!last) return
+        await openProject(last, true)
+      } else {
+        const next = list.find((project) => project.worktree === last) ?? list[0]
+        if (!next) return
+        await openProject(next.worktree, true)
+      }
+    },
+  )
 
   const workspaceName = (directory: string, projectId?: string, branch?: string) => {
     const key = pathKey(directory)
