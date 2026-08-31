@@ -260,21 +260,21 @@ async function moveRole(source: string, destination: string, ignoreDestination =
   if (sourceEntries.some(ignoreDestination)) throw new MigrationCutoverError("The migration destination changed.")
   if (await exists(destination)) {
     const existing = await readdir(destination)
-    if (await sameTree(source, destination, ignoreDestination)) {
-      await rm(source, { recursive: true })
-      return
+    const published = new Set(existing.filter((name) => !ignoreDestination(name)))
+    // A crash can leave a strict subset of this role durably published. Validate
+    // every existing entry before moving anything; never overwrite drift.
+    for (const name of published) {
+      if (!sourceEntries.includes(name) || !(await sameArtifact(path.join(source, name), path.join(destination, name))))
+        throw new MigrationCutoverError("The migration destination changed.")
     }
-    if (existing.filter((name) => !ignoreDestination(name)).length === 0) {
-      for (const name of sourceEntries) {
-        const target = path.join(destination, name)
-        if (await exists(target)) throw new MigrationCutoverError("The migration destination changed.")
-        await renameDurable(path.join(source, name), target)
-      }
-      await rm(source, { recursive: true })
-      return
+    for (const name of sourceEntries) {
+      if (published.has(name)) continue
+      const target = path.join(destination, name)
+      if (await exists(target)) throw new MigrationCutoverError("The migration destination changed.")
+      await renameDurable(path.join(source, name), target)
     }
-    if (existing.length > 0) throw new MigrationCutoverError("The migration destination changed.")
-    await rm(destination, { recursive: true })
+    await rm(source, { recursive: true })
+    return
   }
   await mkdir(path.dirname(destination), { recursive: true, mode: 0o700 })
   await renameDurable(source, destination)
@@ -375,8 +375,12 @@ async function sameFile(source: string, destination: string) {
   )
 }
 
-async function sameTree(source: string, destination: string, ignoreDestination: (name: string) => boolean) {
-  return (await treeIdentity(source)) === (await treeIdentity(destination, ignoreDestination))
+async function sameArtifact(source: string, destination: string) {
+  const [from, to] = await Promise.all([lstat(source), lstat(destination)])
+  if (from.isSymbolicLink() || to.isSymbolicLink()) return false
+  if (from.isFile() && to.isFile()) return sameFile(source, destination)
+  if (!from.isDirectory() || !to.isDirectory()) return false
+  return (await treeIdentity(source)) === (await treeIdentity(destination))
 }
 
 async function treeIdentity(root: string, ignoreRootEntry: (name: string) => boolean = () => false) {

@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test"
+import { afterEach, expect, spyOn, test } from "bun:test"
 import { createHash, randomUUID } from "node:crypto"
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
@@ -7,6 +7,7 @@ import { captureMigrationSource, fingerprintMigrationSource } from "../../src/mi
 import { activateMigration, prepareMigration, startFresh } from "../../src/migration/cutover"
 import { advanceMigrationJournal, readMigrationJournal } from "../../src/migration/journal"
 import { renameDurable, writeNewDurable } from "../../src/migration/durable-fs"
+import * as durable from "../../src/migration/durable-fs"
 
 const roots: string[] = []
 afterEach(async () => {
@@ -212,3 +213,55 @@ async function denyDelete(file: string) {
     library.close()
   }
 }
+
+test.each(["unchanged", "altered", "unexpected"] as const)(
+  "mid-role publication retry handles an %s partial destination without losing source/snapshot",
+  async (kind) => {
+    const { root, destination } = await fixture()
+    const data = path.join(root, "legacy-data")
+    await mkdir(data)
+    await writeFile(path.join(data, "a.txt"), "first retained record")
+    await writeFile(path.join(data, "b.txt"), "second retained record")
+    const candidate = {
+      id: "data-source",
+      label: "Existing data",
+      kind: "bharatcode-current" as const,
+      roots: { data },
+    }
+    const prepared = await prepareMigration({ destination, sources: [candidate] })
+    if (prepared.type !== "prepared") throw new Error("Expected prepared")
+    const journal = (await readMigrationJournal(destination.state))!
+    const manifest = path.join(destination.state, "migration-snapshots", journal.snapshotDigest, "manifest.json")
+    const sealed = await readFile(manifest)
+    const move = durable.renameDurable
+    const injected = spyOn(durable, "renameDurable").mockImplementation(async (from, to, replace) => {
+      if (to === path.join(destination.data, "b.txt"))
+        throw new Error("Injected interruption after first durable role publication")
+      return move(from, to, replace)
+    })
+    try {
+      await expect(activateMigration({ destination, operationID: prepared.operationID })).rejects.toThrow("Injected")
+    } finally {
+      injected.mockRestore()
+    }
+    expect(await readFile(path.join(destination.data, "a.txt"), "utf8")).toBe("first retained record")
+    expect((await readMigrationJournal(destination.state))?.phase).toBe("prepared")
+    if (kind === "altered") await writeFile(path.join(destination.data, "a.txt"), "unreviewed change")
+    if (kind === "unexpected") await writeFile(path.join(destination.data, "extra.txt"), "unreviewed addition")
+    if (kind === "unchanged") {
+      expect(await activateMigration({ destination, operationID: prepared.operationID })).toEqual({
+        state: "complete",
+        sourceID: candidate.id,
+      })
+      expect(await readFile(path.join(destination.data, "b.txt"), "utf8")).toBe("second retained record")
+    } else {
+      await expect(activateMigration({ destination, operationID: prepared.operationID })).rejects.toThrow(
+        "destination changed",
+      )
+      expect((await readdir(destination.data)).includes("b.txt")).toBe(false)
+    }
+    expect(await readFile(manifest)).toEqual(sealed)
+    expect(await readFile(path.join(data, "a.txt"), "utf8")).toBe("first retained record")
+    expect(await readFile(path.join(data, "b.txt"), "utf8")).toBe("second retained record")
+  },
+)
