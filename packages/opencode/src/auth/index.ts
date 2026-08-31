@@ -6,6 +6,7 @@ import { NonNegativeInt } from "@opencode-ai/core/schema"
 import { Global } from "@opencode-ai/core/global"
 import { AppFileSystem } from "@opencode-ai/core/filesystem"
 import { AuthLock } from "./lock"
+import { windowsCredentialStore } from "./windows-store"
 
 export const OAUTH_DUMMY_KEY = "opencode-oauth-dummy-key"
 
@@ -111,6 +112,10 @@ export const layerWith = (options: LayerOptions = {}) =>
       const credentialFileOps = options.credentialFileOps ?? defaultCredentialFileOps
       const platform = options.platform ?? process.platform
       const credentialAccess = options.credentialAccess ?? defaultCredentialAccess
+      const nativeStore =
+        platform === "win32" && !options.credentialAccess && !options.credentialFileOps
+          ? windowsCredentialStore(file)
+          : undefined
 
       const verifyAccess = (operation: "read" | "write") =>
         Effect.try({
@@ -127,23 +132,38 @@ export const layerWith = (options: LayerOptions = {}) =>
         })
 
       const all = Effect.fnUntraced(function* () {
-        yield* verifyAccess("read")
-        const content = yield* fsys.readFileString(file).pipe(
-          Effect.map((value) => ({ found: true as const, value })),
-          Effect.catchCause((cause): Effect.Effect<{ found: false }, AuthError> => {
-            if (Cause.hasInterruptsOnly(cause)) return Effect.failCause(cause as Cause.Cause<never>)
-            const error = Option.getOrUndefined(Cause.findErrorOption(cause))
-            return platformReason(error) === "NotFound"
-              ? Effect.succeed({ found: false as const })
-              : Effect.fail(
-                  new AuthError({
-                    operation: "read",
-                    reason: platformReason(error) === "PermissionDenied" ? "permission" : "unavailable",
-                    message: "Credential store could not be read.",
-                  }),
-                )
-          }),
-        )
+        const content = yield* nativeStore
+          ? Effect.try({
+              try: () => {
+                const value = nativeStore.read()
+                return value === undefined ? { found: false as const } : { found: true as const, value }
+              },
+              catch: () =>
+                new AuthError({
+                  operation: "read",
+                  reason: "permission",
+                  message: "Credential store permissions or access could not be verified.",
+                }),
+            })
+          : Effect.gen(function* () {
+              yield* verifyAccess("read")
+              return yield* fsys.readFileString(file).pipe(
+                Effect.map((value) => ({ found: true as const, value })),
+                Effect.catchCause((cause): Effect.Effect<{ found: false }, AuthError> => {
+                  if (Cause.hasInterruptsOnly(cause)) return Effect.failCause(cause as Cause.Cause<never>)
+                  const error = Option.getOrUndefined(Cause.findErrorOption(cause))
+                  return platformReason(error) === "NotFound"
+                    ? Effect.succeed({ found: false as const })
+                    : Effect.fail(
+                        new AuthError({
+                          operation: "read",
+                          reason: platformReason(error) === "PermissionDenied" ? "permission" : "unavailable",
+                          message: "Credential store could not be read.",
+                        }),
+                      )
+                }),
+              )
+            })
         if (!content.found) return {}
         const decoded = decodeStore(content.value, { onExcessProperty: "error", errors: "all" })
         if (Result.isSuccess(decoded) && uniqueAliases(decoded.success)) return decoded.success
@@ -310,16 +330,43 @@ export const layerWith = (options: LayerOptions = {}) =>
                     message: "Credential store transaction is invalid.",
                   })
                 }
-                yield* persist(updated, (temp) => {
-                  credentialFileOps.rename(temp, file)
-                  committed = true
-                  try {
-                    credentialFileOps.syncDirectory(parent)
-                  } catch {
-                    // The replacement is already active. A durability-tail defect cannot make the write fail.
+                if (nativeStore) {
+                  if (Result.isFailure(validateStore(updated, { onExcessProperty: "error", errors: "all" }))) {
+                    return yield* new AuthError({
+                      operation: "write",
+                      reason: "invalid",
+                      message: "Credential store update is invalid.",
+                    })
                   }
-                  released = releaseLease(lease)
-                })
+                  // Windows owns private creation, held-object verification and publication
+                  // in one native operation while this process-wide transaction lock is held.
+                  // An uncertain native result is surfaced; never replay this callback here.
+                  yield* Effect.try({ try: () => options.onPrepared?.(), catch: () => writeError(undefined) })
+                  yield* Effect.yieldNow
+                  yield* Effect.try({
+                    try: () => {
+                      nativeStore.publish(JSON.stringify(updated, null, 2))
+                      committed = true
+                      released = releaseLease(lease)
+                    },
+                    catch: () =>
+                      new AuthError({
+                        operation: "write",
+                        reason: "unavailable",
+                        message: "Credential publication was not confirmed. Re-read account state before retrying.",
+                      }),
+                  })
+                } else
+                  yield* persist(updated, (temp) => {
+                    credentialFileOps.rename(temp, file)
+                    committed = true
+                    try {
+                      credentialFileOps.syncDirectory(parent)
+                    } catch {
+                      // The replacement is already active. A durability-tail defect cannot make the write fail.
+                    }
+                    released = releaseLease(lease)
+                  })
                 return next.result
               }),
             (lease) => {

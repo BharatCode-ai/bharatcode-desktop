@@ -50,11 +50,23 @@ export function createBharatCodeAccountClient(options: ClientOptions) {
     }
     const body = await response.text()
     const value = body ? parseJson(body) : {}
-    if (!response.ok) throw new Error(safeErrorMessage(value, response.status))
+    if (!response.ok) throw new SidecarRequestError(response.status, safeErrorMessage(value, response.status))
     return value
   }
 
-  const getAccountStatus = async () => projectStatus(await request("/account/status"), now())
+  const getAccountStatus = async () => {
+    try {
+      return projectStatus(await request("/account/status"), now())
+    } catch (error) {
+      if (!(error instanceof SidecarRequestError) || error.status !== 503) throw error
+      return {
+        state: "connection_issue",
+        authenticated: false,
+        checkedAt: now().toISOString(),
+        message: "BharatCode account storage is unavailable. Check local credential-store access, then retry.",
+      } satisfies BharatCodeAccountStatus
+    }
+  }
   const refreshAccountStatus = getAccountStatus
 
   const beginSignIn = async (input: { selectAccount?: boolean } = {}) => {
@@ -133,4 +145,13 @@ function safeErrorMessage(input: unknown, status: number) {
 
 function isRecord(input: unknown): input is Record<string, unknown> {
   return typeof input === "object" && input !== null && !Array.isArray(input)
+}
+
+class SidecarRequestError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message)
+  }
 }
