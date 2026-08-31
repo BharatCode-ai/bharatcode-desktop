@@ -4,7 +4,7 @@ param(
   [string] $Repository = "BharatCode-ai/bharatcode-desktop",
   [string] $Workflow = ".github/workflows/bharatcode-preliminary-unsigned-wsl.yml",
   [string] $SourceSha,
-  [string] $Ref = "dev",
+  [string] $Ref = "codex/windows-startup-hotfix-1.15.22",
   [string] $BaseVhdxPath,
   [string] $BaseVhdxSha256,
   [string] $RunnerArchivePath,
@@ -289,7 +289,7 @@ function Assert-PreliminaryWslJitInputs {
   )
   if ($Repository -cne "BharatCode-ai/bharatcode-desktop") { throw "Preliminary JIT repository is invalid" }
   if ($Workflow -cne ".github/workflows/bharatcode-preliminary-unsigned-wsl.yml") { throw "Preliminary JIT workflow is invalid" }
-  if ($Ref -cne "dev" -or $SourceSha -cnotmatch '^[0-9a-f]{40}$') { throw "Preliminary JIT source identity is invalid" }
+  if ($Ref -cne "codex/windows-startup-hotfix-1.15.22" -or $SourceSha -cnotmatch '^[0-9a-f]{40}$') { throw "Preliminary JIT source identity is invalid" }
   foreach ($pair in @(@($BaseVhdxPath, $BaseVhdxSha256), @($RunnerArchivePath, $RunnerArchiveSha256))) {
     if (-not [IO.File]::Exists($pair[0]) -or $pair[1] -cnotmatch '^[0-9a-f]{64}$') { throw "Prepared dependency is invalid" }
     if ((Get-FileHash -LiteralPath $pair[0] -Algorithm SHA256).Hash.ToLowerInvariant() -cne $pair[1]) { throw "Prepared dependency digest mismatch" }

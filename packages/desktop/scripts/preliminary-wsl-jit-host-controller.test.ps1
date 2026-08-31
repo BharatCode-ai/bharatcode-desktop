@@ -207,7 +207,7 @@ function New-TestInput {
     Repository = "BharatCode-ai/bharatcode-desktop"
     Workflow = ".github/workflows/bharatcode-preliminary-unsigned-wsl.yml"
     SourceSha = $sourceSha
-    Ref = "dev"
+    Ref = "codex/windows-startup-hotfix-1.15.22"
     BaseVhdxPath = $basePath
     BaseVhdxSha256 = $baseSha256
     RunnerArchivePath = $runnerPath
@@ -243,6 +243,7 @@ try {
   foreach ($hostile in @(
       @{ Repository = "foreign/example" },
       @{ Workflow = ".github/workflows/foreign.yml" },
+      @{ Ref = "dev" },
       @{ SourceSha = "A" * 40 }
     )) {
     $state = New-TestState
