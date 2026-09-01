@@ -963,6 +963,14 @@ async function executeProductionAcceptance(input) {
       await verifyPinnedInstaller(prepared.betaInstaller, input.currentBeta.assets[0])
       diagnosticStage = "CURRENT_BETA_INSTALL"
       const betaInstalled = await runInstaller(prepared.betaInstaller, installDirectory, profile.env)
+      diagnosticStage = "CURRENT_BETA_SCHEMA"
+      const betaRuntime = await packagedRuntime(installDirectory)
+      const betaInitialization = await runProcess(
+        betaRuntime,
+        ["account", "logout", "upgrade-acceptance@example.invalid"],
+        { env: profile.env, timeout: PROCESS_TIMEOUT_MS },
+      )
+      requireValue(/Not logged in/iu.test(betaInitialization.stdout), "Pinned beta database initialization failed")
       diagnosticStage = "LEGACY_STATE"
       const seeded = await seedLegacyBetaState(profile)
       diagnosticStage = "CANDIDATE_IDENTITY"
