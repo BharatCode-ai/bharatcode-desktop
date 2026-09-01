@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { resolve } from "node:path"
 
 import {
   REQUIRED_COHORT_KEYS,
@@ -10,6 +11,7 @@ import {
 const sourceSha = "3b09dcff0d7e8ad7487c6d40199b704ed0712005"
 const bindings = { source_sha: sourceSha, run_id: "123456789", run_attempt: "1" }
 const completedAt = "2026-07-20T10:00:00.000Z"
+const adapterPath = resolve(import.meta.dir, "../../script/preliminary-jit-evidence-cli.mjs")
 
 function signing(key: string) {
   if (key === "desktop-windows-x64") return "authenticode"
@@ -36,6 +38,7 @@ function arch(key: string) {
 
 function artifact(key: string, index: number) {
   const sha256 = index.toString(16).padStart(64, "0")
+  const attestationSha256 = (index + 100).toString(16).padStart(64, "0")
   return {
     key,
     platform: platform(key),
@@ -46,7 +49,8 @@ function artifact(key: string, index: number) {
     artifact_attestation: {
       filename: `${key}.intoto.jsonl`,
       bytes: 2_000 + index,
-      sha256,
+      sha256: attestationSha256,
+      subject_sha256: sha256,
       predicate_type: "https://slsa.dev/provenance/v1",
     },
     signing: signing(key),
@@ -80,6 +84,38 @@ describe("lean next-beta cohort contract", () => {
     expect(validateLeanCohort(value, bindings)).toEqual(value)
     expect(value.artifacts.map((item) => item.key)).toEqual([...REQUIRED_COHORT_KEYS])
     expect(parseLeanCohortBytes(Buffer.from(canonicalLeanJson(value)), bindings)).toEqual(value)
+  })
+
+  test("validates the signed cohort through the host-controller stdin adapter", async () => {
+    const value = manifest()
+    const canonical = canonicalLeanJson(value)
+    const child = Bun.spawn([process.execPath, adapterPath, "cohort"], {
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    child.stdin.write(JSON.stringify({ raw: canonical, identity: bindings }))
+    child.stdin.end()
+    expect(await child.exited).toBe(0)
+    expect(await new Response(child.stderr).text()).toBe("")
+    expect(await new Response(child.stdout).text()).toBe(canonical)
+
+    const duplicate = Bun.spawn([process.execPath, adapterPath, "cohort"], {
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    duplicate.stdin.write(
+      JSON.stringify({
+        raw: canonical.replace(
+          '"schema":"bharatcode-next-beta-cohort-v1"',
+          '"schema":"bharatcode-next-beta-cohort-v1","schema":"bharatcode-next-beta-cohort-v1"',
+        ),
+        identity: bindings,
+      }),
+    )
+    duplicate.stdin.end()
+    expect(await duplicate.exited).toBe(1)
   })
 
   test("rejects missing, extra, and duplicate raw keys", () => {
@@ -148,7 +184,12 @@ describe("lean next-beta cohort contract", () => {
       },
       () => {
         const value = manifest()
-        value.artifacts[0].artifact_attestation.sha256 = "f".repeat(64)
+        value.artifacts[0].artifact_attestation.sha256 = "A".repeat(64)
+        return value
+      },
+      () => {
+        const value = manifest()
+        value.artifacts[0].artifact_attestation.subject_sha256 = "f".repeat(64)
         return value
       },
       () => {

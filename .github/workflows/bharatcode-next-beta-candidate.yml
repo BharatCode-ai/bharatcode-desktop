@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 env:
-  ACCEPTED_WSL_SOURCE_SHA: ee5e9a6351edea2e6c71af56de1d2f554ae8ce09
+  ACCEPTED_WSL_SOURCE_SHA: 17ac654639ef2d0f9e6e79370d39ecbfe67a8654
   BHARATCODE_CHANNEL: beta
   OPENCODE_CHANNEL: beta
   SOURCE_SHA: ${{ inputs.source_sha }}
@@ -56,7 +56,7 @@ jobs:
           [[ "$(git status --porcelain)" == "" ]]
           git merge-base --is-ancestor "$ACCEPTED_WSL_SOURCE_SHA" "$SOURCE_SHA"
           [[ "$(git rev-parse "$SOURCE_SHA^")" == "$ACCEPTED_WSL_SOURCE_SHA" ]]
-          [[ "$(git diff --name-only "$ACCEPTED_WSL_SOURCE_SHA" "$SOURCE_SHA")" == $'.github/workflows/bharatcode-next-beta-candidate.yml\n.github/workflows/bharatcode-preliminary-unsigned-wsl.yml\npackages/desktop/scripts/wsl-windows-preliminary-acceptance.mjs\npackages/desktop/scripts/wsl-windows-preliminary-acceptance.test.ts' ]]
+          [[ "$(git diff --name-only "$ACCEPTED_WSL_SOURCE_SHA" "$SOURCE_SHA")" == $'.github/workflows/bharatcode-next-beta-candidate.yml\n.github/workflows/bharatcode-preliminary-unsigned-wsl.yml\npackages/desktop/scripts/preliminary-wsl-jit-host-controller.ps1\npackages/desktop/scripts/preliminary-wsl-jit-host-controller.test.ps1\npackages/opencode/script/lean-cohort.mjs\npackages/opencode/script/preliminary-jit-evidence-cli.mjs\npackages/opencode/test/distribution/lean-candidate-workflow.test.ts\npackages/opencode/test/distribution/lean-cohort.test.ts\npackages/opencode/test/distribution/preliminary-unsigned-wsl-workflow.test.ts' ]]
           grep -F '"packageManager": "bun@1.3.14"' package.json
           [[ "$(bun --version)" == "1.3.14" ]]
 
@@ -1039,7 +1039,8 @@ jobs:
             const artifact = async (key, platform, arch, signing, filename) => {
               const path = one(filename)
               const bundle = one(`${filename}.intoto.jsonl`)
-              return { key, platform, arch, filename, bytes: (await stat(path)).size, sha256: await digest(path), artifact_attestation: { filename: basename(bundle), bytes: (await stat(bundle)).size, sha256: await digest(path), predicate_type: "https://slsa.dev/provenance/v1" }, signing, completed_at }
+              const subjectSha256 = await digest(path)
+              return { key, platform, arch, filename, bytes: (await stat(path)).size, sha256: subjectSha256, artifact_attestation: { filename: basename(bundle), bytes: (await stat(bundle)).size, sha256: await digest(bundle), subject_sha256: subjectSha256, predicate_type: "https://slsa.dev/provenance/v1" }, signing, completed_at }
             }
             const cli = await Promise.all(["bharatcode", ...PLATFORM_PACKAGE_NAMES].map(async (name) => artifact(`cli-${name}`, name === "bharatcode" ? "npm" : name.includes("darwin") ? "macos" : name.includes("windows") ? "windows" : "linux", name === "bharatcode" ? "universal" : name.includes("arm64") ? "arm64" : "x64", "not-applicable", `${name}-${process.env.CLI_VERSION}.tgz`)))
             const windows = await artifact(expectedKeys[17], "windows", "x64", "authenticode", "bharatcode-desktop-next-beta-win-x64.exe")

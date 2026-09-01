@@ -218,7 +218,7 @@ function validateArtifact(value, expectedKey, manifest, filenames, attestationFi
   )
   exactKeys(
     value.artifact_attestation,
-    ["bytes", "filename", "predicate_type", "sha256"],
+    ["bytes", "filename", "predicate_type", "sha256", "subject_sha256"],
     `lean cohort ${expectedKey} attestation`,
   )
   requireFilename(value.artifact_attestation.filename, `lean cohort ${expectedKey} attestation filename`)
@@ -232,7 +232,11 @@ function validateArtifact(value, expectedKey, manifest, filenames, attestationFi
     `lean cohort ${expectedKey} attestation byte size is invalid`,
   )
   requireValue(
-    value.artifact_attestation.sha256 === value.sha256,
+    typeof value.artifact_attestation.sha256 === "string" && SHA256.test(value.artifact_attestation.sha256),
+    `lean cohort ${expectedKey} attestation bundle SHA-256 is invalid`,
+  )
+  requireValue(
+    value.artifact_attestation.subject_sha256 === value.sha256,
     `lean cohort ${expectedKey} attestation subject digest does not match`,
   )
   requireValue(

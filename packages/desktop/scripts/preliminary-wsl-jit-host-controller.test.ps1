@@ -207,6 +207,7 @@ Assert-True ($resolvedHostGit -is [string] -and [IO.File]::Exists($resolvedHostG
 
 $sourceSha = "7" * 40
 $basePath = Join-Path $PSScriptRoot "../../../.github/workflows/bharatcode-preliminary-unsigned-wsl.yml"
+$candidateWorkflow = ".github/workflows/bharatcode-next-beta-candidate.yml"
 $runnerPath = Join-Path $PSScriptRoot "../../opencode/script/lean-preliminary-jit-lifecycle.mjs"
 $baseSha256 = (Get-FileHash -LiteralPath $basePath -Algorithm SHA256).Hash.ToLowerInvariant()
 $runnerSha256 = (Get-FileHash -LiteralPath $runnerPath -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -237,6 +238,18 @@ function New-TestInput {
 }
 
 try {
+  $preliminaryContract = Get-PreliminaryWorkflowContract ".github/workflows/bharatcode-preliminary-unsigned-wsl.yml"
+  Assert-True ($preliminaryContract.ArtifactPrefix -ceq "preliminary-wsl-evidence") "preliminary artifact contract drifted"
+  Assert-True ($preliminaryContract.ReceiptFile -ceq "bharatcode-wsl-preliminary-unsigned.json") "preliminary receipt contract drifted"
+  Assert-True ($preliminaryContract.ValidationMode -ceq "receipt") "preliminary validation mode drifted"
+  $candidateContract = Get-PreliminaryWorkflowContract $candidateWorkflow
+  Assert-True ($candidateContract.ArtifactPrefix -ceq "cp2-cohort") "candidate artifact contract drifted"
+  Assert-True ($candidateContract.ReceiptFile -ceq "bharatcode-next-beta-cohort.json") "candidate receipt contract drifted"
+  Assert-True ($candidateContract.ChecksumFile -ceq "bharatcode-next-beta-cohort.json.sha256") "candidate checksum contract drifted"
+  Assert-True ($candidateContract.AttestationFile -ceq "bharatcode-next-beta-cohort.json.intoto.jsonl") "candidate attestation contract drifted"
+  Assert-True ($candidateContract.ValidationMode -ceq "cohort") "candidate validation mode drifted"
+  [void](Assert-Throws { Get-PreliminaryWorkflowContract ".github/workflows/foreign.yml" } "foreign workflow contract was accepted")
+
   $noLiveOperations = @{}
   foreach ($name in @(
       "IsElevated", "GetLocalSourceSha", "AssertPrerequisites", "DispatchWorkflow",
@@ -250,6 +263,10 @@ try {
   $validateInput = New-TestInput $noLiveOperations "Validate"
   $validated = Invoke-PreliminaryWslJitHostController @validateInput
   Assert-True ($validated.Status -ceq "VALIDATED") "validation mode did not close without live action"
+  $candidateValidateInput = New-TestInput $noLiveOperations "Validate"
+  $candidateValidateInput.Workflow = $candidateWorkflow
+  $candidateValidated = Invoke-PreliminaryWslJitHostController @candidateValidateInput
+  Assert-True ($candidateValidated.Status -ceq "VALIDATED") "candidate validation mode did not close without live action"
 
   foreach ($hostile in @(
       @{ Repository = "foreign/example" },
@@ -282,6 +299,12 @@ try {
   Assert-True ($success.Calls.FindAll({ param($Name) $Name -ceq "dispatch" }).Count -eq 1) "controller did not dispatch exactly once"
   Assert-True ($success.Calls.FindAll({ param($Name) $Name -ceq "start-runner" }).Count -eq 1) "controller did not start exactly one runner"
   Assert-True ($success.ForeignRunnerPresent -and $success.ForeignVmPresent -and $success.ForeignDiskPresent -and $success.ForeignNetworkPresent) "foreign resources were mutated"
+
+  $candidateSuccess = New-TestState
+  $candidateSuccessInput = New-TestInput (New-TestOperations $candidateSuccess)
+  $candidateSuccessInput.Workflow = $candidateWorkflow
+  $candidatePass = Invoke-PreliminaryWslJitHostController @candidateSuccessInput
+  Assert-True ($candidatePass.Status -ceq "PASS" -and $candidatePass.Workflow -ceq $candidateWorkflow) "signed cohort workflow did not use the closed JIT lifecycle"
 
   $unorderedLabels = New-TestState
   $unorderedLabels.ObservedLabels = @("wsl2", "self-hosted", "x64", "windows", "bharatcode-acceptance-29730000001-2")

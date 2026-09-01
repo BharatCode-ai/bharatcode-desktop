@@ -26,8 +26,8 @@ const reviewedSecurityStepSha256 = {
   windowsPreflight: "89f6c8b0d43faf38a3cadc4e31505bc820be2a90ffd19060c22153aa45d460e2",
   windowsAuthenticode: "20c44131417eff06359c17cfdcd81fa45a4f4bdd73cea224ce88e0ac2ce08db1",
 } as const
-const previousAcceptedWslSha = "a30c6923f2f532258de58d84b65445198be1b351"
-const acceptedWslSha = "f223e2c6b53f567667491f6f1e5667c42fb73fa0"
+const previousAcceptedWslSha = "f223e2c6b53f567667491f6f1e5667c42fb73fa0"
+const acceptedWslSha = "17ac654639ef2d0f9e6e79370d39ecbfe67a8654"
 const wslRunnerLabel = "bharatcode-acceptance-${{ github.run_id }}-${{ github.run_attempt }}"
 const frozenWslPaths = [
   "packages/desktop/electron-builder.config.ts",
@@ -178,6 +178,17 @@ const internalWslInputs = [
   "bharatcode-runtime-linux-x64-glibc",
   "bharatcode-wsl-runtime-manifest.json",
 ]
+const hotfixReleaseDeltaPaths = [
+  ".github/workflows/bharatcode-next-beta-candidate.yml",
+  ".github/workflows/bharatcode-preliminary-unsigned-wsl.yml",
+  "packages/desktop/scripts/preliminary-wsl-jit-host-controller.ps1",
+  "packages/desktop/scripts/preliminary-wsl-jit-host-controller.test.ps1",
+  "packages/opencode/script/lean-cohort.mjs",
+  "packages/opencode/script/preliminary-jit-evidence-cli.mjs",
+  "packages/opencode/test/distribution/lean-candidate-workflow.test.ts",
+  "packages/opencode/test/distribution/lean-cohort.test.ts",
+  "packages/opencode/test/distribution/preliminary-unsigned-wsl-workflow.test.ts",
+] as const
 
 async function source() {
   if (Bun.env.BHARATCODE_CANDIDATE_WORKFLOW_SOURCE) {
@@ -1134,13 +1145,13 @@ function windowsSignerViolations(value: string) {
 }
 
 describe("lean next-beta candidate workflow", () => {
-  test("is manual-only, default-branch-only, and binds one exact source plus the accepted WSL gate", async () => {
+  test("is manual-only, contained-hotfix-only, and binds one exact source plus the accepted WSL gate", async () => {
     const value = await source()
     const workflow = parse(value)
     expect(Object.keys(workflow.on)).toEqual(["workflow_dispatch"])
     expect(Object.keys(workflow.on.workflow_dispatch.inputs)).toEqual(["source_sha"])
     expect(value).toContain("^[0-9a-f]{40}$")
-    expect(value).toContain("github.ref == 'refs/heads/dev'")
+    expect(value).toContain("github.ref == 'refs/heads/codex/windows-startup-hotfix-1.15.22'")
     expect(value).toContain("github.sha")
     expect(value).toContain("inputs.source_sha")
     expect(value).toContain("ref: ${{ inputs.source_sha }}")
@@ -1149,7 +1160,7 @@ describe("lean next-beta candidate workflow", () => {
     expect(value).not.toContain(previousAcceptedWslSha)
     expect(value).toContain("git merge-base --is-ancestor")
     const admission = runStep(value, "admit-source", "Admit immutable source and source-derived versions")
-    for (const path of frozenWslPaths) expect(admission).toContain(path)
+    for (const path of hotfixReleaseDeltaPaths) expect(admission).toContain(path)
     const root = resolve(import.meta.dir, "../../../..")
     const git = (...args: string[]) => Bun.spawnSync(["git", ...args], { cwd: root, stdout: "pipe", stderr: "pipe" })
     expect(git("merge-base", "--is-ancestor", previousAcceptedWslSha, acceptedWslSha).exitCode).toBe(0)
@@ -1746,6 +1757,13 @@ describe("lean next-beta candidate workflow", () => {
         value.replace("bytes: windows.bytes, sha256: windows.sha256", 'bytes: windows.bytes, sha256: "0".repeat(64)'),
       ),
     ).not.toEqual([])
+  })
+
+  test("binds each attestation bundle digest separately from its attested subject digest", async () => {
+    const run = runStep(await source(), "assemble-cohort", "Rehash, close, and validate final manifest")
+    expect(run).toContain("const subjectSha256 = await digest(path)")
+    expect(run).toContain("sha256: await digest(bundle), subject_sha256: subjectSha256")
+    expect(run).not.toContain("bytes: (await stat(bundle)).size, sha256: await digest(path)")
   })
 
   test("runs the real Windows upgrade harness and validates its receipt before attestation", async () => {

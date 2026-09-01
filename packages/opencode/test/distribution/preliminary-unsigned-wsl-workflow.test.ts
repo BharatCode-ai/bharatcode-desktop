@@ -20,8 +20,8 @@ const nsisFixturePath = resolve(root, "packages/desktop/test/fixtures/preliminar
 const jitContractPath = resolve(root, "packages/opencode/script/lean-preliminary-jit-lifecycle.mjs")
 const jitControllerPath = resolve(root, "packages/desktop/scripts/preliminary-wsl-jit-host-controller.ps1")
 const jitAdapterPath = resolve(root, "packages/opencode/script/preliminary-jit-evidence-cli.mjs")
-const acceptedWslSha = "a72687b1394dcf94e50fc69aaf5553f7ed869319"
-const finalWorkflowSha256 = "79b4843c8249c820d0c58306aa2d39bddd0e8f52cc39ede627acf1ff9be9459f"
+const acceptedWslSha = "17ac654639ef2d0f9e6e79370d39ecbfe67a8654"
+const finalWorkflowSha256 = "d94fce632514d0f0aba99bbb85d22a45478509684b510642c7153cffb5ef5a03"
 const label = "bharatcode-acceptance-${{ github.run_id }}-${{ github.run_attempt }}"
 const checkout = "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0"
 const setupBun = "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6"
@@ -42,6 +42,17 @@ const frozenWslPaths = [
   "packages/opencode/script/build.ts",
   "packages/opencode/src/cli/cmd/serve.ts",
   "packages/opencode/src/server/wsl-desktop-transport.ts",
+] as const
+const hotfixReleaseDeltaPaths = [
+  ".github/workflows/bharatcode-next-beta-candidate.yml",
+  ".github/workflows/bharatcode-preliminary-unsigned-wsl.yml",
+  "packages/desktop/scripts/preliminary-wsl-jit-host-controller.ps1",
+  "packages/desktop/scripts/preliminary-wsl-jit-host-controller.test.ps1",
+  "packages/opencode/script/lean-cohort.mjs",
+  "packages/opencode/script/preliminary-jit-evidence-cli.mjs",
+  "packages/opencode/test/distribution/lean-candidate-workflow.test.ts",
+  "packages/opencode/test/distribution/lean-cohort.test.ts",
+  "packages/opencode/test/distribution/preliminary-unsigned-wsl-workflow.test.ts",
 ] as const
 
 type Step = {
@@ -552,7 +563,9 @@ function sourceAdmissionViolations(value: string) {
       ? []
       : ["manual-only trigger"]),
     ...(Object.keys(workflow.on.workflow_dispatch.inputs).join(",") === "source_sha" ? [] : ["closed source input"]),
-    ...(workflow.jobs["admit-source"].if === "github.ref == 'refs/heads/dev'" ? [] : ["dev-only admission"]),
+    ...(workflow.jobs["admit-source"].if === "github.ref == 'refs/heads/codex/windows-startup-hotfix-1.15.22'"
+      ? []
+      : ["contained-hotfix-only admission"]),
     ...(admission.includes('[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]') &&
     admission.includes('[[ "$EVENT_SHA" == "$SOURCE_SHA" ]]') &&
     admission.includes('[[ "$GITHUB_SHA" == "$SOURCE_SHA" ]]') &&
@@ -560,7 +573,7 @@ function sourceAdmissionViolations(value: string) {
       ? []
       : ["exact source identity"]),
     ...(admission.includes(`git merge-base --is-ancestor "$ACCEPTED_WSL_SOURCE_SHA" "$SOURCE_SHA"`) &&
-    frozenWslPaths.every((path) => admission.includes(path))
+    hotfixReleaseDeltaPaths.every((path) => admission.includes(path))
       ? []
       : ["accepted WSL source closure"]),
     ...(workflow.env.SOURCE_SHA === "${{ inputs.source_sha }}" &&
@@ -661,25 +674,25 @@ describe("preliminary unsigned Windows/WSL acceptance workflow", () => {
     }
   })
 
-  test("is a dedicated manual-only exact-source workflow while the final signed workflow stays byte-identical", async () => {
+  test("is a dedicated manual-only contained-hotfix workflow while the final signed workflow stays byte-identical", async () => {
     const value = await source()
     const workflow = parse(value)
     expect(Object.keys(workflow.on)).toEqual(["workflow_dispatch"])
     expect(Object.keys(workflow.on.workflow_dispatch.inputs)).toEqual(["source_sha"])
-    expect(workflow.jobs["admit-source"].if).toBe("github.ref == 'refs/heads/dev'")
+    expect(workflow.jobs["admit-source"].if).toBe("github.ref == 'refs/heads/codex/windows-startup-hotfix-1.15.22'")
     expect(value).toContain("^[0-9a-f]{40}$")
     expect(value).toContain('[[ "$EVENT_SHA" == "$SOURCE_SHA" ]]')
     expect(value).toContain('[[ "$GITHUB_SHA" == "$SOURCE_SHA" ]]')
     expect(value).toContain("ref: ${{ inputs.source_sha }}")
     expect(value).toContain(acceptedWslSha)
     const admission = step(value, "admit-source", "Admit immutable preliminary source").run ?? ""
-    for (const path of frozenWslPaths) expect(admission).toContain(path)
+    for (const path of hotfixReleaseDeltaPaths) expect(admission).toContain(path)
     expect(sha256(await Bun.file(finalWorkflowPath).arrayBuffer())).toBe(finalWorkflowSha256)
     expect(sourceAdmissionViolations(value)).toEqual([])
     for (const hostile of [
       value.replace("^[0-9a-f]{40}$", "^[0-9A-Fa-f]{40}$"),
       value.replace('[[ "$EVENT_SHA" == "$SOURCE_SHA" ]]\n', ""),
-      value.replace("github.ref == 'refs/heads/dev'", "github.ref != ''"),
+      value.replace("github.ref == 'refs/heads/codex/windows-startup-hotfix-1.15.22'", "github.ref != ''"),
       value.replace("ref: ${{ env.SOURCE_SHA }}", "ref: dev"),
     ]) {
       expect(hostile).not.toBe(value)

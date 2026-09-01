@@ -1,3 +1,4 @@
+import { canonicalLeanJson, parseLeanCohortBytes } from "./lean-cohort.mjs"
 import {
   canonicalPreliminaryJitAdmissionJson,
   canonicalPreliminaryJitDestructionJson,
@@ -8,7 +9,7 @@ import {
 } from "./lean-preliminary-unsigned-wsl.mjs"
 
 const mode = process.argv[2]
-if (!["admission", "destruction", "receipt"].includes(mode) || process.argv.length !== 3) {
+if (!["admission", "cohort", "destruction", "receipt"].includes(mode) || process.argv.length !== 3) {
   throw new Error("preliminary JIT evidence operation is invalid")
 }
 const input = JSON.parse(await Bun.stdin.text())
@@ -30,13 +31,19 @@ const receiptBindings = receipt
       validator_sha256: receipt.controller_inputs.validator_sha256,
     }
   : undefined
-const output =
-  mode === "admission"
-    ? canonicalPreliminaryJitAdmissionJson(input.record, input.bindings)
-    : mode === "destruction"
-      ? canonicalPreliminaryJitDestructionJson(input.record, input.admission, input.bindings)
-      : canonicalPreliminaryUnsignedWslJson(
-          parsePreliminaryUnsignedWslJson(input.raw, receiptBindings),
-          receiptBindings,
-        )
+let output
+if (mode === "admission") {
+  output = canonicalPreliminaryJitAdmissionJson(input.record, input.bindings)
+} else if (mode === "destruction") {
+  output = canonicalPreliminaryJitDestructionJson(input.record, input.admission, input.bindings)
+} else if (mode === "receipt") {
+  output = canonicalPreliminaryUnsignedWslJson(
+    parsePreliminaryUnsignedWslJson(input.raw, receiptBindings),
+    receiptBindings,
+  )
+} else {
+  if (typeof input.raw !== "string") throw new Error("signed cohort bytes are invalid")
+  const value = parseLeanCohortBytes(new TextEncoder().encode(input.raw), input.identity)
+  output = canonicalLeanJson(value)
+}
 process.stdout.write(output)

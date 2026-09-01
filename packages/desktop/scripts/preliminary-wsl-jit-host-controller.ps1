@@ -38,6 +38,29 @@ function Get-PreliminaryApplicationSource {
   return Resolve-PreliminaryApplicationSource @(Get-Command $Name -CommandType Application -ErrorAction SilentlyContinue) $Name
 }
 
+function Get-PreliminaryWorkflowContract {
+  param([string] $Workflow)
+  if ($Workflow -ceq ".github/workflows/bharatcode-preliminary-unsigned-wsl.yml") {
+    return [pscustomobject]@{
+      ArtifactPrefix = "preliminary-wsl-evidence"
+      ReceiptFile = "bharatcode-wsl-preliminary-unsigned.json"
+      ChecksumFile = $null
+      AttestationFile = $null
+      ValidationMode = "receipt"
+    }
+  }
+  if ($Workflow -ceq ".github/workflows/bharatcode-next-beta-candidate.yml") {
+    return [pscustomobject]@{
+      ArtifactPrefix = "cp2-cohort"
+      ReceiptFile = "bharatcode-next-beta-cohort.json"
+      ChecksumFile = "bharatcode-next-beta-cohort.json.sha256"
+      AttestationFile = "bharatcode-next-beta-cohort.json.intoto.jsonl"
+      ValidationMode = "cohort"
+    }
+  }
+  throw "Preliminary JIT workflow is invalid"
+}
+
 function Invoke-PreliminaryWslJitHostController {
   [CmdletBinding()]
   param(
@@ -63,6 +86,7 @@ function Invoke-PreliminaryWslJitHostController {
   )
 
   Assert-PreliminaryWslJitInputs @PSBoundParameters
+  $workflowContract = Get-PreliminaryWorkflowContract $Workflow
   if ($Mode -ceq "Validate") {
     return [pscustomobject]@{ Status = "VALIDATED"; Repository = $Repository; Workflow = $Workflow; SourceSha = $SourceSha }
   }
@@ -81,6 +105,7 @@ function Invoke-PreliminaryWslJitHostController {
   $context = [pscustomobject]@{
     Repository = $Repository
     Workflow = $Workflow
+    WorkflowContract = $workflowContract
     SourceSha = $SourceSha
     Ref = $Ref
     BaseVhdxPath = [IO.Path]::GetFullPath($BaseVhdxPath)
@@ -303,7 +328,7 @@ function Assert-PreliminaryWslJitInputs {
     [int] $TimeoutSeconds, [hashtable] $Operations
   )
   if ($Repository -cne "BharatCode-ai/bharatcode-desktop") { throw "Preliminary JIT repository is invalid" }
-  if ($Workflow -cne ".github/workflows/bharatcode-preliminary-unsigned-wsl.yml") { throw "Preliminary JIT workflow is invalid" }
+  [void](Get-PreliminaryWorkflowContract $Workflow)
   if ($Ref -cne "codex/windows-startup-hotfix-1.15.22" -or $SourceSha -cnotmatch '^[0-9a-f]{40}$') { throw "Preliminary JIT source identity is invalid" }
   foreach ($pair in @(@($BaseVhdxPath, $BaseVhdxSha256), @($RunnerArchivePath, $RunnerArchiveSha256))) {
     if (-not [IO.File]::Exists($pair[0]) -or $pair[1] -cnotmatch '^[0-9a-f]{64}$') { throw "Prepared dependency is invalid" }
@@ -465,7 +490,7 @@ function Resolve-PreliminaryOwnedVm {
 }
 
 function Invoke-PreliminaryLifecycleAdapter {
-  param([object] $Context, [ValidateSet("admission", "destruction", "receipt")] [string] $Operation, [object] $Payload)
+  param([object] $Context, [ValidateSet("admission", "cohort", "destruction", "receipt")] [string] $Operation, [object] $Payload)
   $bun = Get-PreliminaryApplicationSource "bun"
   $adapter = Join-Path $PSScriptRoot "../../opencode/script/preliminary-jit-evidence-cli.mjs"
   try { return Invoke-PreliminaryProcess $Context $bun @($adapter, $Operation) ($Payload | ConvertTo-Json -Depth 30 -Compress) }
@@ -616,12 +641,22 @@ function New-PreliminaryWslJitLiveOperations {
           $Context.WorkflowCompleted = $true
           $receipt = $null
           if ([string]$run.conclusion -ceq "success") {
-            $artifactName = "preliminary-wsl-evidence-$($Context.RunId)-$($Context.RunAttempt)"
+            $artifactName = "$($Context.WorkflowContract.ArtifactPrefix)-$($Context.RunId)-$($Context.RunAttempt)"
             $artifactRoot = Join-Path $Owned.RootPath "workflow-evidence"
             [void][IO.Directory]::CreateDirectory($artifactRoot)
             [void](Invoke-PreliminaryProcess $Context (Get-PreliminaryApplicationSource "gh") @("run", "download", $Context.RunId, "--repo", $Context.Repository, "--name", $artifactName, "--dir", $artifactRoot) $null)
-            $receiptPath = Join-Path $artifactRoot "bharatcode-wsl-preliminary-unsigned.json"
-            if (-not [IO.File]::Exists($receiptPath)) { throw "Exact preliminary WSL receipt is absent" }
+            $receiptPath = Join-Path $artifactRoot $Context.WorkflowContract.ReceiptFile
+            if (-not [IO.File]::Exists($receiptPath)) { throw "Exact workflow receipt is absent" }
+            if ($Context.WorkflowContract.ChecksumFile) {
+              $checksumPath = Join-Path $artifactRoot $Context.WorkflowContract.ChecksumFile
+              if (-not [IO.File]::Exists($checksumPath)) { throw "Exact workflow receipt checksum is absent" }
+              $expectedChecksum = "$((Get-FileHash -LiteralPath $receiptPath -Algorithm SHA256).Hash.ToLowerInvariant())  $($Context.WorkflowContract.ReceiptFile)`n"
+              if ([IO.File]::ReadAllText($checksumPath) -cne $expectedChecksum) { throw "Exact workflow receipt checksum is invalid" }
+            }
+            if ($Context.WorkflowContract.AttestationFile) {
+              $attestationPath = Join-Path $artifactRoot $Context.WorkflowContract.AttestationFile
+              if (-not [IO.File]::Exists($attestationPath) -or (Get-Item -LiteralPath $attestationPath).Length -le 0) { throw "Exact workflow receipt attestation is absent" }
+            }
             $receipt = [IO.File]::ReadAllText($receiptPath)
           }
           return [pscustomobject]@{ Repository = $Context.Repository; Workflow = [string]$run.path; SourceSha = [string]$run.head_sha; RunId = [string]$run.id; RunAttempt = [string]$run.run_attempt; Conclusion = [string]$run.conclusion; Receipt = $receipt }
@@ -632,7 +667,7 @@ function New-PreliminaryWslJitLiveOperations {
     }
     ValidateReceipt = {
       param($Receipt, $Context)
-      [void](Invoke-PreliminaryLifecycleAdapter $Context "receipt" ([ordered]@{
+      [void](Invoke-PreliminaryLifecycleAdapter $Context $Context.WorkflowContract.ValidationMode ([ordered]@{
             raw = [string]$Receipt
             identity = [ordered]@{ source_sha = $Context.SourceSha; run_id = $Context.RunId; run_attempt = $Context.RunAttempt }
           }))
