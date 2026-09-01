@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { createHash } from "node:crypto"
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, join, resolve } from "node:path"
 import { Database } from "bun:sqlite"
@@ -11,6 +11,7 @@ import {
   acceptanceFailureCode,
   consumeGithubActionsToken,
   githubApiHeaders,
+  initializePinnedBetaSchema,
   runLeanUpgradeAcceptance,
   validateCurrentBetaApiObservation,
   validateUpgradeExecutionObservation,
@@ -359,6 +360,36 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
       database.query("UPDATE account_state SET active_org_id = NULL").run()
       database.query("UPDATE account SET access_token = 'substituted'").run()
       expect(acceptance.legacyAccountIntact(database)).toBeFalse()
+    } finally {
+      database.close()
+    }
+  })
+
+  test("materializes the exact pinned beta migration schema without starting the old Desktop", async () => {
+    const root = resolve(import.meta.dir, "../../opencode/migration")
+    const names = (await readdir(root, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory() && entry.name <= "20260630000000_add_goal_mode")
+      .map((entry) => entry.name)
+      .sort()
+    const migrations = await Promise.all(
+      names.map(async (name) => ({ name, sql: await readFile(join(root, name, "migration.sql"), "utf8") })),
+    )
+    const database = new Database(":memory:")
+    try {
+      expect(initializePinnedBetaSchema(database, migrations)).toBe(true)
+      expect(database.query("PRAGMA quick_check").get()).toEqual({ quick_check: "ok" })
+      expect(
+        database
+          .query("PRAGMA table_info(project)")
+          .all()
+          .some((column) => column.name === "commands"),
+      ).toBe(true)
+      expect(
+        database
+          .query("PRAGMA table_info(account_state)")
+          .all()
+          .some((column) => column.name === "active_org_id"),
+      ).toBe(true)
     } finally {
       database.close()
     }
@@ -1326,8 +1357,8 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
       "candidateStart.netLog",
       "rollbackStart.netLog",
       "seedLegacyBetaState",
-      '["account", "logout", "upgrade-acceptance@example.invalid"]',
-      "Pinned beta database initialization failed",
+      "initializePinnedBetaDatabase(profile.legacyDatabase)",
+      "Pinned beta migration set changed",
       "observeCandidateState",
       "observeRollbackState",
       "validateStateEvidence",
@@ -1381,7 +1412,7 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
     expect(source).toContain('Basic realm="Secure Area"')
     expect(source).not.toContain("RemoteAddress Internet")
     const betaInstall = source.indexOf("const betaInstalled = await runInstaller(")
-    const betaSchema = source.indexOf('["account", "logout", "upgrade-acceptance@example.invalid"]')
+    const betaSchema = source.indexOf("initializePinnedBetaDatabase(profile.legacyDatabase)")
     const candidateInstall = source.indexOf("runInstaller(input.candidate")
     const recovery = source.indexOf("completeCandidateRecovery(candidateRuntime, profile)")
     const egressStart = source.indexOf("egress = startLocalEgressControl(firewall.control_address)")
