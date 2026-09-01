@@ -29,6 +29,29 @@ const ACCEPTANCE_CREDENTIAL_SENTINELS = [ACCEPTANCE_ACCESS_SENTINEL, ACCEPTANCE_
 const ACCEPTANCE_SHARE_TOKEN = "bharatcode-cp3-inert-share-audit-token"
 const ACCEPTANCE_FIREWALL_RULE = "BharatCode CP3 packaged share public-network block"
 const ACCEPTANCE_EGRESS_PATH = "/bharatcode-firewall-control"
+const CURRENT_BETA_MIGRATIONS = [
+  "20260127222353_familiar_lady_ursula",
+  "20260211171708_add_project_commands",
+  "20260213144116_wakeful_the_professor",
+  "20260225215848_workspace",
+  "20260227213759_add_session_workspace_id",
+  "20260228203230_blue_harpoon",
+  "20260303231226_add_workspace_fields",
+  "20260309230000_move_org_to_state",
+  "20260312043431_session_message_cursor",
+  "20260323234822_events",
+  "20260410174513_workspace-name",
+  "20260413175956_chief_energizer",
+  "20260423070820_add_icon_url_override",
+  "20260427172553_slow_nightmare",
+  "20260428004200_add_session_path",
+  "20260501142318_next_venus",
+  "20260504145000_add_sync_owner",
+  "20260507164347_add_workspace_time",
+  "20260510033149_session_usage",
+  "20260511000411_data_migration_state",
+  "20260630000000_add_goal_mode",
+]
 let diagnosticStage = "PACKAGED_EXECUTION"
 const stageDiagnosticRequested = process.env.BHARATCODE_UPGRADE_STAGE_DIAGNOSTIC === "1"
 const ACCEPTANCE_FIREWALL_REMOTE_RANGES = [
@@ -964,13 +987,7 @@ async function executeProductionAcceptance(input) {
       diagnosticStage = "CURRENT_BETA_INSTALL"
       const betaInstalled = await runInstaller(prepared.betaInstaller, installDirectory, profile.env)
       diagnosticStage = "CURRENT_BETA_SCHEMA"
-      const betaRuntime = await packagedRuntime(installDirectory)
-      const betaInitialization = await runProcess(
-        betaRuntime,
-        ["account", "logout", "upgrade-acceptance@example.invalid"],
-        { env: profile.env, timeout: PROCESS_TIMEOUT_MS },
-      )
-      requireValue(/Not logged in/iu.test(betaInitialization.stdout), "Pinned beta database initialization failed")
+      await initializePinnedBetaDatabase(profile.legacyDatabase)
       diagnosticStage = "LEGACY_STATE"
       const seeded = await seedLegacyBetaState(profile)
       diagnosticStage = "CANDIDATE_IDENTITY"
@@ -1358,6 +1375,48 @@ async function seedLegacyBetaState(profile) {
     databaseSha256: digest(await readStableFile(profile.legacyDatabase, "seeded legacy beta database")),
     configSha256: digest(await readStableFile(profile.legacyConfigFile, "seeded legacy beta config")),
   }
+}
+
+async function initializePinnedBetaDatabase(path) {
+  const root = resolve(import.meta.dir, "../../opencode/migration")
+  const names = (await readdir(root, { withFileTypes: true }))
+    .filter((entry) => entry.isDirectory() && entry.name <= CURRENT_BETA_MIGRATIONS.at(-1))
+    .map((entry) => entry.name)
+    .sort()
+  requireValue(
+    names.length === CURRENT_BETA_MIGRATIONS.length &&
+      names.every((name, index) => name === CURRENT_BETA_MIGRATIONS[index]),
+    "Pinned beta migration set changed",
+  )
+  const migrations = await Promise.all(
+    names.map(async (name) => ({ name, sql: await readFile(join(root, name, "migration.sql"), "utf8") })),
+  )
+  const database = new Database(path)
+  try {
+    initializePinnedBetaSchema(database, migrations)
+  } finally {
+    database.close()
+  }
+}
+
+export function initializePinnedBetaSchema(database, migrations) {
+  requireValue(
+    Array.isArray(migrations) &&
+      migrations.length === CURRENT_BETA_MIGRATIONS.length &&
+      migrations.every(
+        (migration, index) =>
+          migration &&
+          Object.keys(migration).length === 2 &&
+          migration.name === CURRENT_BETA_MIGRATIONS[index] &&
+          typeof migration.sql === "string" &&
+          migration.sql.length > 0,
+      ),
+    "Pinned beta migration input changed",
+  )
+  database.exec("PRAGMA foreign_keys = ON")
+  for (const migration of migrations) database.exec(migration.sql.replaceAll("--> statement-breakpoint", ""))
+  requireValue(database.query("PRAGMA quick_check").get()?.quick_check === "ok", "Pinned beta schema is corrupt")
+  return true
 }
 
 async function completeCandidateRecovery(runtime, profile) {
