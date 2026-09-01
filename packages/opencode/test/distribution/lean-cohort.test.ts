@@ -6,6 +6,7 @@ import {
   canonicalLeanJson,
   parseLeanCohortBytes,
   validateLeanCohort,
+  validateLeanWslWaiver,
 } from "../../script/lean-cohort.mjs"
 
 const sourceSha = "3b09dcff0d7e8ad7487c6d40199b704ed0712005"
@@ -13,10 +14,11 @@ const bindings = { source_sha: sourceSha, run_id: "123456789", run_attempt: "1" 
 const completedAt = "2026-07-20T10:00:00.000Z"
 const adapterPath = resolve(import.meta.dir, "../../script/preliminary-jit-evidence-cli.mjs")
 
-function signing(key: string) {
+function signing(key: string, wslGateResult = "PASS") {
   if (key === "desktop-windows-x64") return "authenticode"
   if (key.startsWith("desktop-macos-")) return "apple-notarized-stapled"
-  if (key.endsWith("receipt") || key === "wsl-scenarios-9-10" || key === "upgrade-rollback-windows-x64") {
+  if (key === "wsl-gate") return wslGateResult === "PASS" ? "acceptance-receipt" : "owner-waiver-receipt"
+  if (key.endsWith("receipt") || key === "upgrade-rollback-windows-x64") {
     return "acceptance-receipt"
   }
   return "not-applicable"
@@ -26,7 +28,7 @@ function platform(key: string) {
   if (key.includes("windows") || key === "upgrade-rollback-windows-x64") return "windows"
   if (key.includes("darwin") || key.includes("macos")) return "macos"
   if (key.includes("linux")) return "linux"
-  if (key === "wsl-scenarios-9-10") return "windows-wsl2"
+  if (key === "wsl-gate") return "windows-wsl2"
   return "npm"
 }
 
@@ -36,7 +38,7 @@ function arch(key: string) {
   return "x64"
 }
 
-function artifact(key: string, index: number) {
+function artifact(key: string, index: number, wslGateResult = "PASS") {
   const sha256 = index.toString(16).padStart(64, "0")
   const attestationSha256 = (index + 100).toString(16).padStart(64, "0")
   return {
@@ -53,15 +55,19 @@ function artifact(key: string, index: number) {
       subject_sha256: sha256,
       predicate_type: "https://slsa.dev/provenance/v1",
     },
-    signing: signing(key),
+    signing: signing(key, wslGateResult),
     completed_at: "2026-07-20T09:59:00.000Z",
   }
 }
 
-function manifest() {
-  const artifacts = REQUIRED_COHORT_KEYS.map(artifact)
+function manifest(wslGateResult = "PASS") {
+  const artifacts = REQUIRED_COHORT_KEYS.map((key, index) => artifact(key, index, wslGateResult))
+  const wslGate = artifacts.find((item) => item.key === "wsl-gate")!
+  wslGate.filename =
+    wslGateResult === "PASS" ? "bharatcode-wsl-scenarios-9-10.json" : "bharatcode-wsl-acceptance-waiver.json"
+  wslGate.artifact_attestation.filename = `${wslGate.filename}.intoto.jsonl`
   return {
-    schema: "bharatcode-next-beta-cohort-v1",
+    schema: "bharatcode-next-beta-cohort-v2",
     repository: "BharatCode-ai/bharatcode-desktop",
     source_sha: sourceSha,
     candidate_tag: `next-beta-${sourceSha.slice(0, 12)}`,
@@ -72,7 +78,8 @@ function manifest() {
     workflow: ".github/workflows/bharatcode-next-beta-candidate.yml",
     run_id: bindings.run_id,
     run_attempt: bindings.run_attempt,
-    wsl_receipt_sha256: artifacts.find((item) => item.key === "wsl-scenarios-9-10")!.sha256,
+    wsl_gate_result: wslGateResult,
+    wsl_receipt_sha256: wslGate.sha256,
     artifacts,
     completed_at: completedAt,
   }
@@ -84,6 +91,14 @@ describe("lean next-beta cohort contract", () => {
     expect(validateLeanCohort(value, bindings)).toEqual(value)
     expect(value.artifacts.map((item) => item.key)).toEqual([...REQUIRED_COHORT_KEYS])
     expect(parseLeanCohortBytes(Buffer.from(canonicalLeanJson(value)), bindings)).toEqual(value)
+  })
+
+  test("accepts an explicit owner waiver without claiming automated WSL acceptance", () => {
+    const value = manifest("OWNER_WAIVED")
+    expect(validateLeanCohort(value, bindings)).toEqual(value)
+    const gate = value.artifacts.find((item) => item.key === "wsl-gate")!
+    expect(gate.signing).toBe("owner-waiver-receipt")
+    expect(gate.filename).toBe("bharatcode-wsl-acceptance-waiver.json")
   })
 
   test("validates the signed cohort through the host-controller stdin adapter", async () => {
@@ -108,8 +123,8 @@ describe("lean next-beta cohort contract", () => {
     duplicate.stdin.write(
       JSON.stringify({
         raw: canonical.replace(
-          '"schema":"bharatcode-next-beta-cohort-v1"',
-          '"schema":"bharatcode-next-beta-cohort-v1","schema":"bharatcode-next-beta-cohort-v1"',
+          '"schema":"bharatcode-next-beta-cohort-v2"',
+          '"schema":"bharatcode-next-beta-cohort-v2","schema":"bharatcode-next-beta-cohort-v2"',
         ),
         identity: bindings,
       }),
@@ -127,7 +142,7 @@ describe("lean next-beta cohort contract", () => {
     )
     expect(() =>
       parseLeanCohortBytes(
-        Buffer.from('{"schema":"bharatcode-next-beta-cohort-v1","schema":"bharatcode-next-beta-cohort-v1"}'),
+        Buffer.from('{"schema":"bharatcode-next-beta-cohort-v2","schema":"bharatcode-next-beta-cohort-v2"}'),
         bindings,
       ),
     ).toThrow(/canonical|duplicate|keys/i)
@@ -214,6 +229,7 @@ describe("lean next-beta cohort contract", () => {
         return value
       },
       () => ({ ...manifest(), wsl_receipt_sha256: "f".repeat(64) }),
+      () => ({ ...manifest(), wsl_gate_result: "OWNER_WAIVED" }),
       () => ({ ...manifest(), wsl_runtime_version: "1.15.20" }),
       () => ({ ...manifest(), cli_version: "1.15.10-01" }),
       () => {
@@ -223,6 +239,36 @@ describe("lean next-beta cohort contract", () => {
       },
     ]
     for (const hostile of cases) expect(() => validateLeanCohort(hostile(), bindings)).toThrow()
+  })
+
+  test("accepts only the exact owner-authorized hotfix WSL waiver record", () => {
+    const desktopSha256 = "d".repeat(64)
+    const runtimeManifestSha256 = "e".repeat(64)
+    const receipt = {
+      schema: "bharatcode-wsl-acceptance-waiver-v1",
+      result: "OWNER_WAIVED",
+      reason: "FORMAL_WINDOWS_WSL2_VM_ACCEPTANCE_NOT_RUN_BY_OWNER_DECISION",
+      manual_acceptance: "INSTALLED_WINDOWS_STARTUP_SIGNIN_PROJECT_MODELS_SESSION_RESTORE_USER_CONFIRMED",
+      accepted_application_source_sha: "80c962f4148db531c35abcf4922059d2101c9bcd",
+      source_sha: sourceSha,
+      desktop_sha256: desktopSha256,
+      runtime_manifest_sha256: runtimeManifestSha256,
+      github: { actor: "release-owner", run_id: 123456789, run_attempt: 1 },
+      completed_at: completedAt,
+    }
+    const expected = { ...bindings, desktop_sha256: desktopSha256, runtime_manifest_sha256: runtimeManifestSha256 }
+    expect(validateLeanWslWaiver(receipt, expected)).toEqual(receipt)
+    for (const hostile of [
+      { ...receipt, result: "PASS" },
+      { ...receipt, reason: "AUTOMATED_PASS" },
+      { ...receipt, accepted_application_source_sha: sourceSha },
+      { ...receipt, source_sha: "0".repeat(40) },
+      { ...receipt, desktop_sha256: "0".repeat(64) },
+      { ...receipt, github: { actor: "release-owner", run_id: 123456788, run_attempt: 1 } },
+      { ...receipt, extra: true },
+    ]) {
+      expect(() => validateLeanWslWaiver(hostile, expected)).toThrow()
+    }
   })
 
   test("accepts only a complete same-source, same-run packaged WSL host receipt", async () => {

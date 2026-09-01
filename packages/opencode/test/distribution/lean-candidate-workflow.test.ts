@@ -26,8 +26,8 @@ const reviewedSecurityStepSha256 = {
   windowsPreflight: "89f6c8b0d43faf38a3cadc4e31505bc820be2a90ffd19060c22153aa45d460e2",
   windowsAuthenticode: "20c44131417eff06359c17cfdcd81fa45a4f4bdd73cea224ce88e0ac2ce08db1",
 } as const
-const previousAcceptedWslSha = "f223e2c6b53f567667491f6f1e5667c42fb73fa0"
-const acceptedWslSha = "17ac654639ef2d0f9e6e79370d39ecbfe67a8654"
+const previousAcceptedWslSha = "17ac654639ef2d0f9e6e79370d39ecbfe67a8654"
+const acceptedWslSha = "e6ba4704f1e1747d1bf18dbe06fc79d19cae5c27"
 const wslRunnerLabel = "bharatcode-acceptance-${{ github.run_id }}-${{ github.run_attempt }}"
 const frozenWslPaths = [
   "packages/desktop/electron-builder.config.ts",
@@ -180,11 +180,7 @@ const internalWslInputs = [
 ]
 const hotfixReleaseDeltaPaths = [
   ".github/workflows/bharatcode-next-beta-candidate.yml",
-  ".github/workflows/bharatcode-preliminary-unsigned-wsl.yml",
-  "packages/desktop/scripts/preliminary-wsl-jit-host-controller.ps1",
-  "packages/desktop/scripts/preliminary-wsl-jit-host-controller.test.ps1",
   "packages/opencode/script/lean-cohort.mjs",
-  "packages/opencode/script/preliminary-jit-evidence-cli.mjs",
   "packages/opencode/test/distribution/lean-candidate-workflow.test.ts",
   "packages/opencode/test/distribution/lean-cohort.test.ts",
   "packages/opencode/test/distribution/preliminary-unsigned-wsl-workflow.test.ts",
@@ -205,6 +201,7 @@ function parse(value: string) {
     jobs: Record<
       string,
       {
+        if?: string
         needs?: string[]
         permissions?: Record<string, string>
         "runs-on"?: string | string[]
@@ -1149,7 +1146,14 @@ describe("lean next-beta candidate workflow", () => {
     const value = await source()
     const workflow = parse(value)
     expect(Object.keys(workflow.on)).toEqual(["workflow_dispatch"])
-    expect(Object.keys(workflow.on.workflow_dispatch.inputs)).toEqual(["source_sha"])
+    expect(Object.keys(workflow.on.workflow_dispatch.inputs)).toEqual(["source_sha", "wsl_acceptance_mode"])
+    expect(workflow.on.workflow_dispatch.inputs.wsl_acceptance_mode).toEqual({
+      description: "Require formal WSL2 automation, or record the owner's one-release 1.15.22 waiver",
+      required: true,
+      default: "required",
+      type: "choice",
+      options: ["required", "owner-waived-hotfix-1.15.22"],
+    })
     expect(value).toContain("^[0-9a-f]{40}$")
     expect(value).toContain("github.ref == 'refs/heads/codex/windows-startup-hotfix-1.15.22'")
     expect(value).toContain("github.sha")
@@ -1165,7 +1169,9 @@ describe("lean next-beta candidate workflow", () => {
     const git = (...args: string[]) => Bun.spawnSync(["git", ...args], { cwd: root, stdout: "pipe", stderr: "pipe" })
     expect(git("merge-base", "--is-ancestor", previousAcceptedWslSha, acceptedWslSha).exitCode).toBe(0)
     expect(git("diff", "--quiet", acceptedWslSha, "HEAD", "--", ...frozenWslPaths).exitCode).toBe(0)
-    expect(git("diff", "--quiet", previousAcceptedWslSha, "HEAD", "--", ...frozenWslPaths).exitCode).not.toBe(0)
+    expect(
+      git("diff", "--quiet", previousAcceptedWslSha, acceptedWslSha, "--", ...hotfixReleaseDeltaPaths).exitCode,
+    ).not.toBe(0)
   })
 
   test("requires one immutable run-attempt-scoped WSL runner label through cohort finalization", async () => {
@@ -1219,6 +1225,7 @@ describe("lean next-beta candidate workflow", () => {
         "package-linux",
         "package-macos",
         "package-windows",
+        "record-wsl-waiver",
         "upgrade-rollback-windows-x64",
       ].sort(),
     )
@@ -1231,12 +1238,13 @@ describe("lean next-beta candidate workflow", () => {
         "package-linux",
         "package-macos",
         "package-windows",
+        "record-wsl-waiver",
         "upgrade-rollback-windows-x64",
       ].sort(),
     )
     for (const key of REQUIRED_COHORT_KEYS) expect(value).toContain(key)
     expect(value).toContain("bharatcode-next-beta-cohort.json")
-    expect(value).toContain("bharatcode-next-beta-cohort-v1")
+    expect(value).toContain("bharatcode-next-beta-cohort-v2")
     expect(value).toContain("canonicalLeanJson")
     expect(value).toContain("validateLeanCohort")
     expect(value).toContain("github.run_id")
@@ -1713,17 +1721,33 @@ describe("lean next-beta candidate workflow", () => {
     expect(value).not.toContain("packages/desktop/test/fixtures/lean-current-beta.json")
   })
 
+  test("records the one-release owner waiver without claiming formal WSL scenarios passed", async () => {
+    const value = await source()
+    const workflow = parse(value)
+    const job = workflow.jobs["record-wsl-waiver"]
+    expect(job.if).toBe("inputs.wsl_acceptance_mode == 'owner-waived-hotfix-1.15.22'")
+    expect(workflow.jobs["accept-wsl"].if).toBe("inputs.wsl_acceptance_mode == 'required'")
+    const run = runStep(value, "record-wsl-waiver", "Record exact owner-authorized WSL automation waiver")
+    expect(run).toContain('result: "OWNER_WAIVED"')
+    expect(run).toContain('reason: "FORMAL_WINDOWS_WSL2_VM_ACCEPTANCE_NOT_RUN_BY_OWNER_DECISION"')
+    expect(run).toContain("accepted_application_source_sha: process.env.ACCEPTED_APPLICATION_SOURCE_SHA")
+    expect(run).toContain("validateLeanWslWaiver")
+    expect(run).not.toContain('result: "PASS"')
+    expect(value).toContain("80c962f4148db531c35abcf4922059d2101c9bcd")
+    expect(value).toContain("bharatcode-wsl-acceptance-waiver.json")
+    expect(value).toContain("owner-waiver-receipt")
+  })
+
   test("attests exactly every cohort subject while excluding closed internal WSL inputs", async () => {
     const value = await source()
     const run = runStep(value, "assemble-cohort", "Verify every artifact attestation against exact source and signer")
-    expect(bashArray(run, "cohort_subjects")).toEqual(cohortSubjectNames)
+    expect(bashArray(run, "cohort_subjects")).toEqual(cohortSubjectNames.slice(0, -1))
     expect(cohortSubjectNames).toHaveLength(REQUIRED_COHORT_KEYS.length)
     expect(cohortSubjectNames).not.toContain("bharatcode-wsl-runtime-manifest.json")
+    expect(run).toContain('cohort_subjects+=("bharatcode-wsl-scenarios-9-10.json")')
+    expect(run).toContain('cohort_subjects+=("bharatcode-wsl-acceptance-waiver.json")')
     for (const internal of internalWslInputs) expect(run).toContain(`! -name '${internal}'`)
     expect(run).toContain('[[ "${#actual_subjects[@]}" -eq "${#cohort_subjects[@]}" ]]')
-    expect(bashArray(run.replace('"bharatcode-wsl-scenarios-9-10.json"\n', ""), "cohort_subjects")).not.toEqual(
-      cohortSubjectNames,
-    )
     expect(run.replace("! -name 'bharatcode-wsl-runtime-manifest.json'", "")).not.toContain(
       "! -name 'bharatcode-wsl-runtime-manifest.json'",
     )

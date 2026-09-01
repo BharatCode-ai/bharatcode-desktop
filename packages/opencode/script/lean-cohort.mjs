@@ -4,6 +4,8 @@ const POSITIVE_DECIMAL = /^[1-9][0-9]*$/u
 const SEMVER =
   /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u
 const SAFE_FILENAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/u
+const GITHUB_ACTOR = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u
+const ACCEPTED_MANUAL_APPLICATION_SOURCE_SHA = "80c962f4148db531c35abcf4922059d2101c9bcd"
 
 export const PLATFORM_PACKAGE_NAMES = Object.freeze([
   "bharatcode-darwin-arm64",
@@ -30,7 +32,7 @@ export const REQUIRED_COHORT_KEYS = Object.freeze(
     "desktop-macos-x64",
     "desktop-windows-x64",
     "upgrade-rollback-windows-x64",
-    "wsl-scenarios-9-10",
+    "wsl-gate",
   ].sort(),
 )
 
@@ -80,12 +82,13 @@ export function validateLeanCohort(value, bindings) {
       "schema",
       "source_sha",
       "workflow",
+      "wsl_gate_result",
       "wsl_receipt_sha256",
       "wsl_runtime_version",
     ],
     "lean cohort manifest",
   )
-  requireValue(value.schema === "bharatcode-next-beta-cohort-v1", "lean cohort schema is invalid")
+  requireValue(value.schema === "bharatcode-next-beta-cohort-v2", "lean cohort schema is invalid")
   requireValue(value.repository === "BharatCode-ai/bharatcode-desktop", "lean cohort repository is invalid")
   requirePattern(bindings.source_sha, SOURCE_SHA, "expected lean cohort source")
   requireValue(value.source_sha === bindings.source_sha, "lean cohort source does not match")
@@ -106,6 +109,10 @@ export function validateLeanCohort(value, bindings) {
   requirePattern(bindings.run_attempt, POSITIVE_DECIMAL, "expected lean cohort run attempt")
   requireValue(value.run_id === bindings.run_id, "lean cohort run ID does not match")
   requireValue(value.run_attempt === bindings.run_attempt, "lean cohort run attempt does not match")
+  requireValue(
+    value.wsl_gate_result === "PASS" || value.wsl_gate_result === "OWNER_WAIVED",
+    "lean cohort WSL gate result is invalid",
+  )
   requirePattern(value.wsl_receipt_sha256, SHA256, "lean cohort WSL receipt SHA-256")
   requireTimestamp(value.completed_at, "lean cohort completion")
   requireValue(
@@ -118,8 +125,15 @@ export function validateLeanCohort(value, bindings) {
   value.artifacts.forEach((artifact, index) => {
     validateArtifact(artifact, REQUIRED_COHORT_KEYS[index], value, filenames, attestationFilenames)
   })
-  const wslReceipt = value.artifacts.find((artifact) => artifact.key === "wsl-scenarios-9-10")
+  const wslReceipt = value.artifacts.find((artifact) => artifact.key === "wsl-gate")
   requireValue(wslReceipt?.sha256 === value.wsl_receipt_sha256, "lean cohort WSL receipt digest does not match")
+  requireValue(
+    wslReceipt?.filename ===
+      (value.wsl_gate_result === "PASS"
+        ? "bharatcode-wsl-scenarios-9-10.json"
+        : "bharatcode-wsl-acceptance-waiver.json"),
+    "lean cohort WSL receipt filename does not match its result",
+  )
   requireValue(!/opencode/iu.test(canonicalLeanJson(value)), "lean cohort contains a forbidden public identity")
   return structuredClone(value)
 }
@@ -193,6 +207,68 @@ export function validateLeanWslReceipt(value, bindings) {
   return structuredClone(value)
 }
 
+export function validateLeanWslWaiver(value, bindings) {
+  exactKeys(
+    bindings,
+    ["desktop_sha256", "run_attempt", "run_id", "runtime_manifest_sha256", "source_sha"],
+    "lean WSL waiver bindings",
+  )
+  exactKeys(
+    value,
+    [
+      "accepted_application_source_sha",
+      "completed_at",
+      "desktop_sha256",
+      "github",
+      "manual_acceptance",
+      "reason",
+      "result",
+      "runtime_manifest_sha256",
+      "schema",
+      "source_sha",
+    ],
+    "lean WSL waiver",
+  )
+  requireValue(value.schema === "bharatcode-wsl-acceptance-waiver-v1", "lean WSL waiver schema is invalid")
+  requireValue(value.result === "OWNER_WAIVED", "lean WSL waiver result is invalid")
+  requireValue(
+    value.reason === "FORMAL_WINDOWS_WSL2_VM_ACCEPTANCE_NOT_RUN_BY_OWNER_DECISION",
+    "lean WSL waiver reason is invalid",
+  )
+  requireValue(
+    value.manual_acceptance === "INSTALLED_WINDOWS_STARTUP_SIGNIN_PROJECT_MODELS_SESSION_RESTORE_USER_CONFIRMED",
+    "lean WSL waiver manual acceptance is invalid",
+  )
+  requireValue(
+    value.accepted_application_source_sha === ACCEPTED_MANUAL_APPLICATION_SOURCE_SHA,
+    "lean WSL waiver accepted application source is invalid",
+  )
+  requirePattern(bindings.source_sha, SOURCE_SHA, "expected lean WSL waiver source")
+  requireValue(value.source_sha === bindings.source_sha, "lean WSL waiver source does not match")
+  requirePattern(bindings.desktop_sha256, SHA256, "expected lean WSL waiver Desktop SHA-256")
+  requirePattern(bindings.runtime_manifest_sha256, SHA256, "expected lean WSL waiver runtime manifest SHA-256")
+  requireValue(value.desktop_sha256 === bindings.desktop_sha256, "lean WSL waiver Desktop digest does not match")
+  requireValue(
+    value.runtime_manifest_sha256 === bindings.runtime_manifest_sha256,
+    "lean WSL waiver runtime manifest digest does not match",
+  )
+  exactKeys(value.github, ["actor", "run_attempt", "run_id"], "lean WSL waiver GitHub identity")
+  requirePattern(value.github.actor, GITHUB_ACTOR, "lean WSL waiver GitHub actor")
+  requirePattern(bindings.run_id, POSITIVE_DECIMAL, "expected lean WSL waiver run ID")
+  requirePattern(bindings.run_attempt, POSITIVE_DECIMAL, "expected lean WSL waiver run attempt")
+  requireValue(
+    Number.isSafeInteger(value.github.run_id) && String(value.github.run_id) === bindings.run_id,
+    "lean WSL waiver run ID does not match",
+  )
+  requireValue(
+    Number.isSafeInteger(value.github.run_attempt) && String(value.github.run_attempt) === bindings.run_attempt,
+    "lean WSL waiver run attempt does not match",
+  )
+  requireTimestamp(value.completed_at, "lean WSL waiver completion")
+  requireValue(!/opencode/iu.test(canonicalLeanJson(value)), "lean WSL waiver contains a forbidden public identity")
+  return structuredClone(value)
+}
+
 function validateArtifact(value, expectedKey, manifest, filenames, attestationFilenames) {
   exactKeys(
     value,
@@ -200,7 +276,7 @@ function validateArtifact(value, expectedKey, manifest, filenames, attestationFi
     `lean cohort artifact ${expectedKey}`,
   )
   requireValue(value.key === expectedKey, "lean cohort artifact keys are missing, duplicated, or unsorted")
-  const expected = expectedArtifactIdentity(expectedKey)
+  const expected = expectedArtifactIdentity(expectedKey, manifest)
   requireValue(
     value.platform === expected.platform && value.arch === expected.arch,
     `lean cohort ${expectedKey} platform is invalid`,
@@ -245,7 +321,7 @@ function validateArtifact(value, expectedKey, manifest, filenames, attestationFi
   )
 }
 
-function expectedArtifactIdentity(key) {
+function expectedArtifactIdentity(key, manifest) {
   if (key === "desktop-windows-x64") return { platform: "windows", arch: "x64", signing: "authenticode" }
   if (key === "desktop-macos-arm64") {
     return { platform: "macos", arch: "arm64", signing: "apple-notarized-stapled" }
@@ -254,8 +330,12 @@ function expectedArtifactIdentity(key) {
     return { platform: "macos", arch: "x64", signing: "apple-notarized-stapled" }
   }
   if (key.startsWith("desktop-linux-")) return { platform: "linux", arch: "x64", signing: "not-applicable" }
-  if (key === "wsl-scenarios-9-10") {
-    return { platform: "windows-wsl2", arch: "x64", signing: "acceptance-receipt" }
+  if (key === "wsl-gate") {
+    return {
+      platform: "windows-wsl2",
+      arch: "x64",
+      signing: manifest.wsl_gate_result === "PASS" ? "acceptance-receipt" : "owner-waiver-receipt",
+    }
   }
   if (key === "upgrade-rollback-windows-x64") {
     return { platform: "windows", arch: "x64", signing: "acceptance-receipt" }
