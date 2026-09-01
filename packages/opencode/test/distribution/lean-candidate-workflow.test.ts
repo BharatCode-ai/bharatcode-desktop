@@ -222,6 +222,7 @@ function parse(value: string) {
           uses?: string
           if?: unknown
           shell?: string
+          env?: Record<string, string>
           with?: Record<string, unknown>
         }[]
       }
@@ -1856,6 +1857,7 @@ describe("lean next-beta candidate workflow", () => {
     const validation = steps.findIndex((step) => step.name === "Validate packaged upgrade receipt before attestation")
     const attestation = steps.findIndex((step) => step.name === "Attest upgrade and rollback receipt")
     expect(harness).toBeGreaterThan(-1)
+    expect(steps[harness]?.env).toEqual({ GITHUB_TOKEN: "${{ github.token }}" })
     expect(validation).toBeGreaterThan(harness)
     expect(attestation).toBeGreaterThan(validation)
     const validator = steps[validation]?.run ?? ""

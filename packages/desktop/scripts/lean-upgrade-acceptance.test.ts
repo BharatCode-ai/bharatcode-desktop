@@ -8,6 +8,8 @@ import { Database } from "bun:sqlite"
 import * as acceptance from "./lean-upgrade-acceptance.mjs"
 import {
   parseUpgradeAcceptanceArguments,
+  acceptanceFailureCode,
+  githubApiHeaders,
   runLeanUpgradeAcceptance,
   validateCurrentBetaApiObservation,
   validateUpgradeExecutionObservation,
@@ -82,6 +84,7 @@ async function fixture(overrides: Record<string, unknown> = {}) {
     arch: "x64",
     env: {
       GITHUB_ACTIONS: "true",
+      GITHUB_TOKEN: "github-actions-fixture-token",
       GITHUB_RUN_ID: "123456789",
       GITHUB_RUN_ATTEMPT: "2",
       RUNNER_OS: "Windows",
@@ -1195,6 +1198,20 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
     }
   })
 
+  test("authenticates only the pinned GitHub release lookup and emits secret-safe failure codes", () => {
+    expect(githubApiHeaders("application/vnd.github+json", "github-actions-fixture-token")).toEqual({
+      Accept: "application/vnd.github+json",
+      Authorization: "Bearer github-actions-fixture-token",
+      "User-Agent": "bharatcode-packaged-upgrade-acceptance",
+      "X-GitHub-Api-Version": "2022-11-28",
+    })
+    for (const token of ["", "short", "contains whitespace", "contains\nnewline"]) {
+      expect(() => githubApiHeaders("application/vnd.github+json", token)).toThrow()
+    }
+    expect(acceptanceFailureCode(new Error("GitHub identity request failed with HTTP 403"))).toBe("GITHUB_IDENTITY")
+    expect(acceptanceFailureCode(new Error("do-not-print-this-secret"))).toBe("PACKAGED_EXECUTION")
+  })
+
   test("fails before effects for fixture substitution and pre-existing acceptance output", async () => {
     const substituted = await fixture()
     try {
@@ -1332,8 +1349,9 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
     expect(source).not.toContain("SELECT COUNT(*) AS count FROM account")
     expect(source).not.toContain('[runtime, "serve"')
     expect(source).not.toContain("BHARATCODE_SERVER_PASSWORD")
-    expect(source).not.toContain("Authorization")
-    expect(source).not.toMatch(/["']authorization["']\s*:/iu)
+    expect(source).toContain("Authorization: `Bearer ${token}`")
+    expect(source).toContain("githubApiHeaders")
+    expect(source).toContain("GITHUB_TOKEN")
     expect(source).toContain('Basic realm="Secure Area"')
     expect(source).not.toContain("RemoteAddress Internet")
     const betaStart = source.indexOf('profile, "current-beta", active')

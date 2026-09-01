@@ -1070,6 +1070,7 @@ async function executeProductionAcceptance(input) {
 }
 
 async function prepareProductionInputs(input) {
+  const githubToken = githubActionsToken(input.environment)
   const candidateBytes = await readStableFile(input.candidate, "candidate installer")
   requirePe(candidateBytes, "candidate installer")
   const candidate = {
@@ -1080,18 +1081,21 @@ async function prepareProductionInputs(input) {
   }
   validateCandidate(candidate)
   const betaInstaller = join(input.acceptanceDirectory, input.currentBeta.assets[0].filename)
-  await downloadCurrentBeta(input.currentBeta, betaInstaller)
+  await downloadCurrentBeta(input.currentBeta, betaInstaller, githubToken)
   return { candidate, betaInstaller, currentBetaVerified: true }
 }
 
-async function downloadCurrentBeta(fixture, destination) {
+async function downloadCurrentBeta(fixture, destination, token) {
   const releaseUrl = `https://api.github.com/repos/${fixture.repository}/releases/${fixture.release_id}`
   const assetUrl = `https://api.github.com/repos/${fixture.repository}/releases/assets/${fixture.assets[0].asset_id}`
-  const release = await fetchJson(releaseUrl)
-  const asset = await fetchJson(assetUrl)
-  const tagCommitSha = await resolveTagCommit(fixture)
+  const release = await fetchJson(releaseUrl, token)
+  const asset = await fetchJson(assetUrl, token)
+  const tagCommitSha = await resolveTagCommit(fixture, token)
   validateCurrentBetaApiObservation({ release, tag_commit_sha: tagCommitSha, asset }, fixture)
-  const response = await fetch(assetUrl, { headers: githubHeaders("application/octet-stream"), redirect: "follow" })
+  const response = await fetch(assetUrl, {
+    headers: githubApiHeaders("application/octet-stream", token),
+    redirect: "follow",
+  })
   if (!response.ok) throw new Error(`Current-beta asset download failed with HTTP ${response.status}`)
   const bytes = Buffer.from(await response.arrayBuffer())
   const expected = fixture.assets[0]
@@ -1101,9 +1105,10 @@ async function downloadCurrentBeta(fixture, destination) {
   await writeCreateOnly(destination, bytes)
 }
 
-async function resolveTagCommit(fixture) {
+async function resolveTagCommit(fixture, token) {
   const ref = await fetchJson(
     `https://api.github.com/repos/${fixture.repository}/git/ref/tags/${encodeURIComponent(fixture.tag)}`,
+    token,
   )
   requireValue(ref?.ref === `refs/tags/${fixture.tag}`, "current-beta tag reference changed")
   if (ref.object?.type === "commit") return ref.object.sha
@@ -1111,23 +1116,37 @@ async function resolveTagCommit(fixture) {
     ref.object?.type === "tag" && /^[0-9a-f]{40}$/u.test(ref.object.sha),
     "current-beta tag object is invalid",
   )
-  const tag = await fetchJson(`https://api.github.com/repos/${fixture.repository}/git/tags/${ref.object.sha}`)
+  const tag = await fetchJson(`https://api.github.com/repos/${fixture.repository}/git/tags/${ref.object.sha}`, token)
   requireValue(tag?.object?.type === "commit", "current-beta annotated tag does not resolve to a commit")
   return tag.object.sha
 }
 
-async function fetchJson(url) {
-  const response = await fetch(url, { headers: githubHeaders("application/vnd.github+json"), redirect: "error" })
+async function fetchJson(url, token) {
+  const response = await fetch(url, {
+    headers: githubApiHeaders("application/vnd.github+json", token),
+    redirect: "error",
+  })
   if (!response.ok) throw new Error(`GitHub identity request failed with HTTP ${response.status}`)
   return response.json()
 }
 
-function githubHeaders(accept) {
+export function githubApiHeaders(accept, token) {
+  requireValue(
+    typeof token === "string" && token.length >= 20 && token.length <= 512 && !/[\0-\x20\x7f]/u.test(token),
+    "GitHub Actions token is unavailable",
+  )
   return {
     Accept: accept,
+    Authorization: `Bearer ${token}`,
     "User-Agent": "bharatcode-packaged-upgrade-acceptance",
     "X-GitHub-Api-Version": "2022-11-28",
   }
+}
+
+function githubActionsToken(environment) {
+  const token = environment?.GITHUB_TOKEN
+  githubApiHeaders("application/vnd.github+json", token)
+  return token
 }
 
 async function runInstaller(installer, installDirectory, env) {
@@ -2786,11 +2805,20 @@ function requireValue(condition, message) {
   if (!condition) throw new Error(message)
 }
 
+export function acceptanceFailureCode(error) {
+  const message = error instanceof Error ? error.message : ""
+  if (/GitHub identity request|current-beta asset download/iu.test(message)) return "GITHUB_IDENTITY"
+  if (/GitHub Actions token/iu.test(message)) return "GITHUB_AUTHORITY"
+  if (/Acceptance directory/iu.test(message)) return "ACCEPTANCE_DIRECTORY"
+  if (/candidate installer/iu.test(message)) return "CANDIDATE_IDENTITY"
+  return "PACKAGED_EXECUTION"
+}
+
 if (import.meta.main) {
   runLeanUpgradeAcceptance(process.argv.slice(2)).then(
     (result) => process.stdout.write(`${result.authority}\n`),
-    () => {
-      process.stderr.write("Packaged upgrade acceptance failed closed\n")
+    (error) => {
+      process.stderr.write(`Packaged upgrade acceptance failed closed [${acceptanceFailureCode(error)}]\n`)
       process.exitCode = 1
     },
   )
