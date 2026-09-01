@@ -272,7 +272,14 @@ export function parsePackagedReadinessDelta(previous, current) {
 }
 
 export function selectLegacyRecoverySource(value) {
-  requireRecord(value, ["sources", "state"], "candidate recovery source observation")
+  const actualKeys = value && typeof value === "object" && !Array.isArray(value) ? Object.keys(value).sort() : []
+  const expectedKeys = ["sources", "state"]
+  requireValue(
+    actualKeys.length === expectedKeys.length && actualKeys.every((key, index) => key === expectedKeys[index]),
+    `candidate recovery source observation shape is invalid (state=${safeDiagnosticField(value?.state)}; keys=${
+      actualKeys.map(safeDiagnosticField).join(",") || "none"
+    })`,
+  )
   requireValue(
     value.state === "choose-source" && Array.isArray(value.sources),
     "Candidate did not require source choice",
@@ -290,6 +297,10 @@ export function selectLegacyRecoverySource(value) {
     "Legacy OpenCode recovery source is missing or ambiguous",
   )
   return { id: sources[0].id, contentFingerprint: sources[0].contentFingerprint }
+}
+
+function safeDiagnosticField(value) {
+  return typeof value === "string" && /^[A-Za-z][A-Za-z0-9_-]{0,63}$/u.test(value) ? value : "invalid"
 }
 
 export function validateStateEvidence(value, expectedSession) {

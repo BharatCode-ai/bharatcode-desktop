@@ -257,6 +257,13 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
     ]) {
       expect(() => acceptance.selectLegacyRecoverySource(hostile)).toThrow()
     }
+    expect(() =>
+      acceptance.selectLegacyRecoverySource({
+        state: "marker-repair",
+        diagnosis: "missing",
+        inferredVersion: "sensitive-version-value",
+      }),
+    ).toThrow("state=marker-repair; keys=diagnosis,inferredVersion,state")
 
     const evidence = {
       schema: "bharatcode-packaged-state-evidence-v1",
