@@ -10,6 +10,7 @@ import {
   parseUpgradeAcceptanceArguments,
   acceptanceFailureCode,
   consumeGithubActionsToken,
+  diagnosticErrorDetail,
   diagnosticProcessExcerpt,
   githubApiHeaders,
   initializePinnedBetaSchema,
@@ -1290,6 +1291,10 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
       expect(detail).not.toContain("aaaaaaaa.bbbbbbbb.cccccccc")
       expect(detail).not.toContain("shsec_abcdefghijklmnop")
       expect(detail.length).toBeLessThanOrEqual(1000)
+      const aggregate = diagnosticErrorDetail(
+        new AggregateError([new Error("original recovery failure"), new Error("cleanup:boundary")], "masked"),
+      )
+      expect(aggregate).toBe("original recovery failure | cleanup:boundary")
     } finally {
       delete process.env.BHARATCODE_UPGRADE_STAGE_DIAGNOSTIC
     }

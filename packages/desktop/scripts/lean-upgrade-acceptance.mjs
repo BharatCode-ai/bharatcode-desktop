@@ -2383,6 +2383,16 @@ export function diagnosticProcessExcerpt(stdout, stderr) {
     .slice(0, 1000)
 }
 
+export function diagnosticErrorDetail(error) {
+  if (!stageDiagnosticRequested && process.env.BHARATCODE_UPGRADE_STAGE_DIAGNOSTIC !== "1") return ""
+  const errors = error instanceof AggregateError ? error.errors : [error]
+  return errors
+    .map((item) => diagnosticProcessExcerpt("", item instanceof Error ? item.message : String(item)))
+    .filter(Boolean)
+    .join(" | ")
+    .slice(0, 1200)
+}
+
 async function terminateProcessTree(pid, force, env) {
   const result = Bun.spawn(terminationCommand(pid, force), {
     env: safeChildEnvironment(env),
@@ -2955,9 +2965,8 @@ if (import.meta.main) {
     (result) => process.stdout.write(`${result.authority}\n`),
     (error) => {
       process.stderr.write(`Packaged upgrade acceptance failed closed [${acceptanceFailureCode(error)}]\n`)
-      if (stageDiagnosticRequested && error instanceof Error) {
-        process.stderr.write(`Diagnostic detail: ${error.message.slice(0, 1200)}\n`)
-      }
+      const detail = diagnosticErrorDetail(error)
+      if (detail) process.stderr.write(`Diagnostic detail: ${detail}\n`)
       process.exitCode = 1
     },
   )
