@@ -9,6 +9,7 @@ import * as acceptance from "./lean-upgrade-acceptance.mjs"
 import {
   parseUpgradeAcceptanceArguments,
   acceptanceFailureCode,
+  consumeGithubActionsToken,
   githubApiHeaders,
   runLeanUpgradeAcceptance,
   validateCurrentBetaApiObservation,
@@ -1212,6 +1213,28 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
     expect(acceptanceFailureCode(new Error("do-not-print-this-secret"))).toBe("PACKAGED_EXECUTION")
   })
 
+  test("consumes the GitHub token before effects and excludes it from executable child environments", async () => {
+    const environment = {
+      GITHUB_TOKEN: "github-actions-fixture-token",
+      PATH: process.env.PATH ?? "",
+      SYSTEMROOT: "C:\\Windows",
+    }
+    expect(consumeGithubActionsToken(environment)).toBe("github-actions-fixture-token")
+    expect(Object.hasOwn(environment, "GITHUB_TOKEN")).toBe(false)
+
+    const invalid = { GITHUB_TOKEN: "short" }
+    expect(() => consumeGithubActionsToken(invalid)).toThrow()
+    expect(Object.hasOwn(invalid, "GITHUB_TOKEN")).toBe(false)
+
+    const hostile = { ...environment, GITHUB_TOKEN: "must-not-reach-child" }
+    const child = Bun.spawn(
+      [process.execPath, "--eval", 'process.stdout.write(String(Object.hasOwn(process.env, "GITHUB_TOKEN")))'],
+      { env: acceptance.safeChildEnvironment(hostile), stdout: "pipe", stderr: "pipe" },
+    )
+    expect(await child.exited).toBe(0)
+    expect(await new Response(child.stdout).text()).toBe("false")
+  })
+
   test("fails before effects for fixture substitution and pre-existing acceptance output", async () => {
     const substituted = await fixture()
     try {
@@ -1352,6 +1375,8 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
     expect(source).toContain("Authorization: `Bearer ${token}`")
     expect(source).toContain("githubApiHeaders")
     expect(source).toContain("GITHUB_TOKEN")
+    expect(source).toContain("delete environment.GITHUB_TOKEN")
+    expect(source).toContain("env: safeChildEnvironment(env)")
     expect(source).toContain('Basic realm="Secure Area"')
     expect(source).not.toContain("RemoteAddress Internet")
     const betaStart = source.indexOf('profile, "current-beta", active')

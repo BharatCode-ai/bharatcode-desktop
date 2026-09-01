@@ -943,6 +943,7 @@ export async function runLeanUpgradeAcceptance(argv, dependencies) {
 }
 
 async function executeProductionAcceptance(input) {
+  const githubToken = consumeGithubActionsToken(input.environment)
   const installDirectory = join(input.acceptanceDirectory, "installed")
   const profile = isolatedProfile(input.acceptanceDirectory, input.environment)
   const active = new Map()
@@ -952,7 +953,7 @@ async function executeProductionAcceptance(input) {
   const observation = await runAcceptanceWithCleanup(
     async () => {
       await initializeIsolatedProfile(profile)
-      const prepared = await prepareProductionInputs(input)
+      const prepared = await prepareProductionInputs(input, githubToken)
       await verifyPinnedInstaller(prepared.betaInstaller, input.currentBeta.assets[0])
       const betaInstalled = await runInstaller(prepared.betaInstaller, installDirectory, profile.env)
       const betaStart = await startDesktop(betaInstalled.application, installDirectory, profile, "current-beta", active)
@@ -1069,8 +1070,7 @@ async function executeProductionAcceptance(input) {
   return { ...observation, cleanup_complete: true }
 }
 
-async function prepareProductionInputs(input) {
-  const githubToken = githubActionsToken(input.environment)
+async function prepareProductionInputs(input, githubToken) {
   const candidateBytes = await readStableFile(input.candidate, "candidate installer")
   requirePe(candidateBytes, "candidate installer")
   const candidate = {
@@ -1143,10 +1143,14 @@ export function githubApiHeaders(accept, token) {
   }
 }
 
-function githubActionsToken(environment) {
+export function consumeGithubActionsToken(environment) {
   const token = environment?.GITHUB_TOKEN
-  githubApiHeaders("application/vnd.github+json", token)
-  return token
+  try {
+    githubApiHeaders("application/vnd.github+json", token)
+    return token
+  } finally {
+    if (environment && typeof environment === "object") delete environment.GITHUB_TOKEN
+  }
 }
 
 async function runInstaller(installer, installDirectory, env) {
@@ -2226,7 +2230,7 @@ async function initializeIsolatedProfile(profile) {
   )
 }
 
-function safeChildEnvironment(environment) {
+export function safeChildEnvironment(environment) {
   return Object.fromEntries(
     childEnvironmentKeys.flatMap((name) => {
       const key = Object.keys(environment).find((candidate) => candidate.toLowerCase() === name.toLowerCase())
@@ -2268,8 +2272,9 @@ async function runProcess(executable, args, options) {
   }
 }
 
-async function terminateProcessTree(pid, force) {
+async function terminateProcessTree(pid, force, env) {
   const result = Bun.spawn(terminationCommand(pid, force), {
+    env: safeChildEnvironment(env),
     stdout: "ignore",
     stderr: "ignore",
     windowsHide: true,
@@ -2341,12 +2346,12 @@ function rememberOwnedProcesses(active, rootPid, records) {
 
 async function terminateTrackedProcess(rootPid, active, env, graceful = false) {
   const pids = [...(active.get(rootPid) ?? new Set([rootPid]))]
-  const requested = await terminateProcessTree(rootPid, !graceful)
+  const requested = await terminateProcessTree(rootPid, !graceful, env)
   if (graceful && requested && (await waitForOwnedProcessesGone(pids, env, 15_000))) {
     active.delete(rootPid)
     return true
   }
-  const terminated = graceful ? await terminateProcessTree(rootPid, true) : requested
+  const terminated = graceful ? await terminateProcessTree(rootPid, true, env) : requested
   if (terminated && (await waitForOwnedProcessesGone(pids, env, 30_000))) {
     active.delete(rootPid)
     return true

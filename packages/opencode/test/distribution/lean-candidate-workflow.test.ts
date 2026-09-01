@@ -35,7 +35,7 @@ const reviewedSecurityStepSha256 = {
 } as const
 const previousAcceptedWslSha = "17ac654639ef2d0f9e6e79370d39ecbfe67a8654"
 const acceptedWslSha = "205e5f670fae8e18e49f58b504b630cbe255da2d"
-const acceptedReleaseControlSha = "9a4de91ccde1c487258412b4f66974da43d49dda"
+const acceptedReleaseControlSha = "5effd22e369bb63bdfd8c7dda08a4f8512021a77"
 const wslRunnerLabel = "bharatcode-acceptance-${{ github.run_id }}-${{ github.run_attempt }}"
 const frozenWslPaths = [
   "packages/desktop/electron-builder.config.ts",
