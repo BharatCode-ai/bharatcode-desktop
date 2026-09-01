@@ -476,7 +476,7 @@ function runWorkflowCohortFixture(run: string) {
         "candidate_installed_over_beta",
         "candidate_started",
         "current_beta_download_verified",
-        "current_beta_installed_and_started",
+        "current_beta_installed",
         "eligible_state_preserved",
         "eligible_state_seeded",
         "migration_source_preserved",

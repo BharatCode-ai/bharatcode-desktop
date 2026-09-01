@@ -25,7 +25,7 @@ async function fixture() {
 function checks() {
   return {
     current_beta_download_verified: true,
-    current_beta_installed_and_started: true,
+    current_beta_installed: true,
     eligible_state_seeded: true,
     candidate_installed_over_beta: true,
     eligible_state_preserved: true,

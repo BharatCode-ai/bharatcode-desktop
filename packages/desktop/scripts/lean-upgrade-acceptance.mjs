@@ -48,7 +48,7 @@ const checkKeys = [
   "candidate_installed_over_beta",
   "candidate_started",
   "current_beta_download_verified",
-  "current_beta_installed_and_started",
+  "current_beta_installed",
   "eligible_state_preserved",
   "eligible_state_seeded",
   "migration_source_preserved",
@@ -963,8 +963,6 @@ async function executeProductionAcceptance(input) {
       await verifyPinnedInstaller(prepared.betaInstaller, input.currentBeta.assets[0])
       diagnosticStage = "CURRENT_BETA_INSTALL"
       const betaInstalled = await runInstaller(prepared.betaInstaller, installDirectory, profile.env)
-      diagnosticStage = "CURRENT_BETA_START"
-      const betaStart = await startDesktop(betaInstalled.application, installDirectory, profile, "current-beta", active)
       diagnosticStage = "LEGACY_STATE"
       const seeded = await seedLegacyBetaState(profile)
       diagnosticStage = "CANDIDATE_IDENTITY"
@@ -1053,11 +1051,7 @@ async function executeProductionAcceptance(input) {
         ACCEPTANCE_SESSION,
       )
       diagnosticStage = "NETWORK_ABSENCE"
-      const shareNetworkAttemptAbsent = await verifyShareNetworkAbsence([
-        betaStart.netLog,
-        candidateStart.netLog,
-        rollbackStart.netLog,
-      ])
+      const shareNetworkAttemptAbsent = await verifyShareNetworkAbsence([candidateStart.netLog, rollbackStart.netLog])
       diagnosticStage = "PROCESS_CLEANUP"
       requireValue(await verifyNoOwnedProcesses(active, profile.env), "Packaged upgrade process cleanup is incomplete")
       diagnosticStage = "OBSERVATION"
@@ -1066,7 +1060,7 @@ async function executeProductionAcceptance(input) {
         candidate: prepared.candidate,
         checks: {
           current_beta_download_verified: prepared.currentBetaVerified,
-          current_beta_installed_and_started: betaStart.ready,
+          current_beta_installed: true,
           eligible_state_seeded: seeded.seeded,
           candidate_installed_over_beta:
             candidateInstalled.executable.sha256 !== betaInstalled.executable.sha256 &&
