@@ -2355,15 +2355,32 @@ async function runProcess(executable, args, options) {
   const outputBytes = stdout.byteLength + stderr.byteLength
   requireValue(outputBytes <= MAX_PROCESS_OUTPUT, "Acceptance process output exceeded its bound")
   requireValue(!timedOut, "Acceptance process timed out")
-  requireValue(
-    options.expectFailure ? exitCode !== 0 : exitCode === 0,
-    `Acceptance process exited with code ${exitCode}`,
-  )
+  const expectedExit = options.expectFailure ? exitCode !== 0 : exitCode === 0
+  if (!expectedExit) {
+    const detail = diagnosticProcessExcerpt(Buffer.from(stdout).toString("utf8"), Buffer.from(stderr).toString("utf8"))
+    throw new Error(`Acceptance process exited with code ${exitCode}${detail ? `: ${detail}` : ""}`)
+  }
   return {
     exitCode,
     stdout: Buffer.from(stdout).toString("utf8"),
     stderr: Buffer.from(stderr).toString("utf8"),
   }
+}
+
+export function diagnosticProcessExcerpt(stdout, stderr) {
+  if (!stageDiagnosticRequested && process.env.BHARATCODE_UPGRADE_STAGE_DIAGNOSTIC !== "1") return ""
+  return `${stdout}\n${stderr}`
+    .replaceAll(ACCEPTANCE_ACCESS_SENTINEL, "<redacted>")
+    .replaceAll(ACCEPTANCE_REFRESH_SENTINEL, "<redacted>")
+    .replaceAll(ACCEPTANCE_SHARE_TOKEN, "<redacted>")
+    .replace(/\bBearer\s+[^\s"']+/giu, "Bearer <redacted>")
+    .replace(/\b[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/gu, "<redacted-jwt>")
+    .replace(/\bshsec_[A-Za-z0-9_-]{16,200}\b/gu, "<redacted-secret>")
+    .replace(/https?:\/\/[^\s"']+/giu, "<redacted-url>")
+    .replace(/[\u0000-\u001f\u007f]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, 1000)
 }
 
 async function terminateProcessTree(pid, force, env) {
@@ -2938,6 +2955,9 @@ if (import.meta.main) {
     (result) => process.stdout.write(`${result.authority}\n`),
     (error) => {
       process.stderr.write(`Packaged upgrade acceptance failed closed [${acceptanceFailureCode(error)}]\n`)
+      if (stageDiagnosticRequested && error instanceof Error) {
+        process.stderr.write(`Diagnostic detail: ${error.message.slice(0, 1200)}\n`)
+      }
       process.exitCode = 1
     },
   )

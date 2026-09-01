@@ -10,6 +10,7 @@ import {
   parseUpgradeAcceptanceArguments,
   acceptanceFailureCode,
   consumeGithubActionsToken,
+  diagnosticProcessExcerpt,
   githubApiHeaders,
   initializePinnedBetaSchema,
   runLeanUpgradeAcceptance,
@@ -1271,6 +1272,24 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
         acceptanceFailureCode(new Error("Packaged application did not reach post-initialization readiness")),
       ).toEndWith("_READINESS_PARSE")
       expect(acceptanceFailureCode(new Error("Packaged readiness log did not advance"))).toEndWith("_READINESS_LOG")
+    } finally {
+      delete process.env.BHARATCODE_UPGRADE_STAGE_DIAGNOSTIC
+    }
+  })
+
+  test("redacts diagnostic process output before emitting a bounded failure detail", () => {
+    process.env.BHARATCODE_UPGRADE_STAGE_DIAGNOSTIC = "1"
+    try {
+      const detail = diagnosticProcessExcerpt(
+        "BharatCodeDatabaseRecoveryRequiredError at C:\\fixture",
+        "Bearer secret-value https://example.invalid/path aaaaaaaa.bbbbbbbb.cccccccc shsec_abcdefghijklmnop",
+      )
+      expect(detail).toContain("BharatCodeDatabaseRecoveryRequiredError")
+      expect(detail).not.toContain("secret-value")
+      expect(detail).not.toContain("example.invalid")
+      expect(detail).not.toContain("aaaaaaaa.bbbbbbbb.cccccccc")
+      expect(detail).not.toContain("shsec_abcdefghijklmnop")
+      expect(detail.length).toBeLessThanOrEqual(1000)
     } finally {
       delete process.env.BHARATCODE_UPGRADE_STAGE_DIAGNOSTIC
     }
