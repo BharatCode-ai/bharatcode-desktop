@@ -1433,6 +1433,13 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
     expect(source).toContain("env: safeChildEnvironment(env)")
     expect(source).toContain('Basic realm="Secure Area"')
     expect(source).not.toContain("RemoteAddress Internet")
+    const profileInitialization = source.slice(
+      source.indexOf("async function initializeIsolatedProfile("),
+      source.indexOf("export function safeChildEnvironment("),
+    )
+    for (const privateRoot of ["profile.data", "profile.config", "profile.state", "profile.userData"]) {
+      expect(profileInitialization).not.toContain(privateRoot)
+    }
     const betaInstall = source.indexOf("const betaInstalled = await runInstaller(")
     const betaSchema = source.indexOf("initializePinnedBetaDatabase(profile.legacyDatabase)")
     const candidateInstall = source.indexOf("runInstaller(input.candidate")
