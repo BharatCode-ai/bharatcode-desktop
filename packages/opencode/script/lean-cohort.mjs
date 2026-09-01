@@ -322,7 +322,7 @@ function validateArtifact(value, expectedKey, manifest, filenames, attestationFi
 }
 
 function expectedArtifactIdentity(key, manifest) {
-  if (key === "desktop-windows-x64") return { platform: "windows", arch: "x64", signing: "authenticode" }
+  if (key === "desktop-windows-x64") return { platform: "windows", arch: "x64", signing: "unsigned" }
   if (key === "desktop-macos-arm64") {
     return { platform: "macos", arch: "arm64", signing: "apple-notarized-stapled" }
   }

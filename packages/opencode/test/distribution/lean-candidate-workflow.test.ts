@@ -12,22 +12,18 @@ const setupBun = "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6"
 const upload = "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
 const download = "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
 const attest = "actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6"
-const azureLogin = "azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43"
 const reviewedSecurityEnclosureSha256 = {
   nativePreflight: "96c72efbac3d82b23c8aa3232608b63afea496818381c7aad4f3e922c896ab2d",
   linuxPackage: "5120170c09954e6e2d57d72cd856cd1e3c193b19cfe8243d20154b73d5289b67",
-  windowsPreflight: "7ae4ff03740ad94b8a24c83ae22db01e8825221b2d3238adca3d75a65de5c0ba",
-  windowsAuthenticode: "01359917d489dc0dc9fe7e2f16b24008c69d324573f5b9b9af62194d2b72169d",
-  windowsSigner: "a9e6e0b3732b9dddbae80d6539f061f6935d7cd15bfefc614084b67e08511c5d",
+  windowsUnsigned: "5a357c93583798fd698b5fbab946ebcd058a6c6eee3391a2f58b5ab618fbca00",
 } as const
 const reviewedSecurityStepSha256 = {
   nativePreflight: "fb81af32a451e1fbb04c88c7b5cfc4e63eca4f759f73c3d967f17cd4001617d5",
   linuxPackage: "54d38a70454ffd857a51ca05848eb30afc19bcd86dbe22d1d9b5944ac3fbf8d7",
-  windowsPreflight: "89f6c8b0d43faf38a3cadc4e31505bc820be2a90ffd19060c22153aa45d460e2",
-  windowsAuthenticode: "20c44131417eff06359c17cfdcd81fa45a4f4bdd73cea224ce88e0ac2ce08db1",
+  windowsUnsigned: "a3c024ac9c6087fca041b9d2aeeab56f59e5086557e1dbb56169846d701f5c6d",
 } as const
 const previousAcceptedWslSha = "17ac654639ef2d0f9e6e79370d39ecbfe67a8654"
-const acceptedWslSha = "e6ba4704f1e1747d1bf18dbe06fc79d19cae5c27"
+const acceptedWslSha = "205e5f670fae8e18e49f58b504b630cbe255da2d"
 const wslRunnerLabel = "bharatcode-acceptance-${{ github.run_id }}-${{ github.run_attempt }}"
 const frozenWslPaths = [
   "packages/desktop/electron-builder.config.ts",
@@ -203,6 +199,7 @@ function parse(value: string) {
       {
         if?: string
         needs?: string[]
+        env?: Record<string, string>
         permissions?: Record<string, string>
         "runs-on"?: string | string[]
         steps?: {
@@ -300,18 +297,11 @@ function closedSecurityStepViolations(value: string) {
     ],
     ["Linux package", "package-linux", "Build Linux packages", "bash", reviewedSecurityStepSha256.linuxPackage],
     [
-      "Windows preflight",
+      "Windows unsigned policy",
       "package-windows",
-      "Preflight protected Windows signing identity",
+      "Verify unsigned Windows policy and package version",
       "pwsh",
-      reviewedSecurityStepSha256.windowsPreflight,
-    ],
-    [
-      "Authenticode",
-      "package-windows",
-      "Verify Authenticode publisher and trusted timestamp",
-      "pwsh",
-      reviewedSecurityStepSha256.windowsAuthenticode,
+      reviewedSecurityStepSha256.windowsUnsigned,
     ],
   ] as const
   return specifications.flatMap(([label, job, name, shell, expected]) => {
@@ -328,21 +318,10 @@ function closedSecurityStepViolations(value: string) {
   })
 }
 
-function securityEnclosureViolations(value: string, signer: Uint8Array) {
+function securityEnclosureViolations(value: string) {
   const workflow = parse(value)
   const windows = workflow.jobs["package-windows"].steps ?? []
-  const windowsPreflight = windows.find((step) => step.name === "Preflight protected Windows signing identity")
-  const azure = windows.find((step) => step.name === "Establish Azure CLI OIDC session")
-  const authenticode = windows.find((step) => step.name === "Verify Authenticode publisher and trusted timestamp")
-  const expectedAzure = {
-    name: "Establish Azure CLI OIDC session",
-    uses: azureLogin,
-    with: {
-      "client-id": "${{ secrets.AZURE_CLIENT_ID }}",
-      "tenant-id": "${{ secrets.AZURE_TENANT_ID }}",
-      "subscription-id": "${{ secrets.AZURE_SUBSCRIPTION_ID }}",
-    },
-  }
+  const unsigned = windows.find((step) => step.name === "Verify unsigned Windows policy and package version")
   const digestEntries = [
     [
       "native preflight",
@@ -354,17 +333,15 @@ function securityEnclosureViolations(value: string, signer: Uint8Array) {
       runStep(value, "package-linux", "Build Linux packages"),
       reviewedSecurityEnclosureSha256.linuxPackage,
     ],
-    ["Windows preflight", windowsPreflight?.run ?? "", reviewedSecurityEnclosureSha256.windowsPreflight],
-    ["Authenticode", authenticode?.run ?? "", reviewedSecurityEnclosureSha256.windowsAuthenticode],
+    ["Windows unsigned policy", unsigned?.run ?? "", reviewedSecurityEnclosureSha256.windowsUnsigned],
   ] as const
   return [
     ...closedSecurityStepViolations(value),
     ...digestEntries.flatMap(([name, run, expected]) => (sha256(run) === expected ? [] : [`${name} digest`])),
-    ...(sha256(signer) === reviewedSecurityEnclosureSha256.windowsSigner ? [] : ["Windows signer digest"]),
-    ...(JSON.stringify(azure) === JSON.stringify(expectedAzure) ? [] : ["closed Azure login"]),
-    ...([windowsPreflight, azure, authenticode].every((step) => step && !("if" in step))
-      ? []
-      : ["disabled Windows security step"]),
+    ...(unsigned && !("if" in unsigned) ? [] : ["disabled Windows security step"]),
+    ...(value.includes("AZURE_") || value.includes("azure/login@") || value.includes("sign-windows.ps1")
+      ? ["obsolete Windows signing authority"]
+      : []),
   ]
 }
 
@@ -484,11 +461,22 @@ async function runWorkflowMetaPackageFixture(script: string) {
       const hostTarball = resolve(root, "out/cli", `${host.candidates[0]}-${version}.tgz`)
       const prefix = resolve(root, "global")
       const install = Bun.spawnSync(
-        ["npm", "install", "--global", "--prefix", prefix, "--ignore-scripts", "--offline", hostTarball, metaPath],
+        [
+          "npm",
+          "install",
+          "--global",
+          "--prefix",
+          prefix,
+          "--ignore-scripts",
+          "--omit=optional",
+          "--offline",
+          hostTarball,
+          metaPath,
+        ],
         { cwd: root, stdout: "pipe", stderr: "pipe" },
       )
       if (install.exitCode !== 0) {
-        violations.push("offline host install")
+        violations.push(`offline host install: ${install.stderr.toString().trim()}`)
       } else {
         const consumer = resolve(root, "consumer")
         const npxCache = resolve(prefix, ".npx-cache")
@@ -843,7 +831,7 @@ function authorityViolations(value: string) {
     /--clobber/iu,
     /(?:@|:)latest\b/iu,
     /npm\s+(?:dist-tag|tag).*\bnext\b/iu,
-    /BHARATCODE_ALLOW_UNSIGNED_(?:MAC|WINDOWS)/u,
+    /BHARATCODE_ALLOW_UNSIGNED_MAC/u,
   ]
   return [
     ...permissions.flatMap((item) =>
@@ -1045,99 +1033,40 @@ function runOnePackagingViolations(value: string) {
   ]
 }
 
-function windowsSigningViolations(value: string) {
+function windowsUnsignedPolicyViolations(value: string) {
   const job = parse(value).jobs["package-windows"]
   const steps = job.steps ?? []
-  const preflight = steps.findIndex((step) => step.name === "Preflight protected Windows signing identity")
-  const login = steps.findIndex((step) => step.name === "Establish Azure CLI OIDC session")
+  const download = steps.findIndex((step) => step.name === "Download same-run WSL runtime")
   const install = steps.findIndex((step) => step.name === "Install exact dependencies and stage WSL runtime")
-  const build = steps.findIndex((step) => step.name === "Build signed Windows installer")
-  const verify = steps.findIndex((step) => step.name === "Verify Authenticode publisher and trusted timestamp")
-  const preflightRun = steps[preflight]?.run ?? ""
+  const build = steps.findIndex((step) => step.name === "Build unsigned Windows installer")
+  const verify = steps.findIndex((step) => step.name === "Verify unsigned Windows policy and package version")
+  const attest = steps.findIndex((step) => step.name === "Attest Windows installer")
   const verifyRun = steps[verify]?.run ?? ""
-  const required = [
-    "AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}",
-    "AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}",
-    "AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}",
-    "AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}",
-    "AZURE_TRUSTED_SIGNING_ACCOUNT_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME }}",
-    "AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE: ${{ secrets.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE }}",
-    "EXPECTED_WINDOWS_PUBLISHER: ${{ vars.BHARATCODE_WINDOWS_PUBLISHER_SUBJECT }}",
-    azureLogin,
-    "client-id: ${{ secrets.AZURE_CLIENT_ID }}",
-    "tenant-id: ${{ secrets.AZURE_TENANT_ID }}",
-    "subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}",
-  ]
-  const requiredPreflight = [
-    "const names = [",
-    '"AZURE_CLIENT_ID"',
-    '"AZURE_TENANT_ID"',
-    '"AZURE_SUBSCRIPTION_ID"',
-    '"AZURE_TRUSTED_SIGNING_ENDPOINT"',
-    '"AZURE_TRUSTED_SIGNING_ACCOUNT_NAME"',
-    '"AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE"',
-    '"EXPECTED_WINDOWS_PUBLISHER"',
-    "value.trim() !== value",
-    'value.includes("\\n")',
-    'value.includes("\\r")',
-    "/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/",
-    "/^https:\\/\\/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.codesigning\\.azure\\.net\\/$/",
-    "/^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9])?$/",
-    "/^[A-Za-z0-9][A-Za-z0-9 .,()&=+-]{0,255}$/",
-    'throw new Error("protected Windows signing input is missing or malformed")',
-  ]
   const requiredVerification = [
-    '$signature.Status -ne "Valid"',
-    "$signature.SignerCertificate.Subject -cne $env:EXPECTED_WINDOWS_PUBLISHER",
-    "-not $signature.TimeStamperCertificate",
-    "[string]::IsNullOrWhiteSpace($signature.TimeStamperCertificate.Thumbprint)",
+    '$env:BHARATCODE_ALLOW_UNSIGNED_WINDOWS -cne "1"',
+    '$env:CSC_IDENTITY_AUTO_DISCOVERY -cne "false"',
+    '$signature.Status -ne "NotSigned"',
+    "$null -ne $signature.SignerCertificate",
+    "$null -ne $signature.TimeStamperCertificate",
+    "Windows package unexpectedly contains a signature",
+    "Windows package version drift",
   ]
   return [
     ...(job.permissions?.["id-token"] === "write" ? [] : ["id-token"]),
-    ...required.filter((fragment) => !value.includes(fragment)),
-    ...requiredPreflight.filter((fragment) => !preflightRun.includes(fragment)),
+    ...(job.env?.BHARATCODE_ALLOW_UNSIGNED_WINDOWS === "1" ? [] : ["unsigned opt-in"]),
+    ...(job.env?.CSC_IDENTITY_AUTO_DISCOVERY === "false" ? [] : ["signing discovery"]),
     ...requiredVerification.filter((fragment) => !verifyRun.includes(fragment)),
-    ...(preflight >= 0 && login === preflight + 1 && login < install && install < build && build < verify
+    ...(download >= 0 && download < install && install < build && build < verify && verify < attest
       ? []
       : ["ordering"]),
-    ...(steps[preflight]?.if === undefined && steps[login]?.if === undefined && steps[verify]?.if === undefined
-      ? []
-      : ["disabled signing step"]),
-    ...(/(?:^|\n)\s*(?:exit|return)\b/iu.test(preflightRun) ? ["preflight early exit"] : []),
+    ...(steps[verify]?.if === undefined ? [] : ["disabled unsigned-policy step"]),
     ...(/(?:^|\n)\s*(?:exit|return)\b/iu.test(verifyRun) ? ["verification early exit"] : []),
-  ]
-}
-
-const cliOnlyCredentialContract = [
-  "ExcludeEnvironmentCredential     = $true",
-  "ExcludeWorkloadIdentityCredential = $true",
-  "ExcludeManagedIdentityCredential = $true",
-  "ExcludeSharedTokenCacheCredential = $true",
-  "ExcludeVisualStudioCredential    = $true",
-  "ExcludeVisualStudioCodeCredential = $true",
-  "ExcludeAzureCliCredential        = $false",
-  "ExcludeAzurePowerShellCredential = $true",
-  "ExcludeAzureDeveloperCliCredential = $true",
-  "ExcludeInteractiveBrowserCredential = $true",
-  "Invoke-TrustedSigning @params",
-]
-
-function windowsSignerViolations(value: string) {
-  const active = value
-    .split("\n")
-    .filter((line) => !line.trimStart().startsWith("#"))
-    .join("\n")
-  let depth = 0
-  let topLevelExit = false
-  for (const line of active.split("\n")) {
-    const trimmed = line.trim()
-    if (depth === 0 && /^(?:exit|return)\b/iu.test(trimmed)) topLevelExit = true
-    depth += (line.match(/\{/gu)?.length ?? 0) - (line.match(/\}/gu)?.length ?? 0)
-  }
-  return [
-    ...cliOnlyCredentialContract.filter((fragment) => !active.split("\n").some((line) => line.trim() === fragment)),
-    ...(topLevelExit ? ["top-level signer exit"] : []),
-    ...(active.indexOf("$params = @{") < active.indexOf("Invoke-TrustedSigning @params") ? [] : ["signer ordering"]),
+    ...(value.includes("AZURE_") || value.includes("azure/login@") || value.includes("EXPECTED_WINDOWS_PUBLISHER")
+      ? ["obsolete signing input"]
+      : []),
+    ...(value.includes("sign-windows.ps1") || value.includes("Invoke-TrustedSigning")
+      ? ["obsolete signing implementation"]
+      : []),
   ]
 }
 
@@ -1205,7 +1134,7 @@ describe("lean next-beta candidate workflow", () => {
     const value = await source()
     const actionUses = [...value.matchAll(/^\s*uses:\s*([^\s#]+)/gmu)].map((match) => match[1])
     expect(actionUses.length).toBeGreaterThan(20)
-    expect(new Set(actionUses)).toEqual(new Set([checkout, setupBun, upload, download, attest, azureLogin]))
+    expect(new Set(actionUses)).toEqual(new Set([checkout, setupBun, upload, download, attest]))
     expect(actionUses.every((item) => /@[0-9a-f]{40}$/u.test(item))).toBeTrue()
     expect(value).toContain("bun-version-file: package.json")
     expect(value).toContain('"packageManager": "bun@1.3.14"')
@@ -1506,88 +1435,36 @@ describe("lean next-beta candidate workflow", () => {
     )
   })
 
-  test("establishes the one Azure CLI OIDC path from closed protected Windows signing inputs", async () => {
+  test("enforces the explicit unsigned Windows policy without signing authority", async () => {
     const value = await source()
-    const script = bunEvalScripts(runStep(value, "package-windows", "Preflight protected Windows signing identity"))[0]
-    expect(script).toBeDefined()
-    const valid = {
-      AZURE_CLIENT_ID: "12345678-1234-1234-1234-1234567890ab",
-      AZURE_TENANT_ID: "22345678-1234-1234-1234-1234567890ab",
-      AZURE_SUBSCRIPTION_ID: "32345678-1234-1234-1234-1234567890ab",
-      AZURE_TRUSTED_SIGNING_ENDPOINT: "https://eus.codesigning.azure.net/",
-      AZURE_TRUSTED_SIGNING_ACCOUNT_NAME: "bharatcode-signing",
-      AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE: "desktop-beta",
-      EXPECTED_WINDOWS_PUBLISHER: "CN=BharatCode, O=BharatCode",
-    }
-    const validate = (overrides: Record<string, string | undefined>) => {
-      const env: Record<string, string | undefined> = { ...Bun.env, ...valid }
-      for (const [name, item] of Object.entries(overrides)) {
-        if (item === undefined) delete env[name]
-        else env[name] = item
-      }
-      return Bun.spawnSync(["bun", "--eval", script], { env, stdout: "pipe", stderr: "pipe" })
-    }
-    expect(validate({}).exitCode).toBe(0)
-    for (const [name, hostile] of [
-      ["AZURE_CLIENT_ID", undefined],
-      ["AZURE_CLIENT_ID", ""],
-      ["AZURE_CLIENT_ID", " 12345678-1234-1234-1234-1234567890ab"],
-      ["AZURE_CLIENT_ID", "12345678-1234-1234-1234-1234567890AB"],
-      ["AZURE_CLIENT_ID", "12345678-1234-1234-1234-1234567890ab\n"],
-      ["AZURE_CLIENT_ID", "not-a-uuid"],
-      ["AZURE_TRUSTED_SIGNING_ENDPOINT", "http://eus.codesigning.azure.net/"],
-      ["AZURE_TRUSTED_SIGNING_ENDPOINT", "https://user@eus.codesigning.azure.net/"],
-      ["AZURE_TRUSTED_SIGNING_ENDPOINT", "https://eus.codesigning.azure.net/path"],
-      ["AZURE_TRUSTED_SIGNING_ENDPOINT", "https://eus.codesigning.azure.net/?query=1"],
-      ["AZURE_TRUSTED_SIGNING_ENDPOINT", "https://eus.codesigning.azure.net/#hash"],
-      ["AZURE_TRUSTED_SIGNING_ENDPOINT", "https://eus.codesigning.azure.net.evil/"],
-      ["AZURE_TRUSTED_SIGNING_ENDPOINT", "https://eus.codesigning.azure.net:444/"],
-      ["AZURE_TRUSTED_SIGNING_ACCOUNT_NAME", "unsafe/account"],
-      ["AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE", "unsafe profile"],
-      ["EXPECTED_WINDOWS_PUBLISHER", "CN=BharatCode\nCN=Alternate"],
-      ["EXPECTED_WINDOWS_PUBLISHER", "CN=BharatCode; Invoke-Evil"],
-    ] as const) {
-      const result = validate({ [name]: hostile })
-      expect(result.exitCode).not.toBe(0)
-      if (hostile) expect(result.stderr.toString()).not.toContain(hostile)
-    }
-    expect(windowsSigningViolations(value)).toEqual([])
+    expect(windowsUnsignedPolicyViolations(value)).toEqual([])
+    expect(securityEnclosureViolations(value)).toEqual([])
+    expect(value).toContain('BHARATCODE_ALLOW_UNSIGNED_WINDOWS: "1"')
+    expect(value).toContain('CSC_IDENTITY_AUTO_DISCOVERY: "false"')
+    expect(value).toContain('$signature.Status -ne "NotSigned"')
+    expect(value).not.toContain("AZURE_")
+    expect(value).not.toContain("azure/login@")
+    expect(value).not.toContain("EXPECTED_WINDOWS_PUBLISHER")
+    expect(value).not.toContain("Invoke-TrustedSigning")
+    expect(value).not.toContain("sign-windows.ps1")
+
     for (const [current, hostile] of [
-      ["id-token: write", "id-token: none"],
-      [azureLogin, "azure/login@v3"],
-      ["client-id: ${{ secrets.AZURE_CLIENT_ID }}", "client-id: missing"],
-      ["value.trim() !== value", "false"],
-      ["Establish Azure CLI OIDC session", "Install Azure CLI session later"],
-      ["$signature.SignerCertificate.Subject -cne $env:EXPECTED_WINDOWS_PUBLISHER", "false"],
-      ["-not $signature.TimeStamperCertificate", "false"],
-    ]) {
-      expect(windowsSigningViolations(value.replaceAll(current, hostile))).not.toEqual([])
+      ['BHARATCODE_ALLOW_UNSIGNED_WINDOWS: "1"', 'BHARATCODE_ALLOW_UNSIGNED_WINDOWS: "0"'],
+      ['CSC_IDENTITY_AUTO_DISCOVERY: "false"', 'CSC_IDENTITY_AUTO_DISCOVERY: "true"'],
+      ['$signature.Status -ne "NotSigned"', "$false"],
+      ["$null -ne $signature.SignerCertificate", "$false"],
+      ["$null -ne $signature.TimeStamperCertificate", "$false"],
+    ] as const) {
+      expect(windowsUnsignedPolicyViolations(value.replaceAll(current, hostile))).not.toEqual([])
     }
-    const signerFile = Bun.file(resolve(import.meta.dir, "../../../../script/sign-windows.ps1"))
-    const signerBytes = new Uint8Array(await signerFile.arrayBuffer())
-    for (const step of [
-      "Preflight protected Windows signing identity",
-      "Establish Azure CLI OIDC session",
-      "Verify Authenticode publisher and trusted timestamp",
-    ]) {
-      const disabled = value.replace("      - name: " + step, "      - name: " + step + "\n        if: ${{ false }}")
-      expect(windowsSigningViolations(disabled)).not.toEqual([])
-      expect(securityEnclosureViolations(disabled, signerBytes)).toContain("disabled Windows security step")
-    }
-    expect(
-      windowsSigningViolations(
-        value.replace(
-          "$signature = Get-AuthenticodeSignature bharatcode-desktop-next-beta-win-x64.exe",
-          "exit 0\n          $signature = Get-AuthenticodeSignature bharatcode-desktop-next-beta-win-x64.exe",
-        ),
-      ),
-    ).not.toEqual([])
-    for (const name of Object.keys(valid)) {
-      const violations = windowsSigningViolations(value.replace(name + ": ${{", "MISSING_INPUT: ${{"))
-      if (violations.length === 0) throw new Error(`uncovered protected Windows input mutation: ${name}`)
-    }
-    const signer = Buffer.from(signerBytes).toString("utf8")
-    expect(securityEnclosureViolations(value, signerBytes)).toEqual([])
+
+    const disabled = value.replace(
+      "      - name: Verify unsigned Windows policy and package version",
+      "      - name: Verify unsigned Windows policy and package version\n        if: ${{ false }}",
+    )
+    expect(windowsUnsignedPolicyViolations(disabled)).not.toEqual([])
+    expect(securityEnclosureViolations(disabled)).toContain("disabled Windows security step")
+
     for (const [label, hostile] of [
       [
         "native preflight",
@@ -1597,99 +1474,31 @@ describe("lean next-beta candidate workflow", () => {
         ),
       ],
       [
-        "native preflight",
+        "Windows unsigned policy",
         value.replace(
-          "      - name: Preflight exact cross-platform native dependencies\n        shell: bash",
-          "      - name: Preflight exact cross-platform native dependencies\n        shell: custom-security-shell",
-        ),
-      ],
-      [
-        "native preflight",
-        value.replace(
-          "      - name: Preflight exact cross-platform native dependencies\n        shell: bash",
-          "      - name: Preflight exact cross-platform native dependencies\n        security-review-drift: true\n        shell: bash",
-        ),
-      ],
-      [
-        "Authenticode",
-        value.replace(
-          "      - name: Verify Authenticode publisher and trusted timestamp\n        shell: pwsh",
-          "      - name: Verify Authenticode publisher and trusted timestamp\n        continue-on-error: true\n        shell: pwsh",
-        ),
-      ],
-      [
-        "Authenticode",
-        value.replace(
-          "      - name: Verify Authenticode publisher and trusted timestamp\n        shell: pwsh",
-          "      - name: Verify Authenticode publisher and trusted timestamp\n        shell: custom-security-shell",
-        ),
-      ],
-      [
-        "Authenticode",
-        value.replace(
-          "      - name: Verify Authenticode publisher and trusted timestamp\n        shell: pwsh",
-          "      - name: Verify Authenticode publisher and trusted timestamp\n        security-review-drift: true\n        shell: pwsh",
+          "      - name: Verify unsigned Windows policy and package version\n        shell: pwsh",
+          "      - name: Verify unsigned Windows policy and package version\n        continue-on-error: true\n        shell: pwsh",
         ),
       ],
     ] as const) {
       expect(closedSecurityStepViolations(hostile).some((item) => item.startsWith(label))).toBeTrue()
     }
-    for (const hostile of [
-      value.replace(
-        "            const payloads = {",
-        '            globalThis.process["exit"](0)\n            const payloads = {',
-      ),
-      value
-        .replace(
-          '          bun --eval \'\n            import { realpathSync } from "node:fs"',
-          '          if ! true; then\n          bun --eval \'\n            import { realpathSync } from "node:fs"',
-        )
-        .replace(
-          "          '\n\n      - name: Prove dependency install kept exact build inputs clean",
-          "          '\n          fi\n\n      - name: Prove dependency install kept exact build inputs clean",
-        ),
-      value
-        .replace(
-          "          bun --eval '\n            const names = [",
-          "          if ($false) {\n          bun --eval '\n            const names = [",
-        )
-        .replace(
-          "          '\n\n      - name: Establish Azure CLI OIDC session",
-          "          '\n          }\n\n      - name: Establish Azure CLI OIDC session",
-        ),
-      value
-        .replace(
-          "          $signature = Get-AuthenticodeSignature bharatcode-desktop-next-beta-win-x64.exe",
-          "          if ($false) {\n          $signature = Get-AuthenticodeSignature bharatcode-desktop-next-beta-win-x64.exe",
-        )
-        .replace(
-          "          if ([version]$version -ne [version]'${{ needs.admit-source.outputs.desktop_version }}') { throw \"Windows package version drift\" }\n\n      - name: Attest Windows installer",
-          "          if ([version]$version -ne [version]'${{ needs.admit-source.outputs.desktop_version }}') { throw \"Windows package version drift\" }\n          }\n\n      - name: Attest Windows installer",
-        ),
-      value.replace(
-        "          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}",
-        "          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}\n          audience: api://hostile",
-      ),
-    ]) {
-      expect(securityEnclosureViolations(hostile, signerBytes)).not.toEqual([])
-    }
-    const unreachableSigner = signer
-      .replace("$params = @{", "if ($false) {\n$params = @{")
-      .replace("Invoke-TrustedSigning @params", "Invoke-TrustedSigning @params\n}")
-    expect(securityEnclosureViolations(value, Buffer.from(unreachableSigner))).toContain("Windows signer digest")
-    expect(windowsSignerViolations(signer)).toEqual([])
-    for (const required of cliOnlyCredentialContract) {
-      expect(windowsSignerViolations(signer.replace(required, "removed"))).not.toEqual([])
-      expect(windowsSignerViolations(signer.replace(required, `# ${required}`))).not.toEqual([])
-    }
-    expect(windowsSignerViolations(signer.replace("$params = @{", "exit 0\n$params = @{"))).not.toEqual([])
-  })
 
-  test("requires native package, signature, notarization, WSL, CLI, attestation, and API checks", async () => {
+    expect(
+      securityEnclosureViolations(
+        value.replace(
+          "$signature = Get-AuthenticodeSignature bharatcode-desktop-next-beta-win-x64.exe",
+          "if ($false) {\n          $signature = Get-AuthenticodeSignature bharatcode-desktop-next-beta-win-x64.exe",
+        ),
+      ),
+    ).not.toEqual([])
+  })
+  test("requires native package, unsigned policy, notarization, WSL, CLI, attestation, and API checks", async () => {
     const value = await source()
     for (const required of [
       "Get-AuthenticodeSignature",
-      "StatusMessage",
+      'Status -ne "NotSigned"',
+      "SignerCertificate",
       "TimeStamperCertificate",
       "codesign --verify --deep --strict",
       "spctl --assess",
@@ -1831,7 +1640,7 @@ describe("lean next-beta candidate workflow", () => {
     expect(authorityViolations(value.replace("contents: read", "contents: write"))).not.toEqual([])
     expect(authorityViolations(value.replace("overwrite: false", "overwrite: true"))).not.toEqual([])
     expect(authorityViolations(`${value}\n# npm publish\n`)).not.toEqual([])
-    expect(authorityViolations(`${value}\n# BHARATCODE_ALLOW_UNSIGNED_WINDOWS=1\n`)).not.toEqual([])
+    expect(authorityViolations(`${value}\n# BHARATCODE_ALLOW_UNSIGNED_MAC=1\n`)).not.toEqual([])
     expect(value.replace("ref: ${{ inputs.source_sha }}", "ref: dev")).not.toContain("ref: ${{ inputs.source_sha }}")
     expect(value.replace(checkout, "actions/checkout@v7")).toContain("actions/checkout@v7")
     expect(value.replaceAll("desktop-windows-x64", "desktop-windows-arm64")).not.toContain("desktop-windows-x64")

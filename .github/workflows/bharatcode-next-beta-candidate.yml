@@ -20,7 +20,7 @@ permissions:
   contents: read
 
 env:
-  ACCEPTED_WSL_SOURCE_SHA: e6ba4704f1e1747d1bf18dbe06fc79d19cae5c27
+  ACCEPTED_WSL_SOURCE_SHA: 205e5f670fae8e18e49f58b504b630cbe255da2d
   BHARATCODE_CHANNEL: beta
   OPENCODE_CHANNEL: beta
   SOURCE_SHA: ${{ inputs.source_sha }}
@@ -337,13 +337,8 @@ jobs:
       id-token: write
       attestations: write
     env:
-      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      AZURE_TRUSTED_SIGNING_ACCOUNT_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME }}
-      AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE: ${{ secrets.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE }}
-      AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
-      EXPECTED_WINDOWS_PUBLISHER: ${{ vars.BHARATCODE_WINDOWS_PUBLISHER_SUBJECT }}
+      BHARATCODE_ALLOW_UNSIGNED_WINDOWS: "1"
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
       INTEGRATED_HEAD: ${{ inputs.source_sha }}
     steps:
       - name: Checkout the exact candidate
@@ -356,39 +351,6 @@ jobs:
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: package.json
-
-      - name: Preflight protected Windows signing identity
-        shell: pwsh
-        run: |
-          bun --eval '
-            const names = [
-              "AZURE_CLIENT_ID",
-              "AZURE_TENANT_ID",
-              "AZURE_SUBSCRIPTION_ID",
-              "AZURE_TRUSTED_SIGNING_ENDPOINT",
-              "AZURE_TRUSTED_SIGNING_ACCOUNT_NAME",
-              "AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE",
-              "EXPECTED_WINDOWS_PUBLISHER",
-            ]
-            const values = Object.fromEntries(names.map((name) => [name, process.env[name]]))
-            const invalid = () => { throw new Error("protected Windows signing input is missing or malformed") }
-            for (const value of Object.values(values)) {
-              if (typeof value !== "string" || value.length === 0 || value.trim() !== value || value.includes("\n") || value.includes("\r")) invalid()
-            }
-            const uuid = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/
-            if (!uuid.test(values.AZURE_CLIENT_ID) || !uuid.test(values.AZURE_TENANT_ID) || !uuid.test(values.AZURE_SUBSCRIPTION_ID)) invalid()
-            if (!/^https:\/\/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.codesigning\.azure\.net\/$/.test(values.AZURE_TRUSTED_SIGNING_ENDPOINT)) invalid()
-            const identifier = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9])?$/
-            if (!identifier.test(values.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME) || !identifier.test(values.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE)) invalid()
-            if (!/^[A-Za-z0-9][A-Za-z0-9 .,()&=+-]{0,255}$/.test(values.EXPECTED_WINDOWS_PUBLISHER)) invalid()
-          '
-
-      - name: Establish Azure CLI OIDC session
-        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Download same-run WSL runtime
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -406,7 +368,7 @@ jobs:
           $env:BHARATCODE_WSL_RUNTIME_ARCH = "x64"
           bun run --cwd packages/desktop stage:wsl-runtime
 
-      - name: Build signed Windows installer
+      - name: Build unsigned Windows installer
         working-directory: packages/desktop
         shell: pwsh
         run: |
@@ -418,13 +380,12 @@ jobs:
           Move-Item $files[0].FullName "$env:GITHUB_WORKSPACE/bharatcode-desktop-next-beta-win-x64.exe"
           Copy-Item resources/wsl-runtime/manifest.json "$env:GITHUB_WORKSPACE/bharatcode-wsl-runtime-manifest.json"
 
-      - name: Verify Authenticode publisher and trusted timestamp
+      - name: Verify unsigned Windows policy and package version
         shell: pwsh
         run: |
           $signature = Get-AuthenticodeSignature bharatcode-desktop-next-beta-win-x64.exe
-          if ($signature.Status -ne "Valid" -or $signature.StatusMessage -notmatch "valid") { throw "Authenticode validation failed" }
-          if ([string]::IsNullOrWhiteSpace($env:EXPECTED_WINDOWS_PUBLISHER) -or $signature.SignerCertificate.Subject -cne $env:EXPECTED_WINDOWS_PUBLISHER) { throw "Unexpected Windows publisher" }
-          if (-not $signature.TimeStamperCertificate -or [string]::IsNullOrWhiteSpace($signature.TimeStamperCertificate.Thumbprint)) { throw "Trusted timestamp is missing" }
+          if ($env:BHARATCODE_ALLOW_UNSIGNED_WINDOWS -cne "1" -or $env:CSC_IDENTITY_AUTO_DISCOVERY -cne "false") { throw "Unsigned Windows policy is not explicit" }
+          if ($signature.Status -ne "NotSigned" -or $null -ne $signature.SignerCertificate -or $null -ne $signature.TimeStamperCertificate) { throw "Windows package unexpectedly contains a signature" }
           $version = (Get-Item bharatcode-desktop-next-beta-win-x64.exe).VersionInfo.ProductVersion
           if ([version]$version -ne [version]'${{ needs.admit-source.outputs.desktop_version }}') { throw "Windows package version drift" }
 
@@ -1161,7 +1122,7 @@ jobs:
               return { key, platform, arch, filename, bytes: (await stat(path)).size, sha256: subjectSha256, artifact_attestation: { filename: basename(bundle), bytes: (await stat(bundle)).size, sha256: await digest(bundle), subject_sha256: subjectSha256, predicate_type: "https://slsa.dev/provenance/v1" }, signing, completed_at }
             }
             const cli = await Promise.all(["bharatcode", ...PLATFORM_PACKAGE_NAMES].map(async (name) => artifact(`cli-${name}`, name === "bharatcode" ? "npm" : name.includes("darwin") ? "macos" : name.includes("windows") ? "windows" : "linux", name === "bharatcode" ? "universal" : name.includes("arm64") ? "arm64" : "x64", "not-applicable", `${name}-${process.env.CLI_VERSION}.tgz`)))
-            const windows = await artifact(expectedKeys[17], "windows", "x64", "authenticode", "bharatcode-desktop-next-beta-win-x64.exe")
+            const windows = await artifact(expectedKeys[17], "windows", "x64", "unsigned", "bharatcode-desktop-next-beta-win-x64.exe")
             const runtimeManifestPath = one("bharatcode-wsl-runtime-manifest.json")
             const wslGateResult = process.env.WSL_ACCEPTANCE_MODE === "required" ? "PASS" : "OWNER_WAIVED"
             const wslFilename = wslGateResult === "PASS" ? "bharatcode-wsl-scenarios-9-10.json" : "bharatcode-wsl-acceptance-waiver.json"

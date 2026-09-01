@@ -15,7 +15,7 @@ const completedAt = "2026-07-20T10:00:00.000Z"
 const adapterPath = resolve(import.meta.dir, "../../script/preliminary-jit-evidence-cli.mjs")
 
 function signing(key: string, wslGateResult = "PASS") {
-  if (key === "desktop-windows-x64") return "authenticode"
+  if (key === "desktop-windows-x64") return "unsigned"
   if (key.startsWith("desktop-macos-")) return "apple-notarized-stapled"
   if (key === "wsl-gate") return wslGateResult === "PASS" ? "acceptance-receipt" : "owner-waiver-receipt"
   if (key.endsWith("receipt") || key === "upgrade-rollback-windows-x64") {
@@ -101,7 +101,7 @@ describe("lean next-beta cohort contract", () => {
     expect(gate.filename).toBe("bharatcode-wsl-acceptance-waiver.json")
   })
 
-  test("validates the signed cohort through the host-controller stdin adapter", async () => {
+  test("validates the policy-bound cohort through the host-controller stdin adapter", async () => {
     const value = manifest()
     const canonical = canonicalLeanJson(value)
     const child = Bun.spawn([process.execPath, adapterPath, "cohort"], {
@@ -185,7 +185,7 @@ describe("lean next-beta cohort contract", () => {
     for (const hostile of cases) expect(() => validateLeanCohort(hostile(), bindings)).toThrow()
   })
 
-  test("rejects wrong size, digest, attestation subject, or unsigned platform output", () => {
+  test("rejects wrong size, digest, attestation subject, or signing-policy drift", () => {
     const cases = [
       () => {
         const value = manifest()
@@ -209,12 +209,12 @@ describe("lean next-beta cohort contract", () => {
       },
       () => {
         const value = manifest()
-        value.artifacts.find((item) => item.key === "desktop-windows-x64")!.signing = "not-applicable"
+        value.artifacts.find((item) => item.key === "desktop-windows-x64")!.signing = "authenticode"
         return value
       },
       () => {
         const value = manifest()
-        value.artifacts[1].signing = "authenticode"
+        value.artifacts[1].signing = "unsigned"
         return value
       },
     ]

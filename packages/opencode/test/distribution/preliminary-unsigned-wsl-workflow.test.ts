@@ -21,7 +21,7 @@ const jitContractPath = resolve(root, "packages/opencode/script/lean-preliminary
 const jitControllerPath = resolve(root, "packages/desktop/scripts/preliminary-wsl-jit-host-controller.ps1")
 const jitAdapterPath = resolve(root, "packages/opencode/script/preliminary-jit-evidence-cli.mjs")
 const acceptedWslSha = "17ac654639ef2d0f9e6e79370d39ecbfe67a8654"
-const finalWorkflowSha256 = "7bdb10c6501ff9859a1853a163235d088d49e27c206726600b8ba7dd8a2f1c99"
+const finalWorkflowSha256 = "ed08675c098cf98c0524a5ba44b95bc2853f70818151732173618ab90e77ae3e"
 const label = "bharatcode-acceptance-${{ github.run_id }}-${{ github.run_attempt }}"
 const checkout = "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0"
 const setupBun = "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6"
@@ -674,7 +674,7 @@ describe("preliminary unsigned Windows/WSL acceptance workflow", () => {
     }
   })
 
-  test("is a dedicated manual-only contained-hotfix workflow while the final signed workflow stays byte-identical", async () => {
+  test("is a dedicated manual-only contained-hotfix workflow while the final cohort workflow stays byte-identical", async () => {
     const value = await source()
     const workflow = parse(value)
     expect(Object.keys(workflow.on)).toEqual(["workflow_dispatch"])
