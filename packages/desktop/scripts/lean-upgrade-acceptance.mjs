@@ -2313,10 +2313,6 @@ async function initializeIsolatedProfile(profile) {
   await Promise.all(
     [
       profile.root,
-      profile.data,
-      profile.config,
-      profile.state,
-      profile.userData,
       profile.netLogs,
       profile.projectDirectory,
       profile.env.TEMP,
