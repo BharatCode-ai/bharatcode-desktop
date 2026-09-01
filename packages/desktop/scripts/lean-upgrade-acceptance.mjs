@@ -956,6 +956,13 @@ async function executeProductionAcceptance(input) {
       const prepared = await prepareProductionInputs(input, githubToken)
       await verifyPinnedInstaller(prepared.betaInstaller, input.currentBeta.assets[0])
       const betaInstalled = await runInstaller(prepared.betaInstaller, installDirectory, profile.env)
+      const betaRuntime = await packagedRuntime(installDirectory)
+      const betaInitialization = await runProcess(
+        betaRuntime,
+        ["account", "logout", "upgrade-acceptance@example.invalid"],
+        { env: profile.env, timeout: PROCESS_TIMEOUT_MS },
+      )
+      requireValue(/Not logged in/iu.test(betaInitialization.stdout), "Pinned beta database initialization failed")
       const seeded = await seedLegacyBetaState(profile)
       await verifyPinnedInstaller(input.candidate, prepared.candidate)
       const candidateInstalled = await runInstaller(input.candidate, installDirectory, profile.env)

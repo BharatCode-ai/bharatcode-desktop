@@ -1326,6 +1326,8 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
       "candidateStart.netLog",
       "rollbackStart.netLog",
       "seedLegacyBetaState",
+      '["account", "logout", "upgrade-acceptance@example.invalid"]',
+      "Pinned beta database initialization failed",
       "observeCandidateState",
       "observeRollbackState",
       "validateStateEvidence",
@@ -1379,6 +1381,7 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
     expect(source).toContain('Basic realm="Secure Area"')
     expect(source).not.toContain("RemoteAddress Internet")
     const betaInstall = source.indexOf("const betaInstalled = await runInstaller(")
+    const betaSchema = source.indexOf('["account", "logout", "upgrade-acceptance@example.invalid"]')
     const candidateInstall = source.indexOf("runInstaller(input.candidate")
     const recovery = source.indexOf("completeCandidateRecovery(candidateRuntime, profile)")
     const egressStart = source.indexOf("egress = startLocalEgressControl(firewall.control_address)")
@@ -1395,9 +1398,10 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
       "removeCandidateNetworkBoundary(candidateInstalled.application.executable",
     )
     expect(betaInstall).toBeGreaterThan(-1)
+    expect(betaSchema).toBeGreaterThan(betaInstall)
     expect(source).not.toContain('profile, "current-beta", active')
     expect(source).toContain("current_beta_installed: true")
-    expect(candidateInstall).toBeGreaterThan(betaInstall)
+    expect(candidateInstall).toBeGreaterThan(betaSchema)
     expect(recovery).toBeGreaterThan(candidateInstall)
     expect(egressStart).toBeGreaterThan(recovery)
     expect(candidateStart).toBeGreaterThan(egressStart)
