@@ -35,7 +35,7 @@ const reviewedSecurityStepSha256 = {
 } as const
 const previousAcceptedWslSha = "17ac654639ef2d0f9e6e79370d39ecbfe67a8654"
 const acceptedWslSha = "205e5f670fae8e18e49f58b504b630cbe255da2d"
-const acceptedReleaseControlSha = "362eb7a0ba99c85a3c7653e01508de8a5ea538e1"
+const acceptedRuntimeFixSha = "7760ea8879bb8a419199c36410a0d459ca910d41"
 const wslRunnerLabel = "bharatcode-acceptance-${{ github.run_id }}-${{ github.run_attempt }}"
 const frozenWslPaths = [
   "packages/desktop/electron-builder.config.ts",
@@ -188,12 +188,16 @@ const internalWslInputs = [
 ]
 const hotfixReleaseDeltaPaths = [
   ".github/workflows/bharatcode-next-beta-candidate.yml",
+  "bun.lock",
+  "packages/desktop/package.json",
   "packages/desktop/scripts/lean-upgrade-acceptance.mjs",
   "packages/desktop/scripts/lean-upgrade-acceptance.test.ts",
   "packages/opencode/script/lean-cohort.mjs",
+  "packages/opencode/src/migration/capture.ts",
   "packages/opencode/test/distribution/lean-candidate-workflow.test.ts",
   "packages/opencode/test/distribution/lean-cohort.test.ts",
   "packages/opencode/test/distribution/preliminary-unsigned-wsl-workflow.test.ts",
+  "packages/opencode/test/migration/capture.test.ts",
 ] as const
 
 async function source() {
@@ -535,7 +539,7 @@ function runWorkflowCohortFixture(run: string) {
         GITHUB_RUN_ID: runId,
         SOURCE_SHA: sourceSha,
         WORKFLOW_PATH: ".github/workflows/bharatcode-next-beta-candidate.yml",
-        WSL_ACCEPTANCE_MODE: "owner-waived-hotfix-1.15.22",
+        WSL_ACCEPTANCE_MODE: "owner-waived-hotfix-1.15.23",
       },
       stdout: "pipe",
       stderr: "pipe",
@@ -1295,23 +1299,23 @@ describe("lean next-beta candidate workflow", () => {
     expect(Object.keys(workflow.on)).toEqual(["workflow_dispatch"])
     expect(Object.keys(workflow.on.workflow_dispatch.inputs)).toEqual(["source_sha", "wsl_acceptance_mode"])
     expect(workflow.on.workflow_dispatch.inputs.wsl_acceptance_mode).toEqual({
-      description: "Require formal WSL2 automation, or record the owner's one-release 1.15.22 waiver",
+      description: "Require formal WSL2 automation, or record the owner's migration-corrected 1.15.23 hotfix waiver",
       required: true,
       default: "required",
       type: "choice",
-      options: ["required", "owner-waived-hotfix-1.15.22"],
+      options: ["required", "owner-waived-hotfix-1.15.23"],
     })
     expect(value).toContain("^[0-9a-f]{40}$")
-    expect(value).toContain("github.ref == 'refs/heads/codex/windows-startup-hotfix-1.15.22'")
+    expect(value).toContain("github.ref == 'refs/heads/codex/desktop-1.15.23-migration-hotfix'")
     expect(value).toContain("github.sha")
     expect(value).toContain("inputs.source_sha")
     expect(value).toContain("ref: ${{ inputs.source_sha }}")
     expect(value).toContain("next-beta-${source_sha:0:12}")
     const admission = runStep(value, "admit-source", "Admit immutable source and source-derived versions")
     expect(value).toContain(acceptedWslSha)
-    expect(value).toContain(`ACCEPTED_RELEASE_CONTROL_SHA: ${acceptedReleaseControlSha}`)
+    expect(value).toContain(`ACCEPTED_RUNTIME_FIX_SHA: ${acceptedRuntimeFixSha}`)
     expect(admission).toContain('git rev-parse "$SOURCE_SHA^"')
-    expect(admission).toContain('== "$ACCEPTED_RELEASE_CONTROL_SHA"')
+    expect(admission).toContain('== "$ACCEPTED_RUNTIME_FIX_SHA"')
     expect(value).not.toContain(previousAcceptedWslSha)
     expect(value).toContain("git merge-base --is-ancestor")
     for (const path of hotfixReleaseDeltaPaths) expect(admission).toContain(path)
@@ -1755,7 +1759,7 @@ describe("lean next-beta candidate workflow", () => {
     const value = await source()
     const workflow = parse(value)
     const job = workflow.jobs["record-wsl-waiver"]
-    expect(job.if).toBe("inputs.wsl_acceptance_mode == 'owner-waived-hotfix-1.15.22'")
+    expect(job.if).toBe("inputs.wsl_acceptance_mode == 'owner-waived-hotfix-1.15.23'")
     expect(workflow.jobs["accept-wsl"].if).toBe("inputs.wsl_acceptance_mode == 'required'")
     const run = runStep(value, "record-wsl-waiver", "Record exact owner-authorized WSL automation waiver")
     expect(run).toContain('result: "OWNER_WAIVED"')
