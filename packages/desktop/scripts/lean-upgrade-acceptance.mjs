@@ -30,6 +30,7 @@ const ACCEPTANCE_SHARE_TOKEN = "bharatcode-cp3-inert-share-audit-token"
 const ACCEPTANCE_FIREWALL_RULE = "BharatCode CP3 packaged share public-network block"
 const ACCEPTANCE_EGRESS_PATH = "/bharatcode-firewall-control"
 let diagnosticStage = "PACKAGED_EXECUTION"
+const stageDiagnosticRequested = process.env.BHARATCODE_UPGRADE_STAGE_DIAGNOSTIC === "1"
 const ACCEPTANCE_FIREWALL_REMOTE_RANGES = [
   "0.0.0.0-126.255.255.255",
   "128.0.0.0-255.255.255.255",
@@ -2841,7 +2842,7 @@ function requireValue(condition, message) {
 
 export function acceptanceFailureCode(error) {
   const message = error instanceof Error ? error.message : ""
-  if (process.env.BHARATCODE_UPGRADE_STAGE_DIAGNOSTIC === "1") {
+  if (stageDiagnosticRequested || process.env.BHARATCODE_UPGRADE_STAGE_DIAGNOSTIC === "1") {
     if (/Desktop process exited before startup completed/iu.test(message)) return `${diagnosticStage}_PROCESS_EXIT`
     if (/Desktop reported a sidecar or process startup failure/iu.test(message))
       return `${diagnosticStage}_PROCESS_FAILURE`
