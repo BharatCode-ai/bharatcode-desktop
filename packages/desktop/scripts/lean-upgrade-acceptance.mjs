@@ -888,186 +888,222 @@ export function validateLoopbackListenerOwner(value, expected) {
 }
 
 export async function runLeanUpgradeAcceptance(argv, dependencies) {
-  const input = parseUpgradeAcceptanceArguments(argv)
-  const runtime = dependencies ?? {
-    platform: process.platform,
-    arch: process.arch,
-    env: process.env,
-    now: () => new Date(),
-    execute: executeProductionAcceptance,
+  let stage = "ARGUMENTS"
+  try {
+    const input = parseUpgradeAcceptanceArguments(argv)
+    const runtime = dependencies ?? {
+      platform: process.platform,
+      arch: process.arch,
+      env: process.env,
+      now: () => new Date(),
+      execute: executeProductionAcceptance,
+    }
+    stage = "RUNNER_AUTHORITY"
+    if (runtime.platform !== "win32" || runtime.arch !== "x64") {
+      throw new Error("Packaged upgrade acceptance requires a real Windows x64 host")
+    }
+    const authority = githubAuthority(runtime.env)
+    stage = "PINNED_FIXTURE"
+    const currentBeta = parseCurrentBetaFixtureBytes(new Uint8Array(await readFile(input.fixture)))
+    stage = "OUTPUT_ROOT"
+    await createAcceptanceDirectory(input.acceptanceDirectory)
+    const receiptPath = join(input.acceptanceDirectory, RECEIPT_FILENAME)
+    stage = "PACKAGED_EXECUTION"
+    const observation = validateUpgradeExecutionObservation(
+      await runtime.execute({
+        ...input,
+        currentBeta,
+        authority,
+        environment: runtime.env,
+      }),
+    )
+    if (dependencies) return { authority: "DIAGNOSTIC", receiptPath: undefined }
+    stage = "RECEIPT"
+    const receipt = {
+      schema: "bharatcode-lean-upgrade-rollback-receipt-v1",
+      result: "PASS",
+      repository: currentBeta.repository,
+      source_sha: input.sourceSha,
+      candidate_tag: `next-beta-${input.sourceSha.slice(0, 12)}`,
+      github: { run_id: authority.run_id, run_attempt: authority.run_attempt },
+      host: { os: "windows", arch: "x64", runner_image: authority.runner_image },
+      current_beta: {
+        release_id: currentBeta.release_id,
+        tag: currentBeta.tag,
+        source_sha: currentBeta.source_sha,
+        asset: currentBeta.assets[0],
+      },
+      candidate: observation.candidate,
+      checks: observation.checks,
+      completed_at: runtime.now().toISOString(),
+    }
+    const bytes = Buffer.from(canonicalLeanJson(receipt))
+    parseLeanUpgradeReceiptBytes(bytes, {
+      source_sha: input.sourceSha,
+      run_id: authority.run_id,
+      run_attempt: authority.run_attempt,
+      current_beta: currentBeta,
+      candidate: observation.candidate,
+    })
+    await writeCreateOnly(receiptPath, bytes)
+    return { authority: "PASS", receiptPath }
+  } catch (error) {
+    if (error instanceof AcceptanceStageError) throw error
+    throw new AcceptanceStageError(stage)
   }
-  if (runtime.platform !== "win32" || runtime.arch !== "x64") {
-    throw new Error("Packaged upgrade acceptance requires a real Windows x64 host")
-  }
-  const authority = githubAuthority(runtime.env)
-  const currentBeta = parseCurrentBetaFixtureBytes(new Uint8Array(await readFile(input.fixture)))
-  await createAcceptanceDirectory(input.acceptanceDirectory)
-  const receiptPath = join(input.acceptanceDirectory, RECEIPT_FILENAME)
-  const observation = validateUpgradeExecutionObservation(
-    await runtime.execute({
-      ...input,
-      currentBeta,
-      authority,
-      environment: runtime.env,
-    }),
-  )
-  if (dependencies) return { authority: "DIAGNOSTIC", receiptPath: undefined }
-  const receipt = {
-    schema: "bharatcode-lean-upgrade-rollback-receipt-v1",
-    result: "PASS",
-    repository: currentBeta.repository,
-    source_sha: input.sourceSha,
-    candidate_tag: `next-beta-${input.sourceSha.slice(0, 12)}`,
-    github: { run_id: authority.run_id, run_attempt: authority.run_attempt },
-    host: { os: "windows", arch: "x64", runner_image: authority.runner_image },
-    current_beta: {
-      release_id: currentBeta.release_id,
-      tag: currentBeta.tag,
-      source_sha: currentBeta.source_sha,
-      asset: currentBeta.assets[0],
-    },
-    candidate: observation.candidate,
-    checks: observation.checks,
-    completed_at: runtime.now().toISOString(),
-  }
-  const bytes = Buffer.from(canonicalLeanJson(receipt))
-  parseLeanUpgradeReceiptBytes(bytes, {
-    source_sha: input.sourceSha,
-    run_id: authority.run_id,
-    run_attempt: authority.run_attempt,
-    current_beta: currentBeta,
-    candidate: observation.candidate,
-  })
-  await writeCreateOnly(receiptPath, bytes)
-  return { authority: "PASS", receiptPath }
 }
 
 async function executeProductionAcceptance(input) {
-  const githubToken = consumeGithubActionsToken(input.environment)
-  const installDirectory = join(input.acceptanceDirectory, "installed")
-  const profile = isolatedProfile(input.acceptanceDirectory, input.environment)
-  const active = new Map()
-  const audit = startLocalShareAudit()
-  let egress
-  let candidateExecutable = join(installDirectory, PACKAGED_EXECUTABLE_FILENAME)
-  const observation = await runAcceptanceWithCleanup(
-    async () => {
-      await initializeIsolatedProfile(profile)
-      const prepared = await prepareProductionInputs(input, githubToken)
-      await verifyPinnedInstaller(prepared.betaInstaller, input.currentBeta.assets[0])
-      const betaInstalled = await runInstaller(prepared.betaInstaller, installDirectory, profile.env)
-      const betaStart = await startDesktop(betaInstalled.application, installDirectory, profile, "current-beta", active)
-      const seeded = await seedLegacyBetaState(profile)
-      await verifyPinnedInstaller(input.candidate, prepared.candidate)
-      const candidateInstalled = await runInstaller(input.candidate, installDirectory, profile.env)
-      candidateExecutable = candidateInstalled.application.executable
-      requireValue(
-        candidateInstalled.executable.sha256 !== betaInstalled.executable.sha256 &&
-          candidateInstalled.inventory.sha256 !== betaInstalled.inventory.sha256,
-        "candidate did not replace the beta installation",
-      )
-      const candidateRuntime = await packagedRuntime(installDirectory)
-      const recovery = await completeCandidateRecovery(candidateRuntime, profile)
-      const runtime = await verifyCandidateRuntime(candidateRuntime, profile)
-      const remoteDebuggingPort = await reserveLoopbackPort()
-      const firewall = await observeFirewallProfiles(profile.env)
-      egress = startLocalEgressControl(firewall.control_address)
-      await proveEgressControlReachability(egress)
-      profile.env.BHARATCODE_SHARE_BASE_URL = audit.url
-      profile.env.BHARATCODE_SHARE_ACCESS_TOKEN = ACCEPTANCE_SHARE_TOKEN
-      const candidateStart = await startDesktop(
-        candidateInstalled.application,
-        installDirectory,
-        profile,
-        "candidate",
-        active,
-        { keepAlive: true, remoteDebuggingPort, localNetworkControlUrl: egress.urls.rendererBefore },
-      )
-      const share = await observeShareSurface(profile, candidateStart, remoteDebuggingPort, audit, firewall, egress)
-      await finishDesktop(candidateStart, active, profile, "candidate", share.controls)
-      requireValue(audit.requests === 0, "ShareNext network audit changed before candidate cleanup completed")
-      requireValue(
-        await removeCandidateNetworkBoundary(candidateInstalled.application.executable, profile.env),
-        "Candidate public-network boundary cleanup failed",
-      )
-      delete profile.env.BHARATCODE_SHARE_BASE_URL
-      delete profile.env.BHARATCODE_SHARE_ACCESS_TOKEN
-      const candidateState = await observeCandidateState(candidateRuntime, profile)
-      await verifyPinnedInstaller(prepared.betaInstaller, input.currentBeta.assets[0])
-      const rollbackInstalled = await runInstaller(prepared.betaInstaller, installDirectory, profile.env)
-      requireValue(
-        rollbackInstalled.executable.bytes === betaInstalled.executable.bytes &&
-          rollbackInstalled.executable.sha256 === betaInstalled.executable.sha256 &&
-          rollbackInstalled.inventory.files === betaInstalled.inventory.files &&
-          rollbackInstalled.inventory.sha256 === betaInstalled.inventory.sha256,
-        "rollback did not restore the exact beta installation",
-      )
-      const rollbackStart = await startDesktop(
-        rollbackInstalled.application,
-        installDirectory,
-        profile,
-        "rollback",
-        active,
-      )
-      const rollbackState = await observeRollbackState(await packagedRuntime(installDirectory), profile)
-      const state = validateStateEvidence(
-        {
-          schema: "bharatcode-packaged-state-evidence-v1",
-          source: {
-            database_before_sha256: seeded.databaseSha256,
-            database_after_sha256: digest(await readStableFile(profile.legacyDatabase, "legacy beta database")),
-            config_before_sha256: seeded.configSha256,
-            config_after_sha256: digest(await readStableFile(profile.legacyConfigFile, "legacy beta config")),
-          },
-          recovery,
-          candidate: candidateState,
-          rollback: rollbackState,
-        },
-        ACCEPTANCE_SESSION,
-      )
-      const shareNetworkAttemptAbsent = await verifyShareNetworkAbsence([
-        betaStart.netLog,
-        candidateStart.netLog,
-        rollbackStart.netLog,
-      ])
-      requireValue(await verifyNoOwnedProcesses(active, profile.env), "Packaged upgrade process cleanup is incomplete")
-      return {
-        schema: "bharatcode-packaged-upgrade-observation-v1",
-        candidate: prepared.candidate,
-        checks: {
-          current_beta_download_verified: prepared.currentBetaVerified,
-          current_beta_installed_and_started: betaStart.ready,
-          eligible_state_seeded: seeded.seeded,
-          candidate_installed_over_beta:
-            candidateInstalled.executable.sha256 !== betaInstalled.executable.sha256 &&
+  let stage = "GITHUB_AUTHORITY"
+  try {
+    const githubToken = consumeGithubActionsToken(input.environment)
+    const installDirectory = join(input.acceptanceDirectory, "installed")
+    const profile = isolatedProfile(input.acceptanceDirectory, input.environment)
+    const active = new Map()
+    stage = "AUDIT_LISTENER"
+    const audit = startLocalShareAudit()
+    let egress
+    let candidateExecutable = join(installDirectory, PACKAGED_EXECUTABLE_FILENAME)
+    const observation = await runAcceptanceWithCleanup(
+      async () => {
+        stage = "PROFILE_INITIALIZATION"
+        await initializeIsolatedProfile(profile)
+        stage = "PINNED_INPUTS"
+        const prepared = await prepareProductionInputs(input, githubToken)
+        stage = "CURRENT_BETA_IDENTITY"
+        await verifyPinnedInstaller(prepared.betaInstaller, input.currentBeta.assets[0])
+        stage = "CURRENT_BETA_INSTALL"
+        const betaInstalled = await runInstaller(prepared.betaInstaller, installDirectory, profile.env)
+        stage = "CURRENT_BETA_START"
+        const betaStart = await startDesktop(
+          betaInstalled.application,
+          installDirectory,
+          profile,
+          "current-beta",
+          active,
+        )
+        stage = "LEGACY_STATE"
+        const seeded = await seedLegacyBetaState(profile)
+        stage = "CANDIDATE_IDENTITY"
+        await verifyPinnedInstaller(input.candidate, prepared.candidate)
+        stage = "CANDIDATE_INSTALL"
+        const candidateInstalled = await runInstaller(input.candidate, installDirectory, profile.env)
+        candidateExecutable = candidateInstalled.application.executable
+        requireValue(
+          candidateInstalled.executable.sha256 !== betaInstalled.executable.sha256 &&
             candidateInstalled.inventory.sha256 !== betaInstalled.inventory.sha256,
-          eligible_state_preserved: state.eligibleStatePreserved,
-          candidate_started: candidateStart.ready,
-          bharatcode_runtime_only: runtime.bharatcodeOnly,
-          rollback_installed:
-            rollbackInstalled.executable.sha256 === betaInstalled.executable.sha256 &&
-            rollbackInstalled.inventory.sha256 === betaInstalled.inventory.sha256,
-          rollback_state_structurally_valid: state.rollbackStateStructurallyValid,
-          migration_source_preserved: state.migrationSourcePreserved,
-          recovery_evidence_preserved: state.recoveryEvidencePreserved,
-          sharenext_absent: share.sharenextAbsent,
-          share_network_attempt_absent: share.shareNetworkAttemptAbsent && shareNetworkAttemptAbsent,
-        },
-      }
-    },
-    {
-      processes: () => terminateOwnedProcesses(active, profile.env),
-      boundary: () => removeCandidateNetworkBoundary(candidateExecutable, profile.env),
-      audit: async () => {
+          "candidate did not replace the beta installation",
+        )
+        const candidateRuntime = await packagedRuntime(installDirectory)
+        const recovery = await completeCandidateRecovery(candidateRuntime, profile)
+        const runtime = await verifyCandidateRuntime(candidateRuntime, profile)
+        const remoteDebuggingPort = await reserveLoopbackPort()
+        const firewall = await observeFirewallProfiles(profile.env)
+        egress = startLocalEgressControl(firewall.control_address)
+        await proveEgressControlReachability(egress)
+        profile.env.BHARATCODE_SHARE_BASE_URL = audit.url
+        profile.env.BHARATCODE_SHARE_ACCESS_TOKEN = ACCEPTANCE_SHARE_TOKEN
+        const candidateStart = await startDesktop(
+          candidateInstalled.application,
+          installDirectory,
+          profile,
+          "candidate",
+          active,
+          { keepAlive: true, remoteDebuggingPort, localNetworkControlUrl: egress.urls.rendererBefore },
+        )
+        const share = await observeShareSurface(profile, candidateStart, remoteDebuggingPort, audit, firewall, egress)
+        await finishDesktop(candidateStart, active, profile, "candidate", share.controls)
+        requireValue(audit.requests === 0, "ShareNext network audit changed before candidate cleanup completed")
+        requireValue(
+          await removeCandidateNetworkBoundary(candidateInstalled.application.executable, profile.env),
+          "Candidate public-network boundary cleanup failed",
+        )
         delete profile.env.BHARATCODE_SHARE_BASE_URL
         delete profile.env.BHARATCODE_SHARE_ACCESS_TOKEN
-        await audit.stop(true)
-        return true
+        const candidateState = await observeCandidateState(candidateRuntime, profile)
+        await verifyPinnedInstaller(prepared.betaInstaller, input.currentBeta.assets[0])
+        const rollbackInstalled = await runInstaller(prepared.betaInstaller, installDirectory, profile.env)
+        requireValue(
+          rollbackInstalled.executable.bytes === betaInstalled.executable.bytes &&
+            rollbackInstalled.executable.sha256 === betaInstalled.executable.sha256 &&
+            rollbackInstalled.inventory.files === betaInstalled.inventory.files &&
+            rollbackInstalled.inventory.sha256 === betaInstalled.inventory.sha256,
+          "rollback did not restore the exact beta installation",
+        )
+        const rollbackStart = await startDesktop(
+          rollbackInstalled.application,
+          installDirectory,
+          profile,
+          "rollback",
+          active,
+        )
+        const rollbackState = await observeRollbackState(await packagedRuntime(installDirectory), profile)
+        const state = validateStateEvidence(
+          {
+            schema: "bharatcode-packaged-state-evidence-v1",
+            source: {
+              database_before_sha256: seeded.databaseSha256,
+              database_after_sha256: digest(await readStableFile(profile.legacyDatabase, "legacy beta database")),
+              config_before_sha256: seeded.configSha256,
+              config_after_sha256: digest(await readStableFile(profile.legacyConfigFile, "legacy beta config")),
+            },
+            recovery,
+            candidate: candidateState,
+            rollback: rollbackState,
+          },
+          ACCEPTANCE_SESSION,
+        )
+        const shareNetworkAttemptAbsent = await verifyShareNetworkAbsence([
+          betaStart.netLog,
+          candidateStart.netLog,
+          rollbackStart.netLog,
+        ])
+        requireValue(
+          await verifyNoOwnedProcesses(active, profile.env),
+          "Packaged upgrade process cleanup is incomplete",
+        )
+        return {
+          schema: "bharatcode-packaged-upgrade-observation-v1",
+          candidate: prepared.candidate,
+          checks: {
+            current_beta_download_verified: prepared.currentBetaVerified,
+            current_beta_installed_and_started: betaStart.ready,
+            eligible_state_seeded: seeded.seeded,
+            candidate_installed_over_beta:
+              candidateInstalled.executable.sha256 !== betaInstalled.executable.sha256 &&
+              candidateInstalled.inventory.sha256 !== betaInstalled.inventory.sha256,
+            eligible_state_preserved: state.eligibleStatePreserved,
+            candidate_started: candidateStart.ready,
+            bharatcode_runtime_only: runtime.bharatcodeOnly,
+            rollback_installed:
+              rollbackInstalled.executable.sha256 === betaInstalled.executable.sha256 &&
+              rollbackInstalled.inventory.sha256 === betaInstalled.inventory.sha256,
+            rollback_state_structurally_valid: state.rollbackStateStructurallyValid,
+            migration_source_preserved: state.migrationSourcePreserved,
+            recovery_evidence_preserved: state.recoveryEvidencePreserved,
+            sharenext_absent: share.sharenextAbsent,
+            share_network_attempt_absent: share.shareNetworkAttemptAbsent && shareNetworkAttemptAbsent,
+          },
+        }
       },
-      egress: () => (egress ? egress.stop(true) : true),
-    },
-  )
-  return { ...observation, cleanup_complete: true }
+      {
+        processes: () => terminateOwnedProcesses(active, profile.env),
+        boundary: () => removeCandidateNetworkBoundary(candidateExecutable, profile.env),
+        audit: async () => {
+          delete profile.env.BHARATCODE_SHARE_BASE_URL
+          delete profile.env.BHARATCODE_SHARE_ACCESS_TOKEN
+          await audit.stop(true)
+          return true
+        },
+        egress: () => (egress ? egress.stop(true) : true),
+      },
+    )
+    stage = "OBSERVATION"
+    return { ...observation, cleanup_complete: true }
+  } catch (error) {
+    if (error instanceof AcceptanceStageError) throw error
+    throw new AcceptanceStageError(stage)
+  }
 }
 
 async function prepareProductionInputs(input, githubToken) {
@@ -2811,12 +2847,20 @@ function requireValue(condition, message) {
 }
 
 export function acceptanceFailureCode(error) {
+  if (error instanceof AcceptanceStageError) return error.code
   const message = error instanceof Error ? error.message : ""
   if (/GitHub identity request|current-beta asset download/iu.test(message)) return "GITHUB_IDENTITY"
   if (/GitHub Actions token/iu.test(message)) return "GITHUB_AUTHORITY"
   if (/Acceptance directory/iu.test(message)) return "ACCEPTANCE_DIRECTORY"
   if (/candidate installer/iu.test(message)) return "CANDIDATE_IDENTITY"
   return "PACKAGED_EXECUTION"
+}
+
+class AcceptanceStageError extends Error {
+  constructor(code) {
+    super("Packaged upgrade acceptance stage failed")
+    this.code = code
+  }
 }
 
 if (import.meta.main) {

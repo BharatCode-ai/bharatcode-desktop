@@ -1242,15 +1242,14 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
       changed.assets[0].bytes -= 1
       await writeFile(substituted.localFixture, canonicalLeanJson(changed))
       let effects = 0
-      await expect(
-        runLeanUpgradeAcceptance(substituted.argv, {
-          ...substituted.dependencies,
-          execute: async () => {
-            effects += 1
-            return observation()
-          },
-        }),
-      ).rejects.toThrow(/beta|asset|identity/i)
+      const substitutionFailure = await runLeanUpgradeAcceptance(substituted.argv, {
+        ...substituted.dependencies,
+        execute: async () => {
+          effects += 1
+          return observation()
+        },
+      }).catch((error) => error)
+      expect(acceptanceFailureCode(substitutionFailure)).toBe("PINNED_FIXTURE")
       expect(effects).toBe(0)
     } finally {
       await rm(substituted.root, { recursive: true, force: true })
@@ -1260,9 +1259,10 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
     try {
       await mkdir(preexisting.acceptanceDirectory)
       await writeFile(join(preexisting.acceptanceDirectory, "upgrade-rollback-windows-x64.json"), "hostile")
-      await expect(runLeanUpgradeAcceptance(preexisting.argv, preexisting.dependencies)).rejects.toThrow(
-        /create-only|already exists/i,
+      const outputFailure = await runLeanUpgradeAcceptance(preexisting.argv, preexisting.dependencies).catch(
+        (error) => error,
       )
+      expect(acceptanceFailureCode(outputFailure)).toBe("OUTPUT_ROOT")
     } finally {
       await rm(preexisting.root, { recursive: true, force: true })
     }
@@ -1379,7 +1379,7 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
     expect(source).toContain("env: safeChildEnvironment(env)")
     expect(source).toContain('Basic realm="Secure Area"')
     expect(source).not.toContain("RemoteAddress Internet")
-    const betaStart = source.indexOf('profile, "current-beta", active')
+    const betaStart = source.indexOf('stage = "CURRENT_BETA_START"')
     const candidateInstall = source.indexOf("runInstaller(input.candidate")
     const recovery = source.indexOf("completeCandidateRecovery(candidateRuntime, profile)")
     const egressStart = source.indexOf("egress = startLocalEgressControl(firewall.control_address)")
