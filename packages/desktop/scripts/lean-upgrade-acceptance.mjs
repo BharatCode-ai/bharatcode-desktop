@@ -29,6 +29,7 @@ const ACCEPTANCE_CREDENTIAL_SENTINELS = [ACCEPTANCE_ACCESS_SENTINEL, ACCEPTANCE_
 const ACCEPTANCE_SHARE_TOKEN = "bharatcode-cp3-inert-share-audit-token"
 const ACCEPTANCE_FIREWALL_RULE = "BharatCode CP3 packaged share public-network block"
 const ACCEPTANCE_EGRESS_PATH = "/bharatcode-firewall-control"
+let diagnosticStage = "PACKAGED_EXECUTION"
 const ACCEPTANCE_FIREWALL_REMOTE_RANGES = [
   "0.0.0.0-126.255.255.255",
   "128.0.0.0-255.255.255.255",
@@ -943,6 +944,7 @@ export async function runLeanUpgradeAcceptance(argv, dependencies) {
 }
 
 async function executeProductionAcceptance(input) {
+  diagnosticStage = "GITHUB_AUTHORITY"
   const githubToken = consumeGithubActionsToken(input.environment)
   const installDirectory = join(input.acceptanceDirectory, "installed")
   const profile = isolatedProfile(input.acceptanceDirectory, input.environment)
@@ -952,29 +954,43 @@ async function executeProductionAcceptance(input) {
   let candidateExecutable = join(installDirectory, PACKAGED_EXECUTABLE_FILENAME)
   const observation = await runAcceptanceWithCleanup(
     async () => {
+      diagnosticStage = "PROFILE_INITIALIZATION"
       await initializeIsolatedProfile(profile)
+      diagnosticStage = "PINNED_INPUTS"
       const prepared = await prepareProductionInputs(input, githubToken)
+      diagnosticStage = "CURRENT_BETA_IDENTITY"
       await verifyPinnedInstaller(prepared.betaInstaller, input.currentBeta.assets[0])
+      diagnosticStage = "CURRENT_BETA_INSTALL"
       const betaInstalled = await runInstaller(prepared.betaInstaller, installDirectory, profile.env)
+      diagnosticStage = "CURRENT_BETA_START"
       const betaStart = await startDesktop(betaInstalled.application, installDirectory, profile, "current-beta", active)
+      diagnosticStage = "LEGACY_STATE"
       const seeded = await seedLegacyBetaState(profile)
+      diagnosticStage = "CANDIDATE_IDENTITY"
       await verifyPinnedInstaller(input.candidate, prepared.candidate)
+      diagnosticStage = "CANDIDATE_INSTALL"
       const candidateInstalled = await runInstaller(input.candidate, installDirectory, profile.env)
       candidateExecutable = candidateInstalled.application.executable
+      diagnosticStage = "CANDIDATE_REPLACEMENT"
       requireValue(
         candidateInstalled.executable.sha256 !== betaInstalled.executable.sha256 &&
           candidateInstalled.inventory.sha256 !== betaInstalled.inventory.sha256,
         "candidate did not replace the beta installation",
       )
       const candidateRuntime = await packagedRuntime(installDirectory)
+      diagnosticStage = "CANDIDATE_RECOVERY"
       const recovery = await completeCandidateRecovery(candidateRuntime, profile)
+      diagnosticStage = "CANDIDATE_RUNTIME"
       const runtime = await verifyCandidateRuntime(candidateRuntime, profile)
       const remoteDebuggingPort = await reserveLoopbackPort()
+      diagnosticStage = "FIREWALL_OBSERVATION"
       const firewall = await observeFirewallProfiles(profile.env)
+      diagnosticStage = "EGRESS_CONTROL"
       egress = startLocalEgressControl(firewall.control_address)
       await proveEgressControlReachability(egress)
       profile.env.BHARATCODE_SHARE_BASE_URL = audit.url
       profile.env.BHARATCODE_SHARE_ACCESS_TOKEN = ACCEPTANCE_SHARE_TOKEN
+      diagnosticStage = "CANDIDATE_START"
       const candidateStart = await startDesktop(
         candidateInstalled.application,
         installDirectory,
@@ -983,18 +999,25 @@ async function executeProductionAcceptance(input) {
         active,
         { keepAlive: true, remoteDebuggingPort, localNetworkControlUrl: egress.urls.rendererBefore },
       )
+      diagnosticStage = "SHARE_SURFACE"
       const share = await observeShareSurface(profile, candidateStart, remoteDebuggingPort, audit, firewall, egress)
+      diagnosticStage = "CANDIDATE_FINISH"
       await finishDesktop(candidateStart, active, profile, "candidate", share.controls)
       requireValue(audit.requests === 0, "ShareNext network audit changed before candidate cleanup completed")
+      diagnosticStage = "NETWORK_BOUNDARY_CLEANUP"
       requireValue(
         await removeCandidateNetworkBoundary(candidateInstalled.application.executable, profile.env),
         "Candidate public-network boundary cleanup failed",
       )
+      diagnosticStage = "CANDIDATE_STATE"
       delete profile.env.BHARATCODE_SHARE_BASE_URL
       delete profile.env.BHARATCODE_SHARE_ACCESS_TOKEN
       const candidateState = await observeCandidateState(candidateRuntime, profile)
+      diagnosticStage = "ROLLBACK_IDENTITY"
       await verifyPinnedInstaller(prepared.betaInstaller, input.currentBeta.assets[0])
+      diagnosticStage = "ROLLBACK_INSTALL"
       const rollbackInstalled = await runInstaller(prepared.betaInstaller, installDirectory, profile.env)
+      diagnosticStage = "ROLLBACK_REPLACEMENT"
       requireValue(
         rollbackInstalled.executable.bytes === betaInstalled.executable.bytes &&
           rollbackInstalled.executable.sha256 === betaInstalled.executable.sha256 &&
@@ -1002,6 +1025,7 @@ async function executeProductionAcceptance(input) {
           rollbackInstalled.inventory.sha256 === betaInstalled.inventory.sha256,
         "rollback did not restore the exact beta installation",
       )
+      diagnosticStage = "ROLLBACK_START"
       const rollbackStart = await startDesktop(
         rollbackInstalled.application,
         installDirectory,
@@ -1009,7 +1033,9 @@ async function executeProductionAcceptance(input) {
         "rollback",
         active,
       )
+      diagnosticStage = "ROLLBACK_STATE"
       const rollbackState = await observeRollbackState(await packagedRuntime(installDirectory), profile)
+      diagnosticStage = "STATE_VALIDATION"
       const state = validateStateEvidence(
         {
           schema: "bharatcode-packaged-state-evidence-v1",
@@ -1025,12 +1051,15 @@ async function executeProductionAcceptance(input) {
         },
         ACCEPTANCE_SESSION,
       )
+      diagnosticStage = "NETWORK_ABSENCE"
       const shareNetworkAttemptAbsent = await verifyShareNetworkAbsence([
         betaStart.netLog,
         candidateStart.netLog,
         rollbackStart.netLog,
       ])
+      diagnosticStage = "PROCESS_CLEANUP"
       requireValue(await verifyNoOwnedProcesses(active, profile.env), "Packaged upgrade process cleanup is incomplete")
+      diagnosticStage = "OBSERVATION"
       return {
         schema: "bharatcode-packaged-upgrade-observation-v1",
         candidate: prepared.candidate,
@@ -2811,6 +2840,7 @@ function requireValue(condition, message) {
 }
 
 export function acceptanceFailureCode(error) {
+  if (process.env.BHARATCODE_UPGRADE_STAGE_DIAGNOSTIC === "1") return diagnosticStage
   const message = error instanceof Error ? error.message : ""
   if (/GitHub identity request|current-beta asset download/iu.test(message)) return "GITHUB_IDENTITY"
   if (/GitHub Actions token/iu.test(message)) return "GITHUB_AUTHORITY"
