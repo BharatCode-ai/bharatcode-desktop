@@ -1421,9 +1421,11 @@ export function initializePinnedBetaSchema(database, migrations) {
 }
 
 async function completeCandidateRecovery(runtime, profile) {
+  diagnosticStage = "CANDIDATE_RECOVERY_STATUS"
   const initial = await runJsonProcess(runtime, ["recovery", "status", "--json"], profile.env)
   const source = selectLegacyRecoverySource(initial)
   const actions = ["choose-source"]
+  diagnosticStage = "CANDIDATE_RECOVERY_CHOOSE"
   let result = await runJsonProcess(
     runtime,
     ["recovery", "choose-source", "--id", source.id, "--content-fingerprint", source.contentFingerprint, "--json"],
@@ -1435,6 +1437,7 @@ async function completeCandidateRecovery(runtime, profile) {
       "Recovery retry identity is invalid",
     )
     actions.push("retry")
+    diagnosticStage = "CANDIDATE_RECOVERY_RETRY"
     result = await runJsonProcess(
       runtime,
       ["recovery", "retry", "--operation-id", result.operationID, "--json"],
@@ -1443,14 +1446,17 @@ async function completeCandidateRecovery(runtime, profile) {
   }
   if (result.state === "marker-repair") {
     actions.push("repair-marker")
+    diagnosticStage = "CANDIDATE_RECOVERY_REPAIR"
     result = await runJsonProcess(runtime, ["doctor", "repair", "--confirm", "--json"], profile.env)
   }
   requireValue(result.state === "ready", "Candidate recovery did not reach ready")
+  diagnosticStage = "CANDIDATE_RECOVERY_FINAL"
   const final = await runJsonProcess(runtime, ["recovery", "status", "--json"], profile.env)
   requireValue(
     final && typeof final === "object" && Object.keys(final).length === 1 && final.state === "ready",
     "Candidate recovery final status is not ready",
   )
+  diagnosticStage = "CANDIDATE_RECOVERY_EVIDENCE"
   const evidence = await verifyRecoveryEvidence(profile, source)
   return {
     selected_source_id: source.id,
