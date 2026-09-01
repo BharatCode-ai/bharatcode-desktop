@@ -2840,8 +2840,14 @@ function requireValue(condition, message) {
 }
 
 export function acceptanceFailureCode(error) {
-  if (process.env.BHARATCODE_UPGRADE_STAGE_DIAGNOSTIC === "1") return diagnosticStage
   const message = error instanceof Error ? error.message : ""
+  if (process.env.BHARATCODE_UPGRADE_STAGE_DIAGNOSTIC === "1") {
+    if (/Desktop process exited before startup completed/iu.test(message)) return `${diagnosticStage}_PROCESS_EXIT`
+    if (/Desktop reported a sidecar or process startup failure/iu.test(message)) return `${diagnosticStage}_PROCESS_FAILURE`
+    if (/Desktop startup timed out/iu.test(message)) return `${diagnosticStage}_TIMEOUT`
+    if (/Desktop readiness log is ambiguous/iu.test(message)) return `${diagnosticStage}_AMBIGUOUS`
+    return diagnosticStage
+  }
   if (/GitHub identity request|current-beta asset download/iu.test(message)) return "GITHUB_IDENTITY"
   if (/GitHub Actions token/iu.test(message)) return "GITHUB_AUTHORITY"
   if (/Acceptance directory/iu.test(message)) return "ACCEPTANCE_DIRECTORY"
