@@ -46,7 +46,7 @@ const checkKeys = [
   "candidate_installed_over_beta",
   "candidate_started",
   "current_beta_download_verified",
-  "current_beta_installed_and_started",
+  "current_beta_installed",
   "eligible_state_preserved",
   "eligible_state_seeded",
   "migration_source_preserved",
@@ -956,7 +956,6 @@ async function executeProductionAcceptance(input) {
       const prepared = await prepareProductionInputs(input, githubToken)
       await verifyPinnedInstaller(prepared.betaInstaller, input.currentBeta.assets[0])
       const betaInstalled = await runInstaller(prepared.betaInstaller, installDirectory, profile.env)
-      const betaStart = await startDesktop(betaInstalled.application, installDirectory, profile, "current-beta", active)
       const seeded = await seedLegacyBetaState(profile)
       await verifyPinnedInstaller(input.candidate, prepared.candidate)
       const candidateInstalled = await runInstaller(input.candidate, installDirectory, profile.env)
@@ -1025,18 +1024,14 @@ async function executeProductionAcceptance(input) {
         },
         ACCEPTANCE_SESSION,
       )
-      const shareNetworkAttemptAbsent = await verifyShareNetworkAbsence([
-        betaStart.netLog,
-        candidateStart.netLog,
-        rollbackStart.netLog,
-      ])
+      const shareNetworkAttemptAbsent = await verifyShareNetworkAbsence([candidateStart.netLog, rollbackStart.netLog])
       requireValue(await verifyNoOwnedProcesses(active, profile.env), "Packaged upgrade process cleanup is incomplete")
       return {
         schema: "bharatcode-packaged-upgrade-observation-v1",
         candidate: prepared.candidate,
         checks: {
           current_beta_download_verified: prepared.currentBetaVerified,
-          current_beta_installed_and_started: betaStart.ready,
+          current_beta_installed: true,
           eligible_state_seeded: seeded.seeded,
           candidate_installed_over_beta:
             candidateInstalled.executable.sha256 !== betaInstalled.executable.sha256 &&

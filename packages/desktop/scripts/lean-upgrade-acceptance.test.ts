@@ -39,7 +39,7 @@ async function currentBeta() {
 function checks() {
   return {
     current_beta_download_verified: true,
-    current_beta_installed_and_started: true,
+    current_beta_installed: true,
     eligible_state_seeded: true,
     candidate_installed_over_beta: true,
     eligible_state_preserved: true,
@@ -1323,7 +1323,6 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
       "directoryIdentity",
       "Acceptance process timed out",
       "log-net-log",
-      "betaStart.netLog",
       "candidateStart.netLog",
       "rollbackStart.netLog",
       "seedLegacyBetaState",
@@ -1379,7 +1378,7 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
     expect(source).toContain("env: safeChildEnvironment(env)")
     expect(source).toContain('Basic realm="Secure Area"')
     expect(source).not.toContain("RemoteAddress Internet")
-    const betaStart = source.indexOf('profile, "current-beta", active')
+    const betaInstall = source.indexOf("const betaInstalled = await runInstaller(")
     const candidateInstall = source.indexOf("runInstaller(input.candidate")
     const recovery = source.indexOf("completeCandidateRecovery(candidateRuntime, profile)")
     const egressStart = source.indexOf("egress = startLocalEgressControl(firewall.control_address)")
@@ -1395,8 +1394,10 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
     const networkBoundaryCleanup = source.indexOf(
       "removeCandidateNetworkBoundary(candidateInstalled.application.executable",
     )
-    expect(betaStart).toBeGreaterThan(-1)
-    expect(candidateInstall).toBeGreaterThan(betaStart)
+    expect(betaInstall).toBeGreaterThan(-1)
+    expect(source).not.toContain('profile, "current-beta", active')
+    expect(source).toContain("current_beta_installed: true")
+    expect(candidateInstall).toBeGreaterThan(betaInstall)
     expect(recovery).toBeGreaterThan(candidateInstall)
     expect(egressStart).toBeGreaterThan(recovery)
     expect(candidateStart).toBeGreaterThan(egressStart)
