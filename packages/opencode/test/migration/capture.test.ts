@@ -205,7 +205,7 @@ describe("migration capture", () => {
         secrets.sessionModel,
       ],
     )
-    writer.run("INSERT INTO account VALUES (?, ?, ?, ?, ?, NULL, 1, 1)", [
+    writer.run("INSERT INTO account VALUES (?, ?, ?, ?, ?, 1784518200000, 1, 1)", [
       "account_1",
       "account@example.test",
       "https://account.invalid",
@@ -367,6 +367,20 @@ describe("migration capture", () => {
     await expect(captureMigrationSource(databaseSource(data, "short-credential"), target(tmp.path))).rejects.toThrow(
       "short credential",
     )
+  })
+
+  test("rejects nonnumeric legacy token-expiry metadata", async () => {
+    await using tmp = await tmpdir()
+    const data = path.join(tmp.path, "legacy-data")
+    await mkdir(data, { recursive: true })
+    const database = new Database(path.join(data, "opencode.db"), { create: true })
+    database.run("CREATE TABLE account(id TEXT PRIMARY KEY, access_token TEXT, token_expiry INTEGER)")
+    database.run("INSERT INTO account VALUES ('account_1', 'opaqueAccessTokenValue0123456789', 'hidden-secret')")
+    database.close()
+
+    await expect(
+      captureMigrationSource(databaseSource(data, "invalid-token-expiry"), target(tmp.path)),
+    ).rejects.toThrow("credential metadata")
   })
 
   test.each([

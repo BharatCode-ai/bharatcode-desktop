@@ -42,6 +42,7 @@ const RETAINED_JSON_SQLITE_TABLES = new Set(["message", "part", "session_entry",
 const CREDENTIAL_VALUE =
   /(?:bearer\s+[a-z0-9._~+/-]{12,}|\b(?:sk|pk|rk|ghp)[-_][a-z0-9_-]{12,}|\bgithub_pat_[a-z0-9_]{12,}|\beyJ[a-z0-9_-]{12,})/i
 const CREDENTIAL_COLUMN = /(?:^|_)(?:token|secret|password|authorization|private_key)(?:$|_)/i
+const NUMERIC_CREDENTIAL_METADATA_COLUMNS = new Set(["token_expiry"])
 const CREDENTIAL_JSON_KEYS = new Set([
   "access_token",
   "api_key",
@@ -427,11 +428,21 @@ function collectSensitiveRemovedSQLiteValues(database: Database) {
     if (!hasTable(database, table)) continue
     const columns = sqliteColumns(database, table)
     const credentialColumns = new Set(
-      columns.filter((column) => CREDENTIAL_COLUMN.test(column) || (table === "session_share" && column === "url")),
+      columns.filter(
+        (column) =>
+          (CREDENTIAL_COLUMN.test(column) && !NUMERIC_CREDENTIAL_METADATA_COLUMNS.has(column)) ||
+          (table === "session_share" && column === "url"),
+      ),
     )
     visitSQLiteValues(database, table, columns, (column, value) => {
       if (value instanceof Uint8Array) {
         sensitive.add(value, true)
+        return
+      }
+      if (NUMERIC_CREDENTIAL_METADATA_COLUMNS.has(column)) {
+        if (value !== null && (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0)) {
+          throw new MigrationCaptureError("The migration database contained invalid credential metadata.")
+        }
         return
       }
       if (!credentialColumns.has(column) || value === null) return
