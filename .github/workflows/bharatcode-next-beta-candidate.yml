@@ -20,7 +20,7 @@ permissions:
   contents: read
 
 env:
-  ACCEPTED_RELEASE_CONTROL_SHA: c229749f5bfd351fd09f1280ac6e97a40841b5e8
+  ACCEPTED_RELEASE_CONTROL_SHA: 9a4de91ccde1c487258412b4f66974da43d49dda
   ACCEPTED_WSL_SOURCE_SHA: 205e5f670fae8e18e49f58b504b630cbe255da2d
   BHARATCODE_CHANNEL: beta
   OPENCODE_CHANNEL: beta
@@ -66,7 +66,7 @@ jobs:
           [[ "$(git status --porcelain)" == "" ]]
           git merge-base --is-ancestor "$ACCEPTED_WSL_SOURCE_SHA" "$SOURCE_SHA"
           [[ "$(git rev-parse "$SOURCE_SHA^")" == "$ACCEPTED_RELEASE_CONTROL_SHA" ]]
-          [[ "$(git diff --name-only "$ACCEPTED_WSL_SOURCE_SHA" "$SOURCE_SHA")" == $'.github/workflows/bharatcode-next-beta-candidate.yml\npackages/opencode/script/lean-cohort.mjs\npackages/opencode/test/distribution/lean-candidate-workflow.test.ts\npackages/opencode/test/distribution/lean-cohort.test.ts\npackages/opencode/test/distribution/preliminary-unsigned-wsl-workflow.test.ts' ]]
+          [[ "$(git diff --name-only "$ACCEPTED_WSL_SOURCE_SHA" "$SOURCE_SHA")" == $'.github/workflows/bharatcode-next-beta-candidate.yml\npackages/desktop/scripts/lean-upgrade-acceptance.mjs\npackages/desktop/scripts/lean-upgrade-acceptance.test.ts\npackages/opencode/script/lean-cohort.mjs\npackages/opencode/test/distribution/lean-candidate-workflow.test.ts\npackages/opencode/test/distribution/lean-cohort.test.ts\npackages/opencode/test/distribution/preliminary-unsigned-wsl-workflow.test.ts' ]]
           [[ "$WSL_ACCEPTANCE_MODE" == "required" || "$WSL_ACCEPTANCE_MODE" == "owner-waived-hotfix-1.15.22" ]]
           grep -F '"packageManager": "bun@1.3.14"' package.json
           [[ "$(bun --version)" == "1.3.14" ]]
@@ -847,7 +847,7 @@ jobs:
           bun --eval '
             import { createHash } from "node:crypto"
             import { validateLeanWslWaiver, canonicalLeanJson } from "./packages/opencode/script/lean-cohort.mjs"
-            const digest = async (path) => createHash("sha256").update(await Bun.file(path).arrayBuffer()).digest("hex")
+            const digest = async (path) => createHash("sha256").update(new Uint8Array(await Bun.file(path).arrayBuffer())).digest("hex")
             const desktopSha256 = await digest("candidate-input/bharatcode-desktop-next-beta-win-x64.exe")
             const runtimeManifestSha256 = await digest("candidate-input/bharatcode-wsl-runtime-manifest.json")
             const receipt = {
@@ -1126,7 +1126,7 @@ jobs:
               if (matches.length !== 1) throw new Error(`Expected exactly one ${name}`)
               return matches[0]
             }
-            const digest = async (path) => createHash("sha256").update(await Bun.file(path).arrayBuffer()).digest("hex")
+            const digest = async (path) => createHash("sha256").update(new Uint8Array(await Bun.file(path).arrayBuffer())).digest("hex")
             const completed_at = new Date().toISOString()
             const artifact = async (key, platform, arch, signing, filename) => {
               const path = one(filename)

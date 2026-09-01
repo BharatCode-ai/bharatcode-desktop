@@ -2250,13 +2250,25 @@ async function runProcess(executable, args, options) {
 }
 
 async function terminateProcessTree(pid, force) {
-  const result = Bun.spawn(["taskkill", "/PID", String(pid), "/T", ...(force ? ["/F"] : [])], {
+  const result = Bun.spawn(terminationCommand(pid, force), {
     stdout: "ignore",
     stderr: "ignore",
     windowsHide: true,
   })
   const code = await Promise.race([result.exited, delay(30_000).then(() => undefined)])
   return code === 0 || code === 128
+}
+
+export function terminationCommand(pid, force) {
+  requireValue(Number.isSafeInteger(pid) && pid > 0, "Acceptance process identity is invalid")
+  if (force) return ["taskkill", "/PID", String(pid), "/T", "/F"]
+  return [
+    "powershell.exe",
+    "-NoProfile",
+    "-NonInteractive",
+    "-Command",
+    `$process = Get-Process -Id ${pid} -ErrorAction Stop; if (-not $process.CloseMainWindow()) { exit 3 }`,
+  ]
 }
 
 async function observeWindowsProcesses(env) {

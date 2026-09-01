@@ -1365,4 +1365,18 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
     expect(networkBoundaryCleanup).toBeGreaterThan(candidateCleanup)
     expect(basename(fixturePath)).toBe("current-beta-windows-x64.json")
   })
+
+  test("closes the root application gracefully before forcing its process tree", () => {
+    expect(acceptance.terminationCommand(4123, false)).toEqual([
+      "powershell.exe",
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      "$process = Get-Process -Id 4123 -ErrorAction Stop; if (-not $process.CloseMainWindow()) { exit 3 }",
+    ])
+    expect(acceptance.terminationCommand(4123, true)).toEqual(["taskkill", "/PID", "4123", "/T", "/F"])
+    for (const invalid of [0, -1, 1.5, Number.NaN]) {
+      expect(() => acceptance.terminationCommand(invalid, false)).toThrow()
+    }
+  })
 })

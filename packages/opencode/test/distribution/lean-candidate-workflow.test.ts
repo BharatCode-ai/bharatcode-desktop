@@ -1,10 +1,21 @@
 import { describe, expect, test } from "bun:test"
-import { chmodSync, cpSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import {
+  chmodSync,
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, resolve } from "node:path"
 
+import { parseCurrentBetaFixtureBytes } from "../../../desktop/scripts/lean-upgrade-receipt.mjs"
 import { hostDistributionTarget } from "../../script/distribution.mjs"
-import { PLATFORM_PACKAGE_NAMES, REQUIRED_COHORT_KEYS } from "../../script/lean-cohort.mjs"
+import { canonicalLeanJson, PLATFORM_PACKAGE_NAMES, REQUIRED_COHORT_KEYS } from "../../script/lean-cohort.mjs"
 
 const workflowPath = resolve(import.meta.dir, "../../../../.github/workflows/bharatcode-next-beta-candidate.yml")
 const checkout = "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0"
@@ -24,7 +35,7 @@ const reviewedSecurityStepSha256 = {
 } as const
 const previousAcceptedWslSha = "17ac654639ef2d0f9e6e79370d39ecbfe67a8654"
 const acceptedWslSha = "205e5f670fae8e18e49f58b504b630cbe255da2d"
-const acceptedReleaseControlSha = "c229749f5bfd351fd09f1280ac6e97a40841b5e8"
+const acceptedReleaseControlSha = "9a4de91ccde1c487258412b4f66974da43d49dda"
 const wslRunnerLabel = "bharatcode-acceptance-${{ github.run_id }}-${{ github.run_attempt }}"
 const frozenWslPaths = [
   "packages/desktop/electron-builder.config.ts",
@@ -177,6 +188,8 @@ const internalWslInputs = [
 ]
 const hotfixReleaseDeltaPaths = [
   ".github/workflows/bharatcode-next-beta-candidate.yml",
+  "packages/desktop/scripts/lean-upgrade-acceptance.mjs",
+  "packages/desktop/scripts/lean-upgrade-acceptance.test.ts",
   "packages/opencode/script/lean-cohort.mjs",
   "packages/opencode/test/distribution/lean-candidate-workflow.test.ts",
   "packages/opencode/test/distribution/lean-cohort.test.ts",
@@ -359,6 +372,187 @@ function bashArray(run: string, name: string) {
 
 function bunEvalScripts(run: string) {
   return [...run.matchAll(/bun --eval '\n([\s\S]*?)\n\s*'/gu)].map((match) => match[1])
+}
+
+function runWorkflowDigestFixture(run: string) {
+  const digest = run.match(
+    /const digest = async \(path\) => createHash\("sha256"\)\.update\([^\n]+\)\.digest\("hex"\)/u,
+  )?.[0]
+  if (!digest) throw new Error("workflow digest implementation is missing")
+  const root = mkdtempSync(resolve(process.env.TMPDIR ?? tmpdir(), "lean-workflow-digest-"))
+  try {
+    writeFileSync(resolve(root, "subject.bin"), "bharatcode-workflow-digest-fixture")
+    return Bun.spawnSync(
+      [
+        "bun",
+        "--eval",
+        `import { createHash } from "node:crypto"\n${digest}\nprocess.stdout.write(await digest("subject.bin"))`,
+      ],
+      { cwd: root, stdout: "pipe", stderr: "pipe" },
+    )
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+}
+
+function runWorkflowWaiverFixture(run: string) {
+  const script = bunEvalScripts(run).find((value) => value.includes("validateLeanWslWaiver"))
+  if (!script) throw new Error("workflow owner-waiver implementation is missing")
+  const root = mkdtempSync(resolve(process.env.TMPDIR ?? tmpdir(), "lean-workflow-waiver-"))
+  try {
+    mkdirSync(resolve(root, "candidate-input"))
+    writeFileSync(resolve(root, "candidate-input/bharatcode-desktop-next-beta-win-x64.exe"), "MZ-waiver-fixture")
+    writeFileSync(resolve(root, "candidate-input/bharatcode-wsl-runtime-manifest.json"), '{"schema":1}\n')
+    symlinkSync(resolve(import.meta.dir, "../../../../packages"), resolve(root, "packages"), "dir")
+    const execution = Bun.spawnSync(["bun", "--eval", script], {
+      cwd: root,
+      env: {
+        ...process.env,
+        ACCEPTED_APPLICATION_SOURCE_SHA: "80c962f4148db531c35abcf4922059d2101c9bcd",
+        GITHUB_ACTOR_VALUE: "release-fixture",
+        GITHUB_RUN_ATTEMPT: "2",
+        GITHUB_RUN_ID: "123456789",
+        SOURCE_SHA: "a".repeat(40),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    const receiptPath = resolve(root, "bharatcode-wsl-acceptance-waiver.json")
+    return {
+      ...execution,
+      receipt: execution.exitCode === 0 ? JSON.parse(readFileSync(receiptPath, "utf8")) : undefined,
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+}
+
+function runWorkflowCohortFixture(run: string) {
+  const script = bunEvalScripts(run).find((value) => value.includes("validateLeanCohort"))
+  if (!script) throw new Error("workflow cohort implementation is missing")
+  const root = mkdtempSync(resolve(process.env.TMPDIR ?? tmpdir(), "lean-workflow-cohort-"))
+  try {
+    const packages = resolve(import.meta.dir, "../../../../packages")
+    const input = resolve(root, "cohort-input")
+    mkdirSync(input)
+    symlinkSync(packages, resolve(root, "packages"), "dir")
+    const cliVersion = JSON.parse(readFileSync(resolve(packages, "opencode/package.json"), "utf8")).version
+    const desktopVersion = JSON.parse(readFileSync(resolve(packages, "desktop/package.json"), "utf8")).version
+    const sourceSha = "a".repeat(40)
+    const runId = "123456789"
+    const runAttempt = "2"
+    const writeSubject = (name: string, value = `subject:${name}`) => {
+      const path = resolve(input, name)
+      writeFileSync(path, value)
+      writeFileSync(`${path}.intoto.jsonl`, `attestation:${name}`)
+      return path
+    }
+    for (const name of ["bharatcode", ...PLATFORM_PACKAGE_NAMES]) writeSubject(`${name}-${cliVersion}.tgz`)
+    for (const name of [
+      "bharatcode-desktop-next-beta-linux-x64.AppImage",
+      "bharatcode-desktop-next-beta-linux-x64.deb",
+      "bharatcode-desktop-next-beta-mac-arm64.zip",
+      "bharatcode-desktop-next-beta-mac-x64.zip",
+    ])
+      writeSubject(name)
+    const windowsName = "bharatcode-desktop-next-beta-win-x64.exe"
+    const windowsPath = writeSubject(windowsName, "MZ-cohort-windows")
+    const runtimeManifestPath = resolve(input, "bharatcode-wsl-runtime-manifest.json")
+    writeFileSync(runtimeManifestPath, '{"schema":1}\n')
+    const digest = (path: string) => new Bun.CryptoHasher("sha256").update(readFileSync(path)).digest("hex")
+    const currentBeta = parseCurrentBetaFixtureBytes(
+      new Uint8Array(readFileSync(resolve(packages, "desktop/test/fixtures/current-beta-windows-x64.json"))),
+    )
+    const candidate = {
+      key: "desktop-windows-x64",
+      filename: windowsName,
+      bytes: readFileSync(windowsPath).byteLength,
+      sha256: digest(windowsPath),
+    }
+    const checks = Object.fromEntries(
+      [
+        "bharatcode_runtime_only",
+        "candidate_installed_over_beta",
+        "candidate_started",
+        "current_beta_download_verified",
+        "current_beta_installed_and_started",
+        "eligible_state_preserved",
+        "eligible_state_seeded",
+        "migration_source_preserved",
+        "recovery_evidence_preserved",
+        "rollback_installed",
+        "rollback_state_structurally_valid",
+        "share_network_attempt_absent",
+        "sharenext_absent",
+      ].map((key) => [key, true]),
+    )
+    const upgradeName = "bharatcode-upgrade-rollback-windows-x64.json"
+    writeSubject(
+      upgradeName,
+      canonicalLeanJson({
+        schema: "bharatcode-lean-upgrade-rollback-receipt-v1",
+        result: "PASS",
+        repository: currentBeta.repository,
+        source_sha: sourceSha,
+        candidate_tag: `next-beta-${sourceSha.slice(0, 12)}`,
+        github: { run_id: runId, run_attempt: runAttempt },
+        host: { os: "windows", arch: "x64", runner_image: "windows-2025" },
+        current_beta: {
+          release_id: currentBeta.release_id,
+          tag: currentBeta.tag,
+          source_sha: currentBeta.source_sha,
+          asset: currentBeta.assets[0],
+        },
+        candidate,
+        checks,
+        completed_at: "2026-09-01T10:00:00.000Z",
+      }),
+    )
+    const waiverName = "bharatcode-wsl-acceptance-waiver.json"
+    writeSubject(
+      waiverName,
+      canonicalLeanJson({
+        schema: "bharatcode-wsl-acceptance-waiver-v1",
+        result: "OWNER_WAIVED",
+        reason: "FORMAL_WINDOWS_WSL2_VM_ACCEPTANCE_NOT_RUN_BY_OWNER_DECISION",
+        manual_acceptance: "INSTALLED_WINDOWS_STARTUP_SIGNIN_PROJECT_MODELS_SESSION_RESTORE_USER_CONFIRMED",
+        accepted_application_source_sha: "80c962f4148db531c35abcf4922059d2101c9bcd",
+        source_sha: sourceSha,
+        desktop_sha256: candidate.sha256,
+        runtime_manifest_sha256: digest(runtimeManifestPath),
+        github: { actor: "release-fixture", run_id: Number(runId), run_attempt: Number(runAttempt) },
+        completed_at: "2026-09-01T10:00:00.000Z",
+      }),
+    )
+    const execution = Bun.spawnSync(["bun", "--eval", script], {
+      cwd: root,
+      env: {
+        ...process.env,
+        CLI_VERSION: cliVersion,
+        DESKTOP_VERSION: desktopVersion,
+        GITHUB_RUN_ATTEMPT: runAttempt,
+        GITHUB_RUN_ID: runId,
+        SOURCE_SHA: sourceSha,
+        WORKFLOW_PATH: ".github/workflows/bharatcode-next-beta-candidate.yml",
+        WSL_ACCEPTANCE_MODE: "owner-waived-hotfix-1.15.22",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    return {
+      ...execution,
+      manifest:
+        execution.exitCode === 0
+          ? JSON.parse(readFileSync(resolve(root, "bharatcode-next-beta-cohort.json"), "utf8"))
+          : undefined,
+      checksum:
+        execution.exitCode === 0
+          ? readFileSync(resolve(root, "bharatcode-next-beta-cohort.json.sha256"), "utf8")
+          : undefined,
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 }
 
 async function runWorkflowMetaPackageFixture(script: string) {
@@ -1571,6 +1765,15 @@ describe("lean next-beta candidate workflow", () => {
     expect(value).toContain("80c962f4148db531c35abcf4922059d2101c9bcd")
     expect(value).toContain("bharatcode-wsl-acceptance-waiver.json")
     expect(value).toContain("owner-waiver-receipt")
+    const digest = runWorkflowDigestFixture(run)
+    expect(digest.exitCode).toBe(0)
+    expect(digest.stdout.toString()).toBe(
+      new Bun.CryptoHasher("sha256").update("bharatcode-workflow-digest-fixture").digest("hex"),
+    )
+    const waiver = runWorkflowWaiverFixture(run)
+    expect(waiver.exitCode).toBe(0)
+    expect(waiver.receipt?.result).toBe("OWNER_WAIVED")
+    expect(waiver.receipt?.source_sha).toBe("a".repeat(40))
   })
 
   test("attests exactly every cohort subject while excluding closed internal WSL inputs", async () => {
@@ -1586,6 +1789,13 @@ describe("lean next-beta candidate workflow", () => {
     expect(run.replace("! -name 'bharatcode-wsl-runtime-manifest.json'", "")).not.toContain(
       "! -name 'bharatcode-wsl-runtime-manifest.json'",
     )
+    const cohort = runWorkflowCohortFixture(
+      runStep(value, "assemble-cohort", "Rehash, close, and validate final manifest"),
+    )
+    expect(cohort.exitCode).toBe(0)
+    expect(cohort.manifest?.wsl_gate_result).toBe("OWNER_WAIVED")
+    expect(cohort.manifest?.artifacts).toHaveLength(REQUIRED_COHORT_KEYS.length)
+    expect(cohort.checksum).toMatch(/^[0-9a-f]{64}  bharatcode-next-beta-cohort\.json\n$/u)
   })
 
   test("canonically validates the upgrade receipt against fixture and assembled candidate identity", async () => {
@@ -1623,6 +1833,7 @@ describe("lean next-beta candidate workflow", () => {
     expect(run).toContain("const subjectSha256 = await digest(path)")
     expect(run).toContain("sha256: await digest(bundle), subject_sha256: subjectSha256")
     expect(run).not.toContain("bytes: (await stat(bundle)).size, sha256: await digest(path)")
+    expect(runWorkflowDigestFixture(run).exitCode).toBe(0)
   })
 
   test("runs the real Windows upgrade harness and validates its receipt before attestation", async () => {
