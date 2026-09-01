@@ -24,6 +24,7 @@ const reviewedSecurityStepSha256 = {
 } as const
 const previousAcceptedWslSha = "17ac654639ef2d0f9e6e79370d39ecbfe67a8654"
 const acceptedWslSha = "205e5f670fae8e18e49f58b504b630cbe255da2d"
+const acceptedReleaseControlSha = "f77c8f0e4426a5c66ae3e3c7dcd5be5df22d9e01"
 const wslRunnerLabel = "bharatcode-acceptance-${{ github.run_id }}-${{ github.run_attempt }}"
 const frozenWslPaths = [
   "packages/desktop/electron-builder.config.ts",
@@ -1041,7 +1042,11 @@ function windowsUnsignedPolicyViolations(value: string) {
   const build = steps.findIndex((step) => step.name === "Build unsigned Windows installer")
   const verify = steps.findIndex((step) => step.name === "Verify unsigned Windows policy and package version")
   const attest = steps.findIndex((step) => step.name === "Attest Windows installer")
+  const installRun = steps[install]?.run ?? ""
   const verifyRun = steps[verify]?.run ?? ""
+  const runtimeReadOnly = "Set-ItemProperty -LiteralPath $runtime -Name IsReadOnly -Value $true"
+  const manifestReadOnly = "Set-ItemProperty -LiteralPath $manifest -Name IsReadOnly -Value $true"
+  const stageRuntime = "bun run --cwd packages/desktop stage:wsl-runtime"
   const requiredVerification = [
     '$env:BHARATCODE_ALLOW_UNSIGNED_WINDOWS -cne "1"',
     '$env:CSC_IDENTITY_AUTO_DISCOVERY -cne "false"',
@@ -1059,6 +1064,18 @@ function windowsUnsignedPolicyViolations(value: string) {
     ...(download >= 0 && download < install && install < build && build < verify && verify < attest
       ? []
       : ["ordering"]),
+    ...(installRun.includes("$runtime = (Resolve-Path candidate-input/wsl/bharatcode-runtime-linux-x64-glibc).Path")
+      ? []
+      : ["runtime path"]),
+    ...(installRun.includes("$manifest = (Resolve-Path candidate-input/wsl/manifest.json).Path")
+      ? []
+      : ["manifest path"]),
+    ...(installRun.includes(runtimeReadOnly) && installRun.indexOf(runtimeReadOnly) < installRun.indexOf(stageRuntime)
+      ? []
+      : ["runtime immutability"]),
+    ...(installRun.includes(manifestReadOnly) && installRun.indexOf(manifestReadOnly) < installRun.indexOf(stageRuntime)
+      ? []
+      : ["manifest immutability"]),
     ...(steps[verify]?.if === undefined ? [] : ["disabled unsigned-policy step"]),
     ...(/(?:^|\n)\s*(?:exit|return)\b/iu.test(verifyRun) ? ["verification early exit"] : []),
     ...(value.includes("AZURE_") || value.includes("azure/login@") || value.includes("EXPECTED_WINDOWS_PUBLISHER")
@@ -1089,10 +1106,13 @@ describe("lean next-beta candidate workflow", () => {
     expect(value).toContain("inputs.source_sha")
     expect(value).toContain("ref: ${{ inputs.source_sha }}")
     expect(value).toContain("next-beta-${source_sha:0:12}")
+    const admission = runStep(value, "admit-source", "Admit immutable source and source-derived versions")
     expect(value).toContain(acceptedWslSha)
+    expect(value).toContain(`ACCEPTED_RELEASE_CONTROL_SHA: ${acceptedReleaseControlSha}`)
+    expect(admission).toContain('git rev-parse "$SOURCE_SHA^"')
+    expect(admission).toContain('== "$ACCEPTED_RELEASE_CONTROL_SHA"')
     expect(value).not.toContain(previousAcceptedWslSha)
     expect(value).toContain("git merge-base --is-ancestor")
-    const admission = runStep(value, "admit-source", "Admit immutable source and source-derived versions")
     for (const path of hotfixReleaseDeltaPaths) expect(admission).toContain(path)
     const root = resolve(import.meta.dir, "../../../..")
     const git = (...args: string[]) => Bun.spawnSync(["git", ...args], { cwd: root, stdout: "pipe", stderr: "pipe" })

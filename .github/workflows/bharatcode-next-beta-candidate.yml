@@ -20,6 +20,7 @@ permissions:
   contents: read
 
 env:
+  ACCEPTED_RELEASE_CONTROL_SHA: f77c8f0e4426a5c66ae3e3c7dcd5be5df22d9e01
   ACCEPTED_WSL_SOURCE_SHA: 205e5f670fae8e18e49f58b504b630cbe255da2d
   BHARATCODE_CHANNEL: beta
   OPENCODE_CHANNEL: beta
@@ -64,7 +65,7 @@ jobs:
           [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]]
           [[ "$(git status --porcelain)" == "" ]]
           git merge-base --is-ancestor "$ACCEPTED_WSL_SOURCE_SHA" "$SOURCE_SHA"
-          [[ "$(git rev-parse "$SOURCE_SHA^")" == "$ACCEPTED_WSL_SOURCE_SHA" ]]
+          [[ "$(git rev-parse "$SOURCE_SHA^")" == "$ACCEPTED_RELEASE_CONTROL_SHA" ]]
           [[ "$(git diff --name-only "$ACCEPTED_WSL_SOURCE_SHA" "$SOURCE_SHA")" == $'.github/workflows/bharatcode-next-beta-candidate.yml\npackages/opencode/script/lean-cohort.mjs\npackages/opencode/test/distribution/lean-candidate-workflow.test.ts\npackages/opencode/test/distribution/lean-cohort.test.ts\npackages/opencode/test/distribution/preliminary-unsigned-wsl-workflow.test.ts' ]]
           [[ "$WSL_ACCEPTANCE_MODE" == "required" || "$WSL_ACCEPTANCE_MODE" == "owner-waived-hotfix-1.15.22" ]]
           grep -F '"packageManager": "bun@1.3.14"' package.json
@@ -363,8 +364,12 @@ jobs:
         shell: pwsh
         run: |
           bun install --frozen-lockfile --linker hoisted
-          $env:BHARATCODE_WSL_RUNTIME = (Resolve-Path candidate-input/wsl/bharatcode-runtime-linux-x64-glibc)
-          $env:BHARATCODE_WSL_RUNTIME_MANIFEST = (Resolve-Path candidate-input/wsl/manifest.json)
+          $runtime = (Resolve-Path candidate-input/wsl/bharatcode-runtime-linux-x64-glibc).Path
+          $manifest = (Resolve-Path candidate-input/wsl/manifest.json).Path
+          Set-ItemProperty -LiteralPath $runtime -Name IsReadOnly -Value $true
+          Set-ItemProperty -LiteralPath $manifest -Name IsReadOnly -Value $true
+          $env:BHARATCODE_WSL_RUNTIME = $runtime
+          $env:BHARATCODE_WSL_RUNTIME_MANIFEST = $manifest
           $env:BHARATCODE_WSL_RUNTIME_ARCH = "x64"
           bun run --cwd packages/desktop stage:wsl-runtime
 
