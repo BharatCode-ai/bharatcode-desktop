@@ -1347,7 +1347,7 @@ async function seedLegacyBetaState(profile) {
   }
 }
 
-async function initializePinnedBetaDatabase(path) {
+export async function initializePinnedBetaDatabase(path) {
   const root = resolve(import.meta.dir, "../../opencode/migration")
   const names = (await readdir(root, { withFileTypes: true }))
     .filter((entry) => entry.isDirectory() && entry.name <= CURRENT_BETA_MIGRATIONS.at(-1))
@@ -1361,6 +1361,7 @@ async function initializePinnedBetaDatabase(path) {
   const migrations = await Promise.all(
     names.map(async (name) => ({ name, sql: await readFile(join(root, name, "migration.sql"), "utf8") })),
   )
+  await mkdir(dirname(path), { recursive: true })
   const database = new Database(path)
   try {
     initializePinnedBetaSchema(database, migrations)

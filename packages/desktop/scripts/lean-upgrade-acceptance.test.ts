@@ -395,6 +395,28 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
     }
   })
 
+  test("creates the nested pinned beta database path before materializing migrations", async () => {
+    const root = await mkdtemp(join(tmpdir(), "bharatcode-pinned-beta-"))
+    const path = join(root, "xdg", "data", "opencode", "opencode.db")
+    try {
+      await acceptance.initializePinnedBetaDatabase(path)
+      const database = new Database(path, { readonly: true })
+      try {
+        expect(database.query("PRAGMA quick_check").get()).toEqual({ quick_check: "ok" })
+        expect(
+          database
+            .query("PRAGMA table_info(session)")
+            .all()
+            .some((column) => column.name === "goal"),
+        ).toBe(true)
+      } finally {
+        database.close()
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   test("requires executed share/unshare refusal and complete nonempty network captures", () => {
     const event = {
       source: { id: 1, start_time: "1" },
