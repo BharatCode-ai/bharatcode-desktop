@@ -35,7 +35,7 @@ const reviewedSecurityStepSha256 = {
 } as const
 const previousAcceptedWslSha = "17ac654639ef2d0f9e6e79370d39ecbfe67a8654"
 const acceptedWslSha = "205e5f670fae8e18e49f58b504b630cbe255da2d"
-const acceptedReleaseControlSha = "5effd22e369bb63bdfd8c7dda08a4f8512021a77"
+const acceptedReleaseControlSha = "362eb7a0ba99c85a3c7653e01508de8a5ea538e1"
 const wslRunnerLabel = "bharatcode-acceptance-${{ github.run_id }}-${{ github.run_attempt }}"
 const frozenWslPaths = [
   "packages/desktop/electron-builder.config.ts",
@@ -1853,9 +1853,15 @@ describe("lean next-beta candidate workflow", () => {
     }
     expect(run).not.toMatch(/extract|mock|ShareNext|share.*https?:/iu)
     const steps = job.steps ?? []
+    const checkoutPolicy = steps.findIndex((step) => step.name === "Pin binary checkout semantics")
+    const checkout = steps.findIndex((step) => step.name === "Checkout the exact candidate")
     const harness = steps.findIndex((step) => step.name === "Run real packaged upgrade and rollback acceptance")
     const validation = steps.findIndex((step) => step.name === "Validate packaged upgrade receipt before attestation")
     const attestation = steps.findIndex((step) => step.name === "Attest upgrade and rollback receipt")
+    expect(checkoutPolicy).toBeGreaterThan(-1)
+    expect(checkout).toBeGreaterThan(checkoutPolicy)
+    expect(steps[checkoutPolicy]?.run).toContain("git config --global core.autocrlf false")
+    expect(steps[checkoutPolicy]?.run).toContain("git config --global core.eol lf")
     expect(harness).toBeGreaterThan(-1)
     expect(steps[harness]?.env).toEqual({ GITHUB_TOKEN: "${{ github.token }}" })
     expect(validation).toBeGreaterThan(harness)

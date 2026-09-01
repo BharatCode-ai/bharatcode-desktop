@@ -20,7 +20,7 @@ permissions:
   contents: read
 
 env:
-  ACCEPTED_RELEASE_CONTROL_SHA: 5effd22e369bb63bdfd8c7dda08a4f8512021a77
+  ACCEPTED_RELEASE_CONTROL_SHA: 362eb7a0ba99c85a3c7653e01508de8a5ea538e1
   ACCEPTED_WSL_SOURCE_SHA: 205e5f670fae8e18e49f58b504b630cbe255da2d
   BHARATCODE_CHANNEL: beta
   OPENCODE_CHANNEL: beta
@@ -903,6 +903,12 @@ jobs:
       id-token: write
       attestations: write
     steps:
+      - name: Pin binary checkout semantics
+        shell: pwsh
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+
       - name: Checkout the exact candidate
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
