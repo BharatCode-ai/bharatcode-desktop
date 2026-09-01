@@ -35,7 +35,7 @@ const reviewedSecurityStepSha256 = {
 } as const
 const previousAcceptedWslSha = "17ac654639ef2d0f9e6e79370d39ecbfe67a8654"
 const acceptedWslSha = "205e5f670fae8e18e49f58b504b630cbe255da2d"
-const acceptedRuntimeFixSha = "7760ea8879bb8a419199c36410a0d459ca910d41"
+const acceptedHotfixParentSha = "14046b6b4a5a7fd35ab6e7cfd0ac4655a6c8ca8e"
 const wslRunnerLabel = "bharatcode-acceptance-${{ github.run_id }}-${{ github.run_attempt }}"
 const frozenWslPaths = [
   "packages/desktop/electron-builder.config.ts",
@@ -192,6 +192,8 @@ const hotfixReleaseDeltaPaths = [
   "packages/desktop/package.json",
   "packages/desktop/scripts/lean-upgrade-acceptance.mjs",
   "packages/desktop/scripts/lean-upgrade-acceptance.test.ts",
+  "packages/desktop/scripts/lean-upgrade-receipt.mjs",
+  "packages/desktop/scripts/lean-upgrade-receipt.test.ts",
   "packages/opencode/script/lean-cohort.mjs",
   "packages/opencode/src/migration/capture.ts",
   "packages/opencode/test/distribution/lean-candidate-workflow.test.ts",
@@ -1313,9 +1315,9 @@ describe("lean next-beta candidate workflow", () => {
     expect(value).toContain("next-beta-${source_sha:0:12}")
     const admission = runStep(value, "admit-source", "Admit immutable source and source-derived versions")
     expect(value).toContain(acceptedWslSha)
-    expect(value).toContain(`ACCEPTED_RUNTIME_FIX_SHA: ${acceptedRuntimeFixSha}`)
+    expect(value).toContain(`ACCEPTED_HOTFIX_PARENT_SHA: ${acceptedHotfixParentSha}`)
     expect(admission).toContain('git rev-parse "$SOURCE_SHA^"')
-    expect(admission).toContain('== "$ACCEPTED_RUNTIME_FIX_SHA"')
+    expect(admission).toContain('== "$ACCEPTED_HOTFIX_PARENT_SHA"')
     expect(value).not.toContain(previousAcceptedWslSha)
     expect(value).toContain("git merge-base --is-ancestor")
     for (const path of hotfixReleaseDeltaPaths) expect(admission).toContain(path)

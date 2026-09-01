@@ -20,7 +20,7 @@ permissions:
   contents: read
 
 env:
-  ACCEPTED_RUNTIME_FIX_SHA: 7760ea8879bb8a419199c36410a0d459ca910d41
+  ACCEPTED_HOTFIX_PARENT_SHA: 14046b6b4a5a7fd35ab6e7cfd0ac4655a6c8ca8e
   ACCEPTED_WSL_SOURCE_SHA: 205e5f670fae8e18e49f58b504b630cbe255da2d
   BHARATCODE_CHANNEL: beta
   OPENCODE_CHANNEL: beta
@@ -65,8 +65,8 @@ jobs:
           [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]]
           [[ "$(git status --porcelain)" == "" ]]
           git merge-base --is-ancestor "$ACCEPTED_WSL_SOURCE_SHA" "$SOURCE_SHA"
-          [[ "$(git rev-parse "$SOURCE_SHA^")" == "$ACCEPTED_RUNTIME_FIX_SHA" ]]
-          [[ "$(git diff --name-only "$ACCEPTED_WSL_SOURCE_SHA" "$SOURCE_SHA")" == $'.github/workflows/bharatcode-next-beta-candidate.yml\nbun.lock\npackages/desktop/package.json\npackages/desktop/scripts/lean-upgrade-acceptance.mjs\npackages/desktop/scripts/lean-upgrade-acceptance.test.ts\npackages/opencode/script/lean-cohort.mjs\npackages/opencode/src/migration/capture.ts\npackages/opencode/test/distribution/lean-candidate-workflow.test.ts\npackages/opencode/test/distribution/lean-cohort.test.ts\npackages/opencode/test/distribution/preliminary-unsigned-wsl-workflow.test.ts\npackages/opencode/test/migration/capture.test.ts' ]]
+          [[ "$(git rev-parse "$SOURCE_SHA^")" == "$ACCEPTED_HOTFIX_PARENT_SHA" ]]
+          [[ "$(git diff --name-only "$ACCEPTED_WSL_SOURCE_SHA" "$SOURCE_SHA")" == $'.github/workflows/bharatcode-next-beta-candidate.yml\nbun.lock\npackages/desktop/package.json\npackages/desktop/scripts/lean-upgrade-acceptance.mjs\npackages/desktop/scripts/lean-upgrade-acceptance.test.ts\npackages/desktop/scripts/lean-upgrade-receipt.mjs\npackages/desktop/scripts/lean-upgrade-receipt.test.ts\npackages/opencode/script/lean-cohort.mjs\npackages/opencode/src/migration/capture.ts\npackages/opencode/test/distribution/lean-candidate-workflow.test.ts\npackages/opencode/test/distribution/lean-cohort.test.ts\npackages/opencode/test/distribution/preliminary-unsigned-wsl-workflow.test.ts\npackages/opencode/test/migration/capture.test.ts' ]]
           [[ "$WSL_ACCEPTANCE_MODE" == "required" || "$WSL_ACCEPTANCE_MODE" == "owner-waived-hotfix-1.15.23" ]]
           grep -F '"packageManager": "bun@1.3.14"' package.json
           [[ "$(bun --version)" == "1.3.14" ]]
