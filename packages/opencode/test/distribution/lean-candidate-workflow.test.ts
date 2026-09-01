@@ -24,7 +24,7 @@ const reviewedSecurityStepSha256 = {
 } as const
 const previousAcceptedWslSha = "17ac654639ef2d0f9e6e79370d39ecbfe67a8654"
 const acceptedWslSha = "205e5f670fae8e18e49f58b504b630cbe255da2d"
-const acceptedReleaseControlSha = "f77c8f0e4426a5c66ae3e3c7dcd5be5df22d9e01"
+const acceptedReleaseControlSha = "c229749f5bfd351fd09f1280ac6e97a40841b5e8"
 const wslRunnerLabel = "bharatcode-acceptance-${{ github.run_id }}-${{ github.run_attempt }}"
 const frozenWslPaths = [
   "packages/desktop/electron-builder.config.ts",
@@ -1037,6 +1037,7 @@ function runOnePackagingViolations(value: string) {
 function windowsUnsignedPolicyViolations(value: string) {
   const job = parse(value).jobs["package-windows"]
   const steps = job.steps ?? []
+  const toolchain = steps.findIndex((step) => step.name === "Require Windows native build tools")
   const download = steps.findIndex((step) => step.name === "Download same-run WSL runtime")
   const install = steps.findIndex((step) => step.name === "Install exact dependencies and stage WSL runtime")
   const build = steps.findIndex((step) => step.name === "Build unsigned Windows installer")
@@ -1057,6 +1058,11 @@ function windowsUnsignedPolicyViolations(value: string) {
     "Windows package version drift",
   ]
   return [
+    ...(job["runs-on"] === "windows-2022" ? [] : ["native build runner"]),
+    ...(toolchain >= 0 && toolchain < download ? [] : ["native build toolchain ordering"]),
+    ...(steps[toolchain]?.run?.includes("Microsoft.VisualStudio.Component.VC.Tools.x86.x64")
+      ? []
+      : ["native build toolchain preflight"]),
     ...(job.permissions?.["id-token"] === "write" ? [] : ["id-token"]),
     ...(job.env?.BHARATCODE_ALLOW_UNSIGNED_WINDOWS === "1" ? [] : ["unsigned opt-in"]),
     ...(job.env?.CSC_IDENTITY_AUTO_DISCOVERY === "false" ? [] : ["signing discovery"]),
