@@ -1211,6 +1211,16 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
     }
     expect(acceptanceFailureCode(new Error("GitHub identity request failed with HTTP 403"))).toBe("GITHUB_IDENTITY")
     expect(acceptanceFailureCode(new Error("do-not-print-this-secret"))).toBe("PACKAGED_EXECUTION")
+    process.env.BHARATCODE_UPGRADE_STAGE_DIAGNOSTIC = "1"
+    try {
+      expect(acceptanceFailureCode(new Error("current-beta process cleanup failed"))).toEndWith("_CLEANUP")
+      expect(
+        acceptanceFailureCode(new Error("Packaged application did not reach post-initialization readiness")),
+      ).toEndWith("_READINESS_PARSE")
+      expect(acceptanceFailureCode(new Error("Packaged readiness log did not advance"))).toEndWith("_READINESS_LOG")
+    } finally {
+      delete process.env.BHARATCODE_UPGRADE_STAGE_DIAGNOSTIC
+    }
   })
 
   test("consumes the GitHub token before effects and excludes it from executable child environments", async () => {

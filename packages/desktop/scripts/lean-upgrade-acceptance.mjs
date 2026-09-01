@@ -2843,7 +2843,8 @@ export function acceptanceFailureCode(error) {
   const message = error instanceof Error ? error.message : ""
   if (process.env.BHARATCODE_UPGRADE_STAGE_DIAGNOSTIC === "1") {
     if (/Desktop process exited before startup completed/iu.test(message)) return `${diagnosticStage}_PROCESS_EXIT`
-    if (/Desktop reported a sidecar or process startup failure/iu.test(message)) return `${diagnosticStage}_PROCESS_FAILURE`
+    if (/Desktop reported a sidecar or process startup failure/iu.test(message))
+      return `${diagnosticStage}_PROCESS_FAILURE`
     if (/Desktop startup timed out/iu.test(message)) return `${diagnosticStage}_TIMEOUT`
     if (/Desktop readiness log is ambiguous/iu.test(message)) return `${diagnosticStage}_AMBIGUOUS`
     if (/Packaged sidecar origin/iu.test(message)) return `${diagnosticStage}_SIDECAR_ORIGIN`
@@ -2851,6 +2852,13 @@ export function acceptanceFailureCode(error) {
     if (/Owned BharatCode utility sidecar/iu.test(message)) return `${diagnosticStage}_UTILITY_PROCESS`
     if (/Owned Chromium NetworkService/iu.test(message)) return `${diagnosticStage}_NETWORK_PROCESS`
     if (/address-space|Windows command line|Chromium switch/iu.test(message)) return `${diagnosticStage}_SWITCHES`
+    if (/current-beta process cleanup failed/iu.test(message)) return `${diagnosticStage}_CLEANUP`
+    if (/Packaged application did not reach post-initialization readiness/iu.test(message)) {
+      return `${diagnosticStage}_READINESS_PARSE`
+    }
+    if (/Packaged readiness log (?:is invalid|was replaced or truncated|did not advance)/iu.test(message)) {
+      return `${diagnosticStage}_READINESS_LOG`
+    }
     return diagnosticStage
   }
   if (/GitHub identity request|current-beta asset download/iu.test(message)) return "GITHUB_IDENTITY"
