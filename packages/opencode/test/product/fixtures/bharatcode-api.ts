@@ -1,3 +1,5 @@
+import { BharatCodeModel } from "@/bharatcode/model"
+
 export type Attempt = {
   readonly url: string
   readonly method: string
@@ -44,19 +46,19 @@ export function createBharatCodeApiFixture() {
         object: "list",
         data: [
           {
-            id: "bharatcode-coder",
+            id: BharatCodeModel.CODING_MODEL_ID,
             object: "model",
             created: 0,
             owned_by: "bharatcode",
-            modality: "chat",
+            modality: "vision_chat",
             endpoint: "/v1/chat/completions",
             protocol: "openai_chat_completions",
             runtime: "vllm",
             status: "live",
-            display_name: "BharatCode Coder",
-            context_window: 128_000,
-            max_output_tokens: 16_000,
-            metadata: { input: ["text"], output: ["text"], toolCalling: true },
+            display_name: "BharatCode Qwen 3.6 35B AWQ 200K",
+            context_window: 200_000,
+            max_output_tokens: 32_000,
+            metadata: { input: ["text", "image"], output: ["text"], toolCalling: true, reasoning: true },
           },
         ],
       })
