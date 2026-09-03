@@ -89,15 +89,27 @@ const childEnvironmentKeys = [
   "NUMBER_OF_PROCESSORS",
   "PROCESSOR_ARCHITECTURE",
 ]
+const installerStagePrefixes = new Set(["CURRENT_BETA_INSTALL", "CANDIDATE_INSTALL", "ROLLBACK_INSTALL"])
+const installerStageSuffixes = [
+  "PROCESS_LAUNCH",
+  "PROCESS_TIMEOUT",
+  "PROCESS_EXIT",
+  "PROCESS_OUTPUT",
+  "LAYOUT_READ",
+  "EXECUTABLE_MISSING",
+  "EXECUTABLE_DUPLICATE",
+  "EXECUTABLE_WRONG",
+  "EXECUTABLE_READ",
+  "EXECUTABLE_IDENTITY",
+  "INVENTORY",
+]
 const acceptanceStages = new Set([
   "PROFILE_INITIALIZATION",
   "CURRENT_BETA_FETCH",
   "CURRENT_BETA_IDENTITY",
-  "CURRENT_BETA_INSTALL",
   "CURRENT_BETA_SCHEMA",
   "LEGACY_STATE",
   "CANDIDATE_IDENTITY",
-  "CANDIDATE_INSTALL",
   "CANDIDATE_REPLACEMENT",
   "CANDIDATE_RECOVERY",
   "CANDIDATE_RUNTIME",
@@ -109,13 +121,15 @@ const acceptanceStages = new Set([
   "NETWORK_BOUNDARY_CLEANUP",
   "CANDIDATE_STATE",
   "ROLLBACK_IDENTITY",
-  "ROLLBACK_INSTALL",
   "ROLLBACK_REPLACEMENT",
   "ROLLBACK_START",
   "ROLLBACK_STATE",
   "STATE_VALIDATION",
   "NETWORK_ABSENCE",
   "PROCESS_CLEANUP",
+  ...Array.from(installerStagePrefixes).flatMap((prefix) =>
+    installerStageSuffixes.map((suffix) => `${prefix}_${suffix}`),
+  ),
 ])
 
 class AcceptanceStageError extends Error {
@@ -135,6 +149,33 @@ export async function atAcceptanceStage(stage, operation) {
     if (error instanceof AcceptanceStageError) throw error
     throw new AcceptanceStageError(stage, error)
   }
+}
+
+function installerStage(prefix, suffix) {
+  requireValue(installerStagePrefixes.has(prefix), "Packaged installer stage prefix is invalid")
+  requireValue(installerStageSuffixes.includes(suffix), "Packaged installer stage suffix is invalid")
+  return `${prefix}_${suffix}`
+}
+
+export function classifyInstallerProcessOutcome(prefix, value) {
+  requireValue(installerStagePrefixes.has(prefix), "Packaged installer stage prefix is invalid")
+  requireRecord(value, ["exit_code", "launched", "output_bytes", "timed_out"], "installer process outcome")
+  requireValue(typeof value.launched === "boolean", "Installer launch observation is invalid")
+  requireValue(typeof value.timed_out === "boolean", "Installer timeout observation is invalid")
+  requireValue(
+    value.exit_code === null || Number.isSafeInteger(value.exit_code),
+    "Installer exit observation is invalid",
+  )
+  requireValue(Number.isSafeInteger(value.output_bytes) && value.output_bytes >= 0, "Installer output bound is invalid")
+  if (!value.launched) return installerStage(prefix, "PROCESS_LAUNCH")
+  if (value.timed_out) return installerStage(prefix, "PROCESS_TIMEOUT")
+  if (value.output_bytes > MAX_PROCESS_OUTPUT) return installerStage(prefix, "PROCESS_OUTPUT")
+  if (value.exit_code !== 0) return installerStage(prefix, "PROCESS_EXIT")
+  return undefined
+}
+
+function failInstallerStage(prefix, suffix, cause) {
+  throw new AcceptanceStageError(installerStage(prefix, suffix), cause)
 }
 
 export function parseUpgradeAcceptanceArguments(argv) {
@@ -1027,15 +1068,16 @@ async function executeProductionAcceptance(input) {
       await atAcceptanceStage("CURRENT_BETA_IDENTITY", () =>
         verifyPinnedInstaller(prepared.betaInstaller, input.currentBeta.assets[0]),
       )
-      const betaInstalled = await atAcceptanceStage("CURRENT_BETA_INSTALL", () =>
-        runInstaller(prepared.betaInstaller, installDirectory, profile.env),
+      const betaInstalled = await runInstaller(
+        prepared.betaInstaller,
+        installDirectory,
+        profile.env,
+        "CURRENT_BETA_INSTALL",
       )
       await atAcceptanceStage("CURRENT_BETA_SCHEMA", () => initializePinnedBetaDatabase(profile.legacyDatabase))
       const seeded = await atAcceptanceStage("LEGACY_STATE", () => seedLegacyBetaState(profile))
       await atAcceptanceStage("CANDIDATE_IDENTITY", () => verifyPinnedInstaller(input.candidate, prepared.candidate))
-      const candidateInstalled = await atAcceptanceStage("CANDIDATE_INSTALL", () =>
-        runInstaller(input.candidate, installDirectory, profile.env),
-      )
+      const candidateInstalled = await runInstaller(input.candidate, installDirectory, profile.env, "CANDIDATE_INSTALL")
       candidateExecutable = candidateInstalled.application.executable
       await atAcceptanceStage("CANDIDATE_REPLACEMENT", async () =>
         requireValue(
@@ -1088,8 +1130,11 @@ async function executeProductionAcceptance(input) {
       await atAcceptanceStage("ROLLBACK_IDENTITY", () =>
         verifyPinnedInstaller(prepared.betaInstaller, input.currentBeta.assets[0]),
       )
-      const rollbackInstalled = await atAcceptanceStage("ROLLBACK_INSTALL", () =>
-        runInstaller(prepared.betaInstaller, installDirectory, profile.env),
+      const rollbackInstalled = await runInstaller(
+        prepared.betaInstaller,
+        installDirectory,
+        profile.env,
+        "ROLLBACK_INSTALL",
       )
       await atAcceptanceStage("ROLLBACK_REPLACEMENT", async () =>
         requireValue(
@@ -1254,14 +1299,94 @@ export function consumeGithubActionsToken(environment) {
   }
 }
 
-async function runInstaller(installer, installDirectory, env) {
-  await runProcess(installer, ["/S", `/D=${installDirectory}`], { env, timeout: PROCESS_TIMEOUT_MS })
-  const application = await discoverPackagedApplication(installDirectory)
-  const bytes = await readStableFile(application.executable, "installed BharatCode executable")
+async function runInstaller(installer, installDirectory, env, stagePrefix) {
+  await runInstallerProcess(installer, ["/S", `/D=${installDirectory}`], env, stagePrefix)
+  return inspectInstalledPackage(stagePrefix, installDirectory)
+}
+
+async function runInstallerProcess(installer, args, env, stagePrefix) {
+  let child
+  try {
+    child = Bun.spawn([installer, ...args], {
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+      windowsHide: true,
+    })
+  } catch (error) {
+    failInstallerStage(stagePrefix, "PROCESS_LAUNCH", error)
+  }
+  let timedOut = false
+  const timeout = setTimeout(() => {
+    timedOut = true
+    child.kill()
+  }, PROCESS_TIMEOUT_MS)
+  let exitCode
+  let stdout
+  let stderr
+  try {
+    ;[exitCode, stdout, stderr] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).arrayBuffer(),
+      new Response(child.stderr).arrayBuffer(),
+    ])
+  } catch (error) {
+    failInstallerStage(stagePrefix, "PROCESS_OUTPUT", error)
+  } finally {
+    clearTimeout(timeout)
+  }
+  const failure = classifyInstallerProcessOutcome(stagePrefix, {
+    launched: true,
+    timed_out: timedOut,
+    exit_code: exitCode,
+    output_bytes: stdout.byteLength + stderr.byteLength,
+  })
+  if (failure) throw new AcceptanceStageError(failure, new Error("Packaged installer process failed"))
+}
+
+export async function inspectInstalledPackage(stagePrefix, installDirectory, operations = {}) {
+  const list = operations.list ?? ((path) => readdir(path, { withFileTypes: true }))
+  const read = operations.read ?? ((path) => readStableFile(path, "installed BharatCode executable"))
+  const inventory = operations.inventory ?? directoryIdentity
+  let entries
+  try {
+    entries = await list(installDirectory)
+  } catch (error) {
+    failInstallerStage(stagePrefix, "LAYOUT_READ", error)
+  }
+  const candidates = entries.filter(
+    (entry) =>
+      entry.isFile() && entry.name.toLowerCase().endsWith(".exe") && !entry.name.toLowerCase().startsWith("uninstall "),
+  )
+  if (candidates.length === 0) failInstallerStage(stagePrefix, "EXECUTABLE_MISSING", new Error("Missing executable"))
+  if (candidates.length > 1) {
+    failInstallerStage(stagePrefix, "EXECUTABLE_DUPLICATE", new Error("Duplicate executable"))
+  }
+  if (candidates[0].name !== PACKAGED_EXECUTABLE_FILENAME) {
+    failInstallerStage(stagePrefix, "EXECUTABLE_WRONG", new Error("Wrong executable"))
+  }
+  const executable = join(installDirectory, candidates[0].name)
+  let bytes
+  try {
+    bytes = await read(executable)
+  } catch (error) {
+    failInstallerStage(stagePrefix, "EXECUTABLE_READ", error)
+  }
+  try {
+    requirePe(bytes, "installed BharatCode application")
+  } catch (error) {
+    failInstallerStage(stagePrefix, "EXECUTABLE_IDENTITY", error)
+  }
+  let directory
+  try {
+    directory = await inventory(installDirectory)
+  } catch (error) {
+    failInstallerStage(stagePrefix, "INVENTORY", error)
+  }
   return {
     executable: { bytes: bytes.byteLength, sha256: digest(bytes) },
-    application,
-    inventory: await directoryIdentity(installDirectory),
+    application: { executable },
+    inventory: directory,
   }
 }
 

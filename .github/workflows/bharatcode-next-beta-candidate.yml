@@ -31,7 +31,7 @@ permissions:
 
 env:
   ACCEPTED_APPLICATION_SOURCE_SHA: 80c962f4148db531c35abcf4922059d2101c9bcd
-  ACCEPTED_RELEASE_PARENT_SHA: 43df18cb4cc3d046a40a8fcbbfeb05d1a0e0bfdc
+  ACCEPTED_RELEASE_PARENT_SHA: 51210073a4724ee6222b7c71c01d59f16b3a180e
   BHARATCODE_CHANNEL: beta
   PREVIOUS_RELEASE_TAG: desktop-beta-1.15.23
   RELEASE_TAG: desktop-beta-1.15.24
@@ -78,7 +78,7 @@ jobs:
           [[ "$(git status --porcelain)" == "" ]]
           git merge-base --is-ancestor "$ACCEPTED_APPLICATION_SOURCE_SHA" "$SOURCE_SHA"
           [[ "$(git rev-parse "$SOURCE_SHA^")" == "$ACCEPTED_RELEASE_PARENT_SHA" ]]
-          [[ "$(git diff --name-only "$ACCEPTED_RELEASE_PARENT_SHA" "$SOURCE_SHA")" == $'.github/workflows/bharatcode-next-beta-candidate.yml\ndocs/superpowers/reports/2026-09-04-release-review-authority.md\npackages/desktop/scripts/lean-upgrade-acceptance.mjs\npackages/desktop/scripts/lean-upgrade-acceptance.test.ts\npackages/desktop/scripts/lean-upgrade-receipt.mjs\npackages/desktop/scripts/lean-upgrade-receipt.test.ts\npackages/desktop/test/fixtures/current-beta-windows-x64.json\npackages/opencode/test/distribution/lean-candidate-workflow.test.ts\npackages/opencode/test/distribution/preliminary-unsigned-wsl-workflow.test.ts' ]]
+          [[ "$(git diff --name-only "$ACCEPTED_RELEASE_PARENT_SHA" "$SOURCE_SHA")" == $'.github/workflows/bharatcode-next-beta-candidate.yml\npackages/desktop/scripts/lean-upgrade-acceptance.mjs\npackages/desktop/scripts/lean-upgrade-acceptance.test.ts\npackages/opencode/test/distribution/lean-candidate-workflow.test.ts\npackages/opencode/test/distribution/preliminary-unsigned-wsl-workflow.test.ts' ]]
           [[ "$WSL_ACCEPTANCE_MODE" == "required" || "$WSL_ACCEPTANCE_MODE" == "owner-waived-hotfix-1.15.24" ]]
           grep -F '"packageManager": "bun@1.3.14"' package.json
           [[ "$(bun --version)" == "1.3.14" ]]

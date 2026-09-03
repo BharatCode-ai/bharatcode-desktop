@@ -34,7 +34,7 @@ const reviewedSecurityStepSha256 = {
   windowsUnsigned: "a3c024ac9c6087fca041b9d2aeeab56f59e5086557e1dbb56169846d701f5c6d",
 } as const
 const acceptedApplicationSourceSha = "80c962f4148db531c35abcf4922059d2101c9bcd"
-const acceptedReleaseParentSha = "43df18cb4cc3d046a40a8fcbbfeb05d1a0e0bfdc"
+const acceptedReleaseParentSha = "51210073a4724ee6222b7c71c01d59f16b3a180e"
 const wslRunnerLabel = "bharatcode-acceptance-${{ github.run_id }}-${{ github.run_attempt }}"
 const frozenWslPaths = [
   "packages/desktop/electron-builder.config.ts",
@@ -194,12 +194,8 @@ const internalWslInputs = [
 ]
 const releaseControlDeltaPaths = [
   ".github/workflows/bharatcode-next-beta-candidate.yml",
-  "docs/superpowers/reports/2026-09-04-release-review-authority.md",
   "packages/desktop/scripts/lean-upgrade-acceptance.mjs",
   "packages/desktop/scripts/lean-upgrade-acceptance.test.ts",
-  "packages/desktop/scripts/lean-upgrade-receipt.mjs",
-  "packages/desktop/scripts/lean-upgrade-receipt.test.ts",
-  "packages/desktop/test/fixtures/current-beta-windows-x64.json",
   "packages/opencode/test/distribution/lean-candidate-workflow.test.ts",
   "packages/opencode/test/distribution/preliminary-unsigned-wsl-workflow.test.ts",
 ] as const

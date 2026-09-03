@@ -1269,15 +1269,74 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
   test("preserves a closed value-free stage code through cleanup aggregation", async () => {
     let failure: unknown
     try {
-      await acceptance.atAcceptanceStage("CURRENT_BETA_INSTALL", async () => {
+      await acceptance.atAcceptanceStage("CURRENT_BETA_INSTALL_PROCESS_EXIT", async () => {
         throw new Error("do-not-print-this-secret")
       })
     } catch (error) {
       failure = new AggregateError([error, new Error("cleanup:boundary")], "masked")
     }
-    expect(acceptanceFailureCode(failure)).toBe("CURRENT_BETA_INSTALL")
+    expect(acceptanceFailureCode(failure)).toBe("CURRENT_BETA_INSTALL_PROCESS_EXIT")
     expect(String(failure)).not.toContain("do-not-print-this-secret")
     await expect(acceptance.atAcceptanceStage("NOT_A_STAGE", async () => true)).rejects.toThrow()
+  })
+
+  test("classifies installer process outcomes without exposing process details", () => {
+    const valid = { launched: true, timed_out: false, exit_code: 0, output_bytes: 0 }
+    expect(acceptance.classifyInstallerProcessOutcome("CURRENT_BETA_INSTALL", valid)).toBeUndefined()
+    expect(acceptance.classifyInstallerProcessOutcome("CURRENT_BETA_INSTALL", { ...valid, launched: false })).toBe(
+      "CURRENT_BETA_INSTALL_PROCESS_LAUNCH",
+    )
+    expect(acceptance.classifyInstallerProcessOutcome("CURRENT_BETA_INSTALL", { ...valid, timed_out: true })).toBe(
+      "CURRENT_BETA_INSTALL_PROCESS_TIMEOUT",
+    )
+    expect(acceptance.classifyInstallerProcessOutcome("CURRENT_BETA_INSTALL", { ...valid, exit_code: 17 })).toBe(
+      "CURRENT_BETA_INSTALL_PROCESS_EXIT",
+    )
+    expect(
+      acceptance.classifyInstallerProcessOutcome("CURRENT_BETA_INSTALL", { ...valid, output_bytes: 1024 * 1024 + 1 }),
+    ).toBe("CURRENT_BETA_INSTALL_PROCESS_OUTPUT")
+    expect(() => acceptance.classifyInstallerProcessOutcome("NOT_AN_INSTALL", valid)).toThrow()
+    expect(() =>
+      acceptance.classifyInstallerProcessOutcome("CURRENT_BETA_INSTALL", { ...valid, extra: true }),
+    ).toThrow()
+  })
+
+  test("classifies every post-install layout boundary without paths or payloads", async () => {
+    const root = "C:\\acceptance\\installed"
+    const executable = { name: "BharatCode Beta.exe", isFile: () => true }
+    const other = { name: "Other.exe", isFile: () => true }
+    const uninstall = { name: "Uninstall BharatCode Beta.exe", isFile: () => true }
+    const operations = {
+      list: async () => [executable, uninstall],
+      read: async () => pe(),
+      inventory: async () => ({ files: 2, sha256: "a".repeat(64) }),
+    }
+    expect(await acceptance.inspectInstalledPackage("CURRENT_BETA_INSTALL", root, operations)).toEqual({
+      application: { executable: join(root, "BharatCode Beta.exe") },
+      executable: { bytes: pe().byteLength, sha256: createHash("sha256").update(pe()).digest("hex") },
+      inventory: { files: 2, sha256: "a".repeat(64) },
+    })
+
+    const code = async (overrides: Partial<typeof operations>) => {
+      try {
+        await acceptance.inspectInstalledPackage("CURRENT_BETA_INSTALL", root, { ...operations, ...overrides })
+      } catch (error) {
+        return acceptanceFailureCode(error)
+      }
+    }
+    expect(await code({ list: async () => [] })).toBe("CURRENT_BETA_INSTALL_EXECUTABLE_MISSING")
+    expect(await code({ list: async () => [executable, other] })).toBe("CURRENT_BETA_INSTALL_EXECUTABLE_DUPLICATE")
+    expect(await code({ list: async () => [other] })).toBe("CURRENT_BETA_INSTALL_EXECUTABLE_WRONG")
+    expect(await code({ list: async () => Promise.reject(new Error("private-path")) })).toBe(
+      "CURRENT_BETA_INSTALL_LAYOUT_READ",
+    )
+    expect(await code({ read: async () => Promise.reject(new Error("private-bytes")) })).toBe(
+      "CURRENT_BETA_INSTALL_EXECUTABLE_READ",
+    )
+    expect(await code({ read: async () => Buffer.from("not-pe") })).toBe("CURRENT_BETA_INSTALL_EXECUTABLE_IDENTITY")
+    expect(await code({ inventory: async () => Promise.reject(new Error("private-inventory")) })).toBe(
+      "CURRENT_BETA_INSTALL_INVENTORY",
+    )
   })
 
   test("consumes the GitHub token before effects and excludes it from executable child environments", async () => {
@@ -1455,9 +1514,10 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
     for (const privateRoot of ["profile.data", "profile.config", "profile.state", "profile.userData"]) {
       expect(profileInitialization).not.toContain(privateRoot)
     }
-    const betaInstall = source.indexOf('atAcceptanceStage("CURRENT_BETA_INSTALL"')
+    const production = source.indexOf("async function executeProductionAcceptance(")
+    const betaInstall = source.indexOf('"CURRENT_BETA_INSTALL",', production)
     const betaSchema = source.indexOf("initializePinnedBetaDatabase(profile.legacyDatabase)")
-    const candidateInstall = source.indexOf('atAcceptanceStage("CANDIDATE_INSTALL"')
+    const candidateInstall = source.indexOf('"CANDIDATE_INSTALL"', production)
     const recovery = source.indexOf("completeCandidateRecovery(candidateRuntime, profile)")
     const egressStart = source.indexOf('atAcceptanceStage("EGRESS_CONTROL"')
     const candidateStart = source.indexOf('atAcceptanceStage("CANDIDATE_START"')
