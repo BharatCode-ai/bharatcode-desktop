@@ -13,6 +13,7 @@ export type ProviderModelNotFoundError = {
     providerID: string
     modelID: string
     suggestions?: string[]
+    reason?: string
   }
 }
 
@@ -76,7 +77,9 @@ function parseReadableProviderModelNotFoundError(errorInput: ProviderModelNotFou
   const p = errorInput.data.providerID.trim()
   const m = errorInput.data.modelID.trim()
   const list = (errorInput.data.suggestions ?? []).map((v) => v.trim()).filter(Boolean)
-  const body = tr(translator, "error.chain.modelNotFound", `Model not found: ${p}/${m}`, { provider: p, model: m })
+  const body =
+    errorInput.data.reason?.trim() ||
+    tr(translator, "error.chain.modelNotFound", `Model not found: ${p}/${m}`, { provider: p, model: m })
   const tail = tr(translator, "error.chain.checkConfig", "Check your config (local config) provider/model names")
   if (list.length) {
     const suggestions = list.slice(0, 5).join(", ")

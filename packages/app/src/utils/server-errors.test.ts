@@ -129,6 +129,22 @@ describe("formatServerError", () => {
     )
   })
 
+  test("surfaces the canonical BharatCode replacement for retired model IDs", () => {
+    const reason =
+      "BharatCode supports only bharatcode/bharatcode:qwen36-35b-awq-200k. Retired model IDs are not translated."
+    const error = {
+      name: "ProviderModelNotFoundError",
+      data: {
+        providerID: "bharatcode",
+        modelID: "bharatcode:qwen36-35b-q8-256k",
+        suggestions: ["bharatcode:qwen36-35b-awq-200k"],
+        reason,
+      },
+    } satisfies ProviderModelNotFoundError
+
+    expect(formatServerError(error, language.t)).toStartWith(reason)
+  })
+
   test("unwraps SDK-wrapped errors from cause.body", () => {
     const body = {
       name: "ConfigInvalidError",

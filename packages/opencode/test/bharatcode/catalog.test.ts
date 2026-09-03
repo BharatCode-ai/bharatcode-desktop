@@ -3,6 +3,8 @@ import { Effect, Layer } from "effect"
 import { BharatCodeAccount } from "@/bharatcode/account"
 import { BharatCodeCatalog } from "@/bharatcode/catalog"
 
+const CODING_MODEL_ID = "bharatcode:qwen36-35b-awq-200k"
+
 function accountLayer(input: { accountID?: () => string | undefined; response: () => Promise<Response> }) {
   return Layer.succeed(
     BharatCodeAccount.Service,
@@ -39,7 +41,7 @@ describe("BharatCode authenticated catalog", () => {
       object: "list",
       data: [
         {
-          id: "bharatcode:coder",
+          id: CODING_MODEL_ID,
           object: "model",
           created: 0,
           owned_by: "bharatcode",
@@ -76,7 +78,7 @@ describe("BharatCode authenticated catalog", () => {
     )
     expect(models).toEqual([
       expect.objectContaining({
-        id: "bharatcode:coder",
+        id: CODING_MODEL_ID,
         status: "live",
         contextWindow: 200_000,
         maxOutputTokens: 32_000,
@@ -103,7 +105,7 @@ describe("BharatCode authenticated catalog", () => {
           data: [
             { id: "Bearer private.catalog.token", status: "live", secret: "must-not-leak" },
             {
-              id: "valid-chat",
+              id: CODING_MODEL_ID,
               owned_by: "bharatcode",
               modality: "chat",
               endpoint: "/v1/chat/completions",
@@ -126,7 +128,7 @@ describe("BharatCode authenticated catalog", () => {
           Effect.provide(account),
         ),
     )
-    expect(models.map((model) => model.id)).toEqual(["valid-chat"])
+    expect(models.map((model) => model.id)).toEqual([CODING_MODEL_ID])
     expect(diagnostics).toEqual([
       {
         reason: "invalid-record",
@@ -188,27 +190,39 @@ describe("BharatCode authenticated catalog", () => {
 
   test("defines shared fail-closed coding and dictation eligibility", () => {
     const chat: BharatCodeCatalog.Model = {
-      id: "chat",
+      id: CODING_MODEL_ID,
       ownedBy: "bharatcode",
-      modality: "chat",
+      modality: "vision_chat",
       endpoint: "/v1/chat/completions",
       protocol: "openai_chat_completions",
       runtime: "vllm",
       status: "live",
       displayName: "Chat",
-      metadata: { output: ["text"] },
-      contextWindow: 128_000,
+      metadata: { input: ["text", "image"], output: ["text"], toolCalling: true, reasoning: true },
+      contextWindow: 200_000,
       maxOutputTokens: 32_000,
     }
     expect(BharatCodeCatalog.codingEligibility(chat)).toEqual({
       eligible: true,
-      input: [],
+      input: ["text", "image"],
       output: ["text"],
     })
     expect(BharatCodeCatalog.codingEligibility({ ...chat, maxOutputTokens: 256_000 })).toEqual({
       eligible: false,
-      diagnostic: { recordID: "chat", reason: "invalid-coding-contract", fields: ["max_output_tokens"] },
+      diagnostic: { recordID: CODING_MODEL_ID, reason: "invalid-coding-contract", fields: ["max_output_tokens"] },
     })
+    expect(BharatCodeCatalog.codingEligibility({ ...chat, modality: "chat" })).toMatchObject({
+      eligible: false,
+      diagnostic: { reason: "invalid-coding-contract", fields: ["modality"] },
+    })
+
+    for (const id of ["bharatcode:qwen36-35b-q6-256k-vision", "bharatcode:qwen36-35b-q8-256k"]) {
+      expect(BharatCodeCatalog.codingEligibility({ ...chat, id })).toEqual({
+        eligible: false,
+        diagnostic: { recordID: id, reason: "unsupported-coding-model", fields: ["id"] },
+      })
+      expect(BharatCodeCatalog.toV2Model({ ...chat, id })).toBeUndefined()
+    }
 
     const dictation: BharatCodeCatalog.Model = {
       ...chat,

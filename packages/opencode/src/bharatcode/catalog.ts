@@ -5,6 +5,7 @@ import { BharatCodeAccount } from "./account"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { DateTime } from "effect"
+import { BharatCodeModel } from "./model"
 
 const CATALOG_URL = `${BharatCodeAccount.MODEL_API_BASE_URL}/models`
 const DEFAULT_TTL_MS = 300_000
@@ -27,7 +28,13 @@ export type Model = {
 
 export type Diagnostic = {
   recordID?: string
-  reason: "invalid-record" | "not-live" | "not-coding-model" | "invalid-coding-contract" | "invalid-dictation-contract"
+  reason:
+    | "invalid-record"
+    | "not-live"
+    | "not-coding-model"
+    | "unsupported-coding-model"
+    | "invalid-coding-contract"
+    | "invalid-dictation-contract"
   fields: readonly string[]
 }
 
@@ -149,20 +156,25 @@ export function codingEligibility(model: Model): Eligibility {
   if (model.modality !== "chat" && model.modality !== "vision_chat") {
     return exclusion(model, "not-coding-model", ["modality"])
   }
+  if (model.id !== BharatCodeModel.CODING_MODEL_ID) {
+    return exclusion(model, "unsupported-coding-model", ["id"])
+  }
   if (model.protocol !== "openai_chat_completions") {
     return exclusion(model, "invalid-coding-contract", ["protocol"])
   }
-  const fields = [
-    ...(model.endpoint !== "/v1/chat/completions" ? ["endpoint"] : []),
-    ...(!model.contextWindow ? ["context_window"] : []),
-    ...(!model.maxOutputTokens || (model.contextWindow && model.maxOutputTokens > model.contextWindow)
-      ? ["max_output_tokens"]
-      : []),
-  ]
   const input = modalities(model, "input")
   const output = modalities(model, "output")
-  if (!output.includes("text")) fields.push("metadata.output")
-  if (model.modality === "vision_chat" && !input.includes("image")) fields.push("metadata.input")
+  const fields = [
+    ...(model.ownedBy !== "bharatcode" ? ["owned_by"] : []),
+    ...(model.modality !== "vision_chat" ? ["modality"] : []),
+    ...(model.endpoint !== "/v1/chat/completions" ? ["endpoint"] : []),
+    ...(model.contextWindow !== 200_000 ? ["context_window"] : []),
+    ...(model.maxOutputTokens !== 32_000 ? ["max_output_tokens"] : []),
+    ...(!input.includes("text") || !input.includes("image") ? ["metadata.input"] : []),
+    ...(!output.includes("text") ? ["metadata.output"] : []),
+    ...(model.metadata.toolCalling !== true ? ["metadata.toolCalling"] : []),
+    ...(model.metadata.reasoning !== true ? ["metadata.reasoning"] : []),
+  ]
   return fields.length ? exclusion(model, "invalid-coding-contract", fields) : { eligible: true, input, output }
 }
 

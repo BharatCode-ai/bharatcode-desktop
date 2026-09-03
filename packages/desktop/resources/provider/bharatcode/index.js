@@ -6,8 +6,7 @@ import os from "node:os"
 import path from "node:path"
 
 const PROVIDER_ID = "bharatcode"
-const MODEL_ID = "bharatcode:qwen36-35b-q6-256k-vision"
-const LEGACY_MODEL_ID = "bharatcode:qwen36-35b-q8-256k"
+const MODEL_ID = "bharatcode:qwen36-35b-awq-200k"
 const MODEL = `${PROVIDER_ID}/${MODEL_ID}`
 const DEFAULT_BASE_URL = "https://bharatcode.ai/api/model/v1"
 const SUPABASE_URL = process.env.BHARATCODE_SUPABASE_URL || "https://evgvlcaxfpwupaiwzqqm.supabase.co"
@@ -28,6 +27,21 @@ const MODEL_CAPABILITIES = {
 }
 
 let interactiveLoginPromise
+
+function configuredModel(value) {
+  const model = value === undefined ? MODEL : value
+  if (model === MODEL) return model
+  throw new Error(`BharatCode supports only ${MODEL}. Retired model IDs are not translated.`)
+}
+
+function validateExistingConfigModels(config) {
+  for (const field of ["model", "small_model"]) {
+    const model = config?.[field]
+    if (typeof model !== "string") continue
+    if (model === MODEL || model === MODEL_ID) continue
+    if (model.startsWith(`${PROVIDER_ID}/`) || model.startsWith(`${PROVIDER_ID}:`)) configuredModel(model)
+  }
+}
 
 function homeDir(options = {}) {
   return options.credentialsHome || options.home || process.env.BHARATCODE_HOME || os.homedir()
@@ -145,7 +159,8 @@ async function fetchUserInfo(accessToken, { fetchImpl = fetch } = {}) {
     headers: { authorization: `Bearer ${accessToken}` },
   })
   const body = await response.json().catch(() => ({}))
-  if (!response.ok) throw new Error(body.error_description || body.error || `Userinfo request failed (${response.status})`)
+  if (!response.ok)
+    throw new Error(body.error_description || body.error || `Userinfo request failed (${response.status})`)
   return body
 }
 
@@ -362,8 +377,8 @@ function setBearerHeader(output, token) {
 }
 
 export const BharatCodePlugin = async (_ctx, options = {}) => {
-  const selectedModel = options.model || MODEL
-  const selectedSmallModel = options.small_model || selectedModel
+  const selectedModel = configuredModel(options.model)
+  const selectedSmallModel = configuredModel(options.small_model ?? selectedModel)
   const providerOptions = {
     baseURL: options.baseURL || DEFAULT_BASE_URL,
     timeout: options.timeout ?? 1800000,
@@ -374,6 +389,7 @@ export const BharatCodePlugin = async (_ctx, options = {}) => {
 
   return {
     config: async (config) => {
+      validateExistingConfigModels(config)
       config.model = selectedModel
       config.small_model = selectedSmallModel
 
@@ -414,15 +430,7 @@ export const BharatCodePlugin = async (_ctx, options = {}) => {
             ...MODEL_CAPABILITIES,
             limit: {
               context: options.context ?? 200000,
-              output: options.output ?? 32768,
-            },
-          },
-          [LEGACY_MODEL_ID]: {
-            name: "BharatCode legacy Q8 model id compatibility alias",
-            ...MODEL_CAPABILITIES,
-            limit: {
-              context: options.context ?? 200000,
-              output: options.output ?? 32768,
+              output: options.output ?? 32000,
             },
           },
         },
