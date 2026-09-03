@@ -7,6 +7,8 @@ const SEMVER =
 const SAFE_FILENAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/u
 const GITHUB_ACTOR = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u
 const ACCEPTED_MANUAL_APPLICATION_SOURCE_SHA = "80c962f4148db531c35abcf4922059d2101c9bcd"
+const ACCEPTED_FAILED_UPGRADE_SOURCE_SHA = "70a1a462dbbfcb2d2fc6485592520ae2342b7e07"
+const ACCEPTED_FAILED_UPGRADE_RUN_ID = 33804419459
 
 export const PLATFORM_PACKAGE_NAMES = Object.freeze([
   "bharatcode-darwin-arm64",
@@ -144,6 +146,8 @@ export function validateLeanCohort(value, bindings) {
       "run_id",
       "schema",
       "source_sha",
+      "upgrade_gate_result",
+      "upgrade_receipt_sha256",
       "workflow",
       "wsl_gate_result",
       "wsl_receipt_sha256",
@@ -151,7 +155,7 @@ export function validateLeanCohort(value, bindings) {
     ],
     "lean cohort manifest",
   )
-  requireValue(value.schema === "bharatcode-next-beta-cohort-v2", "lean cohort schema is invalid")
+  requireValue(value.schema === "bharatcode-next-beta-cohort-v3", "lean cohort schema is invalid")
   requireValue(value.repository === "BharatCode-ai/bharatcode-desktop", "lean cohort repository is invalid")
   requirePattern(bindings.source_sha, SOURCE_SHA, "expected lean cohort source")
   requireValue(value.source_sha === bindings.source_sha, "lean cohort source does not match")
@@ -172,6 +176,11 @@ export function validateLeanCohort(value, bindings) {
   requirePattern(bindings.run_attempt, POSITIVE_DECIMAL, "expected lean cohort run attempt")
   requireValue(value.run_id === bindings.run_id, "lean cohort run ID does not match")
   requireValue(value.run_attempt === bindings.run_attempt, "lean cohort run attempt does not match")
+  requireValue(
+    value.upgrade_gate_result === "PASS" || value.upgrade_gate_result === "OWNER_WAIVED",
+    "lean cohort upgrade gate result is invalid",
+  )
+  requirePattern(value.upgrade_receipt_sha256, SHA256, "lean cohort upgrade receipt SHA-256")
   requireValue(
     value.wsl_gate_result === "PASS" || value.wsl_gate_result === "OWNER_WAIVED",
     "lean cohort WSL gate result is invalid",
@@ -196,6 +205,18 @@ export function validateLeanCohort(value, bindings) {
         ? "bharatcode-wsl-scenarios-9-10.json"
         : "bharatcode-wsl-acceptance-waiver.json"),
     "lean cohort WSL receipt filename does not match its result",
+  )
+  const upgradeReceipt = value.artifacts.find((artifact) => artifact.key === "upgrade-rollback-windows-x64")
+  requireValue(
+    upgradeReceipt?.sha256 === value.upgrade_receipt_sha256,
+    "lean cohort upgrade receipt digest does not match",
+  )
+  requireValue(
+    upgradeReceipt?.filename ===
+      (value.upgrade_gate_result === "PASS"
+        ? "bharatcode-upgrade-rollback-windows-x64.json"
+        : "bharatcode-upgrade-rollback-waiver-windows-x64.json"),
+    "lean cohort upgrade receipt filename does not match its result",
   )
   requireValue(!/opencode/iu.test(canonicalLeanJson(value)), "lean cohort contains a forbidden public identity")
   return structuredClone(value)
@@ -332,6 +353,74 @@ export function validateLeanWslWaiver(value, bindings) {
   return structuredClone(value)
 }
 
+export function validateLeanUpgradeWaiver(value, bindings) {
+  exactKeys(bindings, ["desktop_sha256", "run_attempt", "run_id", "source_sha"], "lean upgrade waiver bindings")
+  exactKeys(
+    value,
+    [
+      "accepted_application_source_sha",
+      "completed_at",
+      "desktop_sha256",
+      "failed_evidence",
+      "github",
+      "obligation",
+      "reason",
+      "result",
+      "schema",
+      "source_sha",
+    ],
+    "lean upgrade waiver",
+  )
+  requireValue(
+    value.schema === "bharatcode-windows-upgrade-rollback-waiver-v1",
+    "lean upgrade waiver schema is invalid",
+  )
+  requireValue(value.result === "OWNER_WAIVED", "lean upgrade waiver result is invalid")
+  requireValue(
+    value.reason === "WINDOWS_UPGRADE_ROLLBACK_ACCEPTANCE_WAIVED_BY_OWNER_FOR_1_15_24",
+    "lean upgrade waiver reason is invalid",
+  )
+  requireValue(
+    value.obligation === "POST_RELEASE_MANUAL_UPGRADE_ROLLBACK_TEST_REQUIRED",
+    "lean upgrade waiver obligation is invalid",
+  )
+  requireValue(
+    value.accepted_application_source_sha === ACCEPTED_MANUAL_APPLICATION_SOURCE_SHA,
+    "lean upgrade waiver accepted application source is invalid",
+  )
+  requirePattern(bindings.source_sha, SOURCE_SHA, "expected lean upgrade waiver source")
+  requireValue(value.source_sha === bindings.source_sha, "lean upgrade waiver source does not match")
+  requirePattern(bindings.desktop_sha256, SHA256, "expected lean upgrade waiver Desktop SHA-256")
+  requireValue(value.desktop_sha256 === bindings.desktop_sha256, "lean upgrade waiver Desktop digest does not match")
+  exactKeys(
+    value.failed_evidence,
+    ["run_attempt", "run_id", "source_sha", "stage"],
+    "lean upgrade waiver failed evidence",
+  )
+  requireValue(
+    value.failed_evidence.source_sha === ACCEPTED_FAILED_UPGRADE_SOURCE_SHA &&
+      value.failed_evidence.run_id === ACCEPTED_FAILED_UPGRADE_RUN_ID &&
+      value.failed_evidence.run_attempt === 1 &&
+      value.failed_evidence.stage === "CANDIDATE_RECOVERY",
+    "lean upgrade waiver failed evidence is invalid",
+  )
+  exactKeys(value.github, ["actor", "run_attempt", "run_id"], "lean upgrade waiver GitHub identity")
+  requirePattern(value.github.actor, GITHUB_ACTOR, "lean upgrade waiver GitHub actor")
+  requirePattern(bindings.run_id, POSITIVE_DECIMAL, "expected lean upgrade waiver run ID")
+  requirePattern(bindings.run_attempt, POSITIVE_DECIMAL, "expected lean upgrade waiver run attempt")
+  requireValue(
+    Number.isSafeInteger(value.github.run_id) && String(value.github.run_id) === bindings.run_id,
+    "lean upgrade waiver run ID does not match",
+  )
+  requireValue(
+    Number.isSafeInteger(value.github.run_attempt) && String(value.github.run_attempt) === bindings.run_attempt,
+    "lean upgrade waiver run attempt does not match",
+  )
+  requireTimestamp(value.completed_at, "lean upgrade waiver completion")
+  requireValue(!/opencode/iu.test(canonicalLeanJson(value)), "lean upgrade waiver contains a forbidden public identity")
+  return structuredClone(value)
+}
+
 function validateArtifact(value, expectedKey, manifest, filenames, attestationFilenames) {
   exactKeys(
     value,
@@ -437,7 +526,11 @@ function expectedArtifactIdentity(key, manifest) {
     }
   }
   if (key === "upgrade-rollback-windows-x64") {
-    return { platform: "windows", arch: "x64", signing: "acceptance-receipt" }
+    return {
+      platform: "windows",
+      arch: "x64",
+      signing: manifest.upgrade_gate_result === "PASS" ? "acceptance-receipt" : "owner-waiver-receipt",
+    }
   }
   if (key === "cli-bharatcode") return { platform: "npm", arch: "universal", signing: "not-applicable" }
   const platform = key.includes("-darwin-") ? "macos" : key.includes("-windows-") ? "windows" : "linux"

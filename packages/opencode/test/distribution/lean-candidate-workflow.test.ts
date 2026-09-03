@@ -34,7 +34,7 @@ const reviewedSecurityStepSha256 = {
   windowsUnsigned: "a3c024ac9c6087fca041b9d2aeeab56f59e5086557e1dbb56169846d701f5c6d",
 } as const
 const acceptedApplicationSourceSha = "80c962f4148db531c35abcf4922059d2101c9bcd"
-const acceptedReleaseParentSha = "51210073a4724ee6222b7c71c01d59f16b3a180e"
+const acceptedReleaseParentSha = "70a1a462dbbfcb2d2fc6485592520ae2342b7e07"
 const wslRunnerLabel = "bharatcode-acceptance-${{ github.run_id }}-${{ github.run_attempt }}"
 const frozenWslPaths = [
   "packages/desktop/electron-builder.config.ts",
@@ -194,9 +194,9 @@ const internalWslInputs = [
 ]
 const releaseControlDeltaPaths = [
   ".github/workflows/bharatcode-next-beta-candidate.yml",
-  "packages/desktop/scripts/lean-upgrade-acceptance.mjs",
-  "packages/desktop/scripts/lean-upgrade-acceptance.test.ts",
+  "packages/opencode/script/lean-cohort.mjs",
   "packages/opencode/test/distribution/lean-candidate-workflow.test.ts",
+  "packages/opencode/test/distribution/lean-cohort.test.ts",
   "packages/opencode/test/distribution/preliminary-unsigned-wsl-workflow.test.ts",
 ] as const
 
@@ -432,6 +432,37 @@ function runWorkflowWaiverFixture(run: string) {
   }
 }
 
+function runWorkflowUpgradeWaiverFixture(run: string) {
+  const script = bunEvalScripts(run).find((value) => value.includes("validateLeanUpgradeWaiver"))
+  if (!script) throw new Error("workflow upgrade-waiver implementation is missing")
+  const root = mkdtempSync(resolve(process.env.TMPDIR ?? tmpdir(), "lean-workflow-upgrade-waiver-"))
+  try {
+    mkdirSync(resolve(root, "candidate-input"))
+    writeFileSync(resolve(root, "candidate-input/bharatcode-desktop-next-beta-win-x64.exe"), "MZ-waiver-fixture")
+    symlinkSync(resolve(import.meta.dir, "../../../../packages"), resolve(root, "packages"), "dir")
+    const execution = Bun.spawnSync(["bun", "--eval", script], {
+      cwd: root,
+      env: {
+        ...process.env,
+        ACCEPTED_APPLICATION_SOURCE_SHA: "80c962f4148db531c35abcf4922059d2101c9bcd",
+        GITHUB_ACTOR_VALUE: "release-fixture",
+        GITHUB_RUN_ATTEMPT: "2",
+        GITHUB_RUN_ID: "123456789",
+        SOURCE_SHA: "a".repeat(40),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    const receiptPath = resolve(root, "bharatcode-upgrade-rollback-waiver-windows-x64.json")
+    return {
+      ...execution,
+      receipt: execution.exitCode === 0 ? JSON.parse(readFileSync(receiptPath, "utf8")) : undefined,
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+}
+
 function runWorkflowCohortFixture(run: string, releaseStage?: string, updaterPrepare?: string) {
   const script = bunEvalScripts(run).find((value) => value.includes("validateLeanCohort"))
   if (!script) throw new Error("workflow cohort implementation is missing")
@@ -516,51 +547,30 @@ function runWorkflowCohortFixture(run: string, releaseStage?: string, updaterPre
     const runtimeManifestPath = resolve(input, "bharatcode-wsl-runtime-manifest.json")
     writeFileSync(runtimeManifestPath, '{"schema":1}\n')
     const digest = (path: string) => new Bun.CryptoHasher("sha256").update(readFileSync(path)).digest("hex")
-    const currentBeta = parseCurrentBetaFixtureBytes(
-      new Uint8Array(readFileSync(resolve(packages, "desktop/test/fixtures/current-beta-windows-x64.json"))),
-    )
     const candidate = {
       key: "desktop-windows-x64",
       filename: windowsName,
       bytes: readFileSync(windowsPath).byteLength,
       sha256: digest(windowsPath),
     }
-    const checks = Object.fromEntries(
-      [
-        "bharatcode_runtime_only",
-        "candidate_installed_over_beta",
-        "candidate_started",
-        "current_beta_download_verified",
-        "current_beta_installed",
-        "eligible_state_preserved",
-        "eligible_state_seeded",
-        "migration_source_preserved",
-        "recovery_evidence_preserved",
-        "rollback_installed",
-        "rollback_state_structurally_valid",
-        "share_network_attempt_absent",
-        "sharenext_absent",
-      ].map((key) => [key, true]),
-    )
-    const upgradeName = "bharatcode-upgrade-rollback-windows-x64.json"
+    const upgradeName = "bharatcode-upgrade-rollback-waiver-windows-x64.json"
     writeSubject(
       upgradeName,
       canonicalLeanJson({
-        schema: "bharatcode-lean-upgrade-rollback-receipt-v1",
-        result: "PASS",
-        repository: currentBeta.repository,
+        schema: "bharatcode-windows-upgrade-rollback-waiver-v1",
+        result: "OWNER_WAIVED",
+        reason: "WINDOWS_UPGRADE_ROLLBACK_ACCEPTANCE_WAIVED_BY_OWNER_FOR_1_15_24",
+        obligation: "POST_RELEASE_MANUAL_UPGRADE_ROLLBACK_TEST_REQUIRED",
+        accepted_application_source_sha: "80c962f4148db531c35abcf4922059d2101c9bcd",
         source_sha: sourceSha,
-        candidate_tag: `next-beta-${sourceSha.slice(0, 12)}`,
-        github: { run_id: runId, run_attempt: runAttempt },
-        host: { os: "windows", arch: "x64", runner_image: "windows-2025" },
-        current_beta: {
-          release_id: currentBeta.release_id,
-          tag: currentBeta.tag,
-          source_sha: currentBeta.source_sha,
-          asset: currentBeta.assets[0],
+        desktop_sha256: candidate.sha256,
+        failed_evidence: {
+          source_sha: "70a1a462dbbfcb2d2fc6485592520ae2342b7e07",
+          run_id: 33804419459,
+          run_attempt: 1,
+          stage: "CANDIDATE_RECOVERY",
         },
-        candidate,
-        checks,
+        github: { actor: "release-fixture", run_id: Number(runId), run_attempt: Number(runAttempt) },
         completed_at: "2026-09-01T10:00:00.000Z",
       }),
     )
@@ -592,6 +602,7 @@ function runWorkflowCohortFixture(run: string, releaseStage?: string, updaterPre
         WORKFLOW_PATH: ".github/workflows/bharatcode-next-beta-candidate.yml",
         RELEASE_TAG: "desktop-beta-1.15.24",
         WSL_ACCEPTANCE_MODE: "owner-waived-hotfix-1.15.24",
+        UPGRADE_ACCEPTANCE_MODE: "owner-waived-hotfix-1.15.24",
       },
       stdout: "pipe",
       stderr: "pipe",
@@ -1084,7 +1095,9 @@ function upgradeValidationViolations(value: string) {
     "parseLeanUpgradeReceiptBytes(new Uint8Array",
     `const currentBetaFixturePath = "${currentBetaFixture}"`,
     "const currentBeta = parseCurrentBetaFixtureBytes",
-    'const upgradePath = one("bharatcode-upgrade-rollback-windows-x64.json")',
+    'const upgradeGateResult = process.env.UPGRADE_ACCEPTANCE_MODE === "required" ? "PASS" : "OWNER_WAIVED"',
+    "const upgradePath = one(upgradeFilename)",
+    "validateLeanUpgradeWaiver",
     "source_sha: process.env.SOURCE_SHA",
     "run_id: process.env.GITHUB_RUN_ID",
     "run_attempt: process.env.GITHUB_RUN_ATTEMPT",
@@ -1382,11 +1395,20 @@ describe("lean next-beta candidate workflow", () => {
     expect(Object.keys(workflow.on.workflow_dispatch.inputs)).toEqual([
       "source_sha",
       "wsl_acceptance_mode",
+      "upgrade_acceptance_mode",
       "publish_release",
       "notify_website",
     ])
     expect(workflow.on.workflow_dispatch.inputs.wsl_acceptance_mode).toEqual({
       description: "Require formal WSL2 automation, or record a fresh owner-authorized 1.15.24 waiver",
+      required: true,
+      default: "required",
+      type: "choice",
+      options: ["required", "owner-waived-hotfix-1.15.24"],
+    })
+    expect(workflow.on.workflow_dispatch.inputs.upgrade_acceptance_mode).toEqual({
+      description:
+        "Require packaged Windows upgrade/rollback automation, or record the owner-authorized 1.15.24 waiver",
       required: true,
       default: "required",
       type: "choice",
@@ -1463,6 +1485,7 @@ describe("lean next-beta candidate workflow", () => {
         "package-macos",
         "package-windows",
         "publish-release",
+        "record-upgrade-waiver",
         "record-wsl-waiver",
         "upgrade-rollback-windows-x64",
       ].sort(),
@@ -1477,12 +1500,13 @@ describe("lean next-beta candidate workflow", () => {
         "package-macos",
         "package-windows",
         "record-wsl-waiver",
+        "record-upgrade-waiver",
         "upgrade-rollback-windows-x64",
       ].sort(),
     )
     for (const key of REQUIRED_COHORT_KEYS) expect(value).toContain(key)
     expect(value).toContain("bharatcode-next-beta-cohort.json")
-    expect(value).toContain("bharatcode-next-beta-cohort-v2")
+    expect(value).toContain("bharatcode-next-beta-cohort-v3")
     expect(value).toContain("canonicalLeanJson")
     expect(value).toContain("validateLeanCohort")
     expect(value).toContain("github.run_id")
@@ -1884,14 +1908,46 @@ describe("lean next-beta candidate workflow", () => {
     expect(waiver.receipt?.source_sha).toBe("a".repeat(40))
   })
 
+  test("records the one-release upgrade waiver without claiming upgrade acceptance passed", async () => {
+    const value = await source()
+    const workflow = parse(value)
+    expect(workflow.jobs["record-upgrade-waiver"].if).toBe(
+      "inputs.upgrade_acceptance_mode == 'owner-waived-hotfix-1.15.24'",
+    )
+    expect(workflow.jobs["upgrade-rollback-windows-x64"].if).toBe("inputs.upgrade_acceptance_mode == 'required'")
+    const cohortCondition = workflow.jobs["assemble-cohort"].if ?? ""
+    expect(cohortCondition).toContain(
+      "inputs.upgrade_acceptance_mode == 'required' && needs.upgrade-rollback-windows-x64.result == 'success' && needs.record-upgrade-waiver.result == 'skipped'",
+    )
+    expect(cohortCondition).toContain(
+      "inputs.upgrade_acceptance_mode == 'owner-waived-hotfix-1.15.24' && needs.upgrade-rollback-windows-x64.result == 'skipped' && needs.record-upgrade-waiver.result == 'success'",
+    )
+    const run = runStep(value, "record-upgrade-waiver", "Record exact owner-authorized Windows upgrade waiver")
+    expect(run).toContain('result: "OWNER_WAIVED"')
+    expect(run).toContain('reason: "WINDOWS_UPGRADE_ROLLBACK_ACCEPTANCE_WAIVED_BY_OWNER_FOR_1_15_24"')
+    expect(run).toContain('obligation: "POST_RELEASE_MANUAL_UPGRADE_ROLLBACK_TEST_REQUIRED"')
+    expect(run).toContain('source_sha: "70a1a462dbbfcb2d2fc6485592520ae2342b7e07"')
+    expect(run).toContain("run_id: 33804419459")
+    expect(run).toContain('stage: "CANDIDATE_RECOVERY"')
+    expect(run).toContain("validateLeanUpgradeWaiver")
+    expect(run).not.toContain('result: "PASS"')
+    const waiver = runWorkflowUpgradeWaiverFixture(run)
+    expect(waiver.exitCode).toBe(0)
+    expect(waiver.receipt?.result).toBe("OWNER_WAIVED")
+    expect(waiver.receipt?.failed_evidence.stage).toBe("CANDIDATE_RECOVERY")
+    expect(waiver.receipt?.source_sha).toBe("a".repeat(40))
+  })
+
   test("attests exactly every cohort subject while excluding closed internal WSL inputs", async () => {
     const value = await source()
     const run = runStep(value, "assemble-cohort", "Verify every artifact attestation against exact source and signer")
-    expect(bashArray(run, "cohort_subjects")).toEqual(cohortSubjectNames.slice(0, -1))
+    expect(bashArray(run, "cohort_subjects")).toEqual(cohortSubjectNames.slice(0, -2))
     expect(cohortSubjectNames).toHaveLength(REQUIRED_COHORT_KEYS.length)
     expect(cohortSubjectNames).not.toContain("bharatcode-wsl-runtime-manifest.json")
     expect(run).toContain('cohort_subjects+=("bharatcode-wsl-scenarios-9-10.json")')
     expect(run).toContain('cohort_subjects+=("bharatcode-wsl-acceptance-waiver.json")')
+    expect(run).toContain('cohort_subjects+=("bharatcode-upgrade-rollback-windows-x64.json")')
+    expect(run).toContain('cohort_subjects+=("bharatcode-upgrade-rollback-waiver-windows-x64.json")')
     for (const internal of internalWslInputs) expect(run).toContain(`! -name '${internal}'`)
     expect(run).toContain('[[ "${#actual_subjects[@]}" -eq "${#cohort_subjects[@]}" ]]')
     expect(run.replace("! -name 'bharatcode-wsl-runtime-manifest.json'", "")).not.toContain(
@@ -1908,6 +1964,7 @@ describe("lean next-beta candidate workflow", () => {
     )
     expect(cohort.exitCode).toBe(0)
     expect(cohort.manifest?.wsl_gate_result).toBe("OWNER_WAIVED")
+    expect(cohort.manifest?.upgrade_gate_result).toBe("OWNER_WAIVED")
     expect(cohort.manifest?.artifacts).toHaveLength(REQUIRED_COHORT_KEYS.length)
     expect(cohort.checksum).toMatch(/^[0-9a-f]{64}  bharatcode-next-beta-cohort\.json\n$/u)
   })

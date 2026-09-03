@@ -6,6 +6,7 @@ import {
   canonicalLeanJson,
   parseLeanCohortBytes,
   validateLeanCohort,
+  validateLeanUpgradeWaiver,
   validateLeanUpdaterInfo,
   validateLeanWslWaiver,
 } from "../../script/lean-cohort.mjs"
@@ -15,14 +16,14 @@ const bindings = { source_sha: sourceSha, run_id: "123456789", run_attempt: "1" 
 const completedAt = "2026-07-20T10:00:00.000Z"
 const adapterPath = resolve(import.meta.dir, "../../script/preliminary-jit-evidence-cli.mjs")
 
-function signing(key: string, wslGateResult = "PASS") {
+function signing(key: string, wslGateResult = "PASS", upgradeGateResult = "PASS") {
   if (key === "desktop-windows-x64") return "unsigned"
   if (key.includes("blockmap") || key.includes("update-info")) return "not-applicable"
   if (key.startsWith("desktop-macos-")) return "apple-notarized-stapled"
   if (key === "wsl-gate") return wslGateResult === "PASS" ? "acceptance-receipt" : "owner-waiver-receipt"
-  if (key.endsWith("receipt") || key === "upgrade-rollback-windows-x64") {
-    return "acceptance-receipt"
-  }
+  if (key === "upgrade-rollback-windows-x64")
+    return upgradeGateResult === "PASS" ? "acceptance-receipt" : "owner-waiver-receipt"
+  if (key.endsWith("receipt")) return "acceptance-receipt"
   return "not-applicable"
 }
 
@@ -41,7 +42,7 @@ function arch(key: string) {
   return "x64"
 }
 
-function artifact(key: string, index: number, wslGateResult = "PASS") {
+function artifact(key: string, index: number, wslGateResult = "PASS", upgradeGateResult = "PASS") {
   const sha256 = index.toString(16).padStart(64, "0")
   const attestationSha256 = (index + 100).toString(16).padStart(64, "0")
   return {
@@ -67,19 +68,25 @@ function artifact(key: string, index: number, wslGateResult = "PASS") {
       subject_sha256: sha256,
       predicate_type: "https://slsa.dev/provenance/v1",
     },
-    signing: signing(key, wslGateResult),
+    signing: signing(key, wslGateResult, upgradeGateResult),
     completed_at: "2026-07-20T09:59:00.000Z",
   }
 }
 
-function manifest(wslGateResult = "PASS") {
-  const artifacts = REQUIRED_COHORT_KEYS.map((key, index) => artifact(key, index, wslGateResult))
+function manifest(wslGateResult = "PASS", upgradeGateResult = "PASS") {
+  const artifacts = REQUIRED_COHORT_KEYS.map((key, index) => artifact(key, index, wslGateResult, upgradeGateResult))
   const wslGate = artifacts.find((item) => item.key === "wsl-gate")!
   wslGate.filename =
     wslGateResult === "PASS" ? "bharatcode-wsl-scenarios-9-10.json" : "bharatcode-wsl-acceptance-waiver.json"
   wslGate.artifact_attestation.filename = `${wslGate.filename}.intoto.jsonl`
+  const upgradeGate = artifacts.find((item) => item.key === "upgrade-rollback-windows-x64")!
+  upgradeGate.filename =
+    upgradeGateResult === "PASS"
+      ? "bharatcode-upgrade-rollback-windows-x64.json"
+      : "bharatcode-upgrade-rollback-waiver-windows-x64.json"
+  upgradeGate.artifact_attestation.filename = `${upgradeGate.filename}.intoto.jsonl`
   return {
-    schema: "bharatcode-next-beta-cohort-v2",
+    schema: "bharatcode-next-beta-cohort-v3",
     repository: "BharatCode-ai/bharatcode-desktop",
     source_sha: sourceSha,
     candidate_tag: "desktop-beta-1.15.24",
@@ -90,6 +97,8 @@ function manifest(wslGateResult = "PASS") {
     workflow: ".github/workflows/bharatcode-next-beta-candidate.yml",
     run_id: bindings.run_id,
     run_attempt: bindings.run_attempt,
+    upgrade_gate_result: upgradeGateResult,
+    upgrade_receipt_sha256: upgradeGate.sha256,
     wsl_gate_result: wslGateResult,
     wsl_receipt_sha256: wslGate.sha256,
     artifacts,
@@ -111,6 +120,14 @@ describe("lean next-beta cohort contract", () => {
     const gate = value.artifacts.find((item) => item.key === "wsl-gate")!
     expect(gate.signing).toBe("owner-waiver-receipt")
     expect(gate.filename).toBe("bharatcode-wsl-acceptance-waiver.json")
+  })
+
+  test("accepts an explicit upgrade waiver without claiming upgrade acceptance", () => {
+    const value = manifest("OWNER_WAIVED", "OWNER_WAIVED")
+    expect(validateLeanCohort(value, bindings)).toEqual(value)
+    const gate = value.artifacts.find((item) => item.key === "upgrade-rollback-windows-x64")!
+    expect(gate.signing).toBe("owner-waiver-receipt")
+    expect(gate.filename).toBe("bharatcode-upgrade-rollback-waiver-windows-x64.json")
   })
 
   test("validates the policy-bound cohort through the host-controller stdin adapter", async () => {
@@ -135,8 +152,8 @@ describe("lean next-beta cohort contract", () => {
     duplicate.stdin.write(
       JSON.stringify({
         raw: canonical.replace(
-          '"schema":"bharatcode-next-beta-cohort-v2"',
-          '"schema":"bharatcode-next-beta-cohort-v2","schema":"bharatcode-next-beta-cohort-v2"',
+          '"schema":"bharatcode-next-beta-cohort-v3"',
+          '"schema":"bharatcode-next-beta-cohort-v3","schema":"bharatcode-next-beta-cohort-v3"',
         ),
         identity: bindings,
       }),
@@ -154,7 +171,7 @@ describe("lean next-beta cohort contract", () => {
     )
     expect(() =>
       parseLeanCohortBytes(
-        Buffer.from('{"schema":"bharatcode-next-beta-cohort-v2","schema":"bharatcode-next-beta-cohort-v2"}'),
+        Buffer.from('{"schema":"bharatcode-next-beta-cohort-v3","schema":"bharatcode-next-beta-cohort-v3"}'),
         bindings,
       ),
     ).toThrow(/canonical|duplicate|keys/i)
@@ -331,6 +348,8 @@ describe("lean next-beta cohort contract", () => {
       },
       () => ({ ...manifest(), wsl_receipt_sha256: "f".repeat(64) }),
       () => ({ ...manifest(), wsl_gate_result: "OWNER_WAIVED" }),
+      () => ({ ...manifest(), upgrade_receipt_sha256: "f".repeat(64) }),
+      () => ({ ...manifest(), upgrade_gate_result: "OWNER_WAIVED" }),
       () => ({ ...manifest(), wsl_runtime_version: "1.15.20" }),
       () => ({ ...manifest(), cli_version: "1.15.10-01" }),
       () => {
@@ -369,6 +388,42 @@ describe("lean next-beta cohort contract", () => {
       { ...receipt, extra: true },
     ]) {
       expect(() => validateLeanWslWaiver(hostile, expected)).toThrow()
+    }
+  })
+
+  test("accepts only the exact owner-authorized 1.15.24 upgrade waiver record", () => {
+    const desktopSha256 = "d".repeat(64)
+    const receipt = {
+      schema: "bharatcode-windows-upgrade-rollback-waiver-v1",
+      result: "OWNER_WAIVED",
+      reason: "WINDOWS_UPGRADE_ROLLBACK_ACCEPTANCE_WAIVED_BY_OWNER_FOR_1_15_24",
+      obligation: "POST_RELEASE_MANUAL_UPGRADE_ROLLBACK_TEST_REQUIRED",
+      accepted_application_source_sha: "80c962f4148db531c35abcf4922059d2101c9bcd",
+      source_sha: sourceSha,
+      desktop_sha256: desktopSha256,
+      failed_evidence: {
+        source_sha: "70a1a462dbbfcb2d2fc6485592520ae2342b7e07",
+        run_id: 33804419459,
+        run_attempt: 1,
+        stage: "CANDIDATE_RECOVERY",
+      },
+      github: { actor: "release-owner", run_id: 123456789, run_attempt: 1 },
+      completed_at: completedAt,
+    }
+    const expected = { ...bindings, desktop_sha256: desktopSha256 }
+    expect(validateLeanUpgradeWaiver(receipt, expected)).toEqual(receipt)
+    for (const hostile of [
+      { ...receipt, result: "PASS" },
+      { ...receipt, reason: "AUTOMATED_PASS" },
+      { ...receipt, obligation: "NONE" },
+      { ...receipt, source_sha: "0".repeat(40) },
+      { ...receipt, desktop_sha256: "0".repeat(64) },
+      { ...receipt, failed_evidence: { ...receipt.failed_evidence, run_id: 1 } },
+      { ...receipt, failed_evidence: { ...receipt.failed_evidence, stage: "PROCESS_EXIT" } },
+      { ...receipt, github: { actor: "release-owner", run_id: 123456788, run_attempt: 1 } },
+      { ...receipt, extra: true },
+    ]) {
+      expect(() => validateLeanUpgradeWaiver(hostile, expected)).toThrow()
     }
   })
 
