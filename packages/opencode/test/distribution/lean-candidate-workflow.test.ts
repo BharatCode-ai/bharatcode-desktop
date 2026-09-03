@@ -34,7 +34,7 @@ const reviewedSecurityStepSha256 = {
   windowsUnsigned: "a3c024ac9c6087fca041b9d2aeeab56f59e5086557e1dbb56169846d701f5c6d",
 } as const
 const acceptedApplicationSourceSha = "80c962f4148db531c35abcf4922059d2101c9bcd"
-const acceptedReleaseParentSha = "70a1a462dbbfcb2d2fc6485592520ae2342b7e07"
+const acceptedReleaseParentSha = "b58ba1a1fca7fa331777253490aa8c4a01b3e92f"
 const wslRunnerLabel = "bharatcode-acceptance-${{ github.run_id }}-${{ github.run_attempt }}"
 const frozenWslPaths = [
   "packages/desktop/electron-builder.config.ts",
@@ -195,6 +195,7 @@ const internalWslInputs = [
 const releaseControlDeltaPaths = [
   ".github/workflows/bharatcode-next-beta-candidate.yml",
   "packages/opencode/script/lean-cohort.mjs",
+  "packages/opencode/test/distribution/fixtures/beta-linux.producer.yml",
   "packages/opencode/test/distribution/lean-candidate-workflow.test.ts",
   "packages/opencode/test/distribution/lean-cohort.test.ts",
   "packages/opencode/test/distribution/preliminary-unsigned-wsl-workflow.test.ts",
@@ -498,7 +499,13 @@ function runWorkflowCohortFixture(run: string, releaseStage?: string, updaterPre
       version: desktopVersion,
       files: entries.map(([sourceName, publicName]) => {
         const path = resolve(input, publicName)
-        return { url: sourceName, sha512: sha512(path), size: readFileSync(path).byteLength }
+        const size = readFileSync(path).byteLength
+        return {
+          url: sourceName,
+          sha512: sha512(path),
+          size,
+          ...(sourceName.endsWith(".AppImage") ? { blockMapSize: Math.max(1, Math.floor(size / 2)) } : {}),
+        }
       }),
       path: entries[0][0],
       sha512: sha512(resolve(input, entries[0][1])),
@@ -522,8 +529,8 @@ function runWorkflowCohortFixture(run: string, releaseStage?: string, updaterPre
       resolve(input, "beta-linux.producer.yml"),
       Bun.YAML.stringify(
         updaterInfo([
-          ["bharatcode-desktop-linux-x64.AppImage", "bharatcode-desktop-next-beta-linux-x64.AppImage"],
-          ["bharatcode-desktop-linux-x64.deb", "bharatcode-desktop-next-beta-linux-x64.deb"],
+          ["bharatcode-desktop-linux-x86_64.AppImage", "bharatcode-desktop-next-beta-linux-x64.AppImage"],
+          ["bharatcode-desktop-linux-amd64.deb", "bharatcode-desktop-next-beta-linux-x64.deb"],
         ]),
       ),
     )

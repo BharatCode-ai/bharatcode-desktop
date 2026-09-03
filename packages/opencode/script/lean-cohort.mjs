@@ -98,9 +98,18 @@ export function validateLeanUpdaterInfo(value, bindings) {
   }
   const actualBySource = new Map()
   for (const file of value.files) {
-    exactKeys(file, ["sha512", "size", "url"], `${bindings.label} file`)
-    const expected = expectedBySource.get(file.url)
+    const expected = expectedBySource.get(file?.url)
     requireValue(expected !== undefined, `${bindings.label} source URL does not match`)
+    const appImage = expected.source_url.endsWith(".AppImage")
+    requireValue(
+      expected.public_url.endsWith(".AppImage") === appImage,
+      `${bindings.label} AppImage binding does not match`,
+    )
+    exactKeys(
+      file,
+      appImage ? ["blockMapSize", "sha512", "size", "url"] : ["sha512", "size", "url"],
+      `${bindings.label} file`,
+    )
     requireValue(!actualBySource.has(file.url), `${bindings.label} source URL is duplicated`)
     requireFilename(expected.source_url, `${bindings.label} source URL`)
     requireFilename(expected.public_url, `${bindings.label} public URL`)
@@ -112,12 +121,23 @@ export function validateLeanUpdaterInfo(value, bindings) {
     requireValue(file.url === expected.source_url, `${bindings.label} source URL does not match`)
     requireValue(file.size === expected.bytes, `${bindings.label} file size does not match`)
     requireValue(file.sha512 === expected.sha512, `${bindings.label} file SHA-512 does not match`)
+    if (appImage) {
+      requireValue(
+        Number.isSafeInteger(file.blockMapSize) && file.blockMapSize > 0 && file.blockMapSize < file.size,
+        `${bindings.label} AppImage block-map size is invalid`,
+      )
+    }
     actualBySource.set(file.url, file)
   }
   requireValue(actualBySource.size === expectedBySource.size, `${bindings.label} file set is incomplete`)
   const normalizedFiles = bindings.files.map((expected) => {
     const file = actualBySource.get(expected.source_url)
-    return { url: expected.public_url, sha512: file.sha512, size: file.size }
+    return {
+      url: expected.public_url,
+      sha512: file.sha512,
+      size: file.size,
+      ...(expected.source_url.endsWith(".AppImage") ? { blockMapSize: file.blockMapSize } : {}),
+    }
   })
   requireValue(value.path === value.files[0].url, `${bindings.label} legacy path does not match`)
   requireValue(value.sha512 === value.files[0].sha512, `${bindings.label} legacy SHA-512 does not match`)

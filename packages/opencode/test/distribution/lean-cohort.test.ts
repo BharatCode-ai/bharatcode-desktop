@@ -308,22 +308,27 @@ describe("lean next-beta cohort contract", () => {
       version: "1.15.24",
       files: [
         {
-          source_url: "bharatcode-desktop-linux-x64.AppImage",
+          source_url: "bharatcode-desktop-linux-x86_64.AppImage",
           public_url: "bharatcode-desktop-next-beta-linux-x64.AppImage",
           bytes: 100,
           sha512: appimageSha512,
         },
         {
-          source_url: "bharatcode-desktop-linux-x64.deb",
+          source_url: "bharatcode-desktop-linux-amd64.deb",
           public_url: "bharatcode-desktop-next-beta-linux-x64.deb",
           bytes: 200,
           sha512: debSha512,
         },
       ],
     }
-    const appimage = { url: updaterBindings.files[0].source_url, sha512: appimageSha512, size: 100 }
+    const appimage = {
+      url: updaterBindings.files[0].source_url,
+      sha512: appimageSha512,
+      size: 100,
+      blockMapSize: 25,
+    }
     const deb = { url: updaterBindings.files[1].source_url, sha512: debSha512, size: 200 }
-    const metadata = (files: Array<typeof appimage>) => ({
+    const metadata = (files: Array<typeof appimage | typeof deb>) => ({
       version: "1.15.24",
       files,
       path: files[0].url,
@@ -335,8 +340,74 @@ describe("lean next-beta cohort contract", () => {
     expect(normalized.files.map((file: { url: string }) => file.url)).toEqual(
       updaterBindings.files.map((file) => file.public_url),
     )
+    expect(normalized.files[0].blockMapSize).toBe(25)
     expect(() => validateLeanUpdaterInfo(metadata([appimage]), updaterBindings)).toThrow(/incomplete/i)
     expect(() => validateLeanUpdaterInfo(metadata([appimage, appimage]), updaterBindings)).toThrow(/duplicated/i)
+  })
+
+  test("preserves the exact electron-builder Linux AppImage block-map contract", async () => {
+    const value = Bun.YAML.parse(
+      await Bun.file(new URL("./fixtures/beta-linux.producer.yml", import.meta.url)).text(),
+    ) as {
+      version: string
+      files: Array<Record<string, unknown>>
+      path: string
+      sha512: string
+      releaseDate: string
+    }
+    const updaterBindings = {
+      label: "Linux beta updater",
+      version: "1.15.24",
+      files: [
+        {
+          source_url: "bharatcode-desktop-linux-x86_64.AppImage",
+          public_url: "bharatcode-desktop-next-beta-linux-x64.AppImage",
+          bytes: 198867861,
+          sha512: "tvYE5dezbYw1wP+ou7vqvZdEbCO4t/sXmJwmefolqB70PVoA+jtM+8r2oO06RgUqck4ZqKuxw6r2MOFLpBK42Q==",
+        },
+        {
+          source_url: "bharatcode-desktop-linux-amd64.deb",
+          public_url: "bharatcode-desktop-next-beta-linux-x64.deb",
+          bytes: 153157516,
+          sha512: "EfxyIxwab2gTxQXOBuhPf2uKDFkQiUfl7z6gfyF43Fqq9w7qXCuYNMAbnpzxcGNsVlxUyWtM6TSLas4HpCcBoQ==",
+        },
+      ],
+    }
+
+    expect(validateLeanUpdaterInfo(value, updaterBindings)).toEqual({
+      version: "1.15.24",
+      files: [
+        {
+          url: "bharatcode-desktop-next-beta-linux-x64.AppImage",
+          sha512: updaterBindings.files[0].sha512,
+          size: 198867861,
+          blockMapSize: 207785,
+        },
+        {
+          url: "bharatcode-desktop-next-beta-linux-x64.deb",
+          sha512: updaterBindings.files[1].sha512,
+          size: 153157516,
+        },
+      ],
+      path: "bharatcode-desktop-next-beta-linux-x64.AppImage",
+      sha512: updaterBindings.files[0].sha512,
+      releaseDate: "2026-09-03T21:42:49.107Z",
+    })
+
+    const appimage = value.files[0]!
+    const deb = value.files[1]!
+    const withoutBlockMap = { ...appimage }
+    delete withoutBlockMap.blockMapSize
+    for (const files of [
+      [withoutBlockMap, deb],
+      [{ ...appimage, unknown: true }, deb],
+      [{ ...appimage, blockMapSize: "207785" }, deb],
+      [{ ...appimage, blockMapSize: 0 }, deb],
+      [{ ...appimage, blockMapSize: 198867861 }, deb],
+      [appimage, { ...deb, blockMapSize: 1 }],
+    ]) {
+      expect(() => validateLeanUpdaterInfo({ ...value, files }, updaterBindings)).toThrow()
+    }
   })
 
   test("rejects incomplete receipt records, wrong WSL binding, version drift, and late artifact completion", () => {

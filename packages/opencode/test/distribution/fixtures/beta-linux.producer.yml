@@ -1,0 +1,12 @@
+version: 1.15.24
+files:
+  - url: bharatcode-desktop-linux-x86_64.AppImage
+    sha512: tvYE5dezbYw1wP+ou7vqvZdEbCO4t/sXmJwmefolqB70PVoA+jtM+8r2oO06RgUqck4ZqKuxw6r2MOFLpBK42Q==
+    size: 198867861
+    blockMapSize: 207785
+  - url: bharatcode-desktop-linux-amd64.deb
+    sha512: EfxyIxwab2gTxQXOBuhPf2uKDFkQiUfl7z6gfyF43Fqq9w7qXCuYNMAbnpzxcGNsVlxUyWtM6TSLas4HpCcBoQ==
+    size: 153157516
+path: bharatcode-desktop-linux-x86_64.AppImage
+sha512: tvYE5dezbYw1wP+ou7vqvZdEbCO4t/sXmJwmefolqB70PVoA+jtM+8r2oO06RgUqck4ZqKuxw6r2MOFLpBK42Q==
+releaseDate: "2026-09-03T21:42:49.107Z"
