@@ -61,8 +61,10 @@ export function FormatError(input: unknown): string | undefined {
     const suggestions = Array.isArray(providerModelNotFound.suggestions)
       ? providerModelNotFound.suggestions.filter((x) => typeof x === "string")
       : []
+    const reason = stringField(providerModelNotFound, "reason")?.trim()
     return [
-      `Model not found: ${stringField(providerModelNotFound, "providerID")}/${stringField(providerModelNotFound, "modelID")}`,
+      reason ||
+        `Model not found: ${stringField(providerModelNotFound, "providerID")}/${stringField(providerModelNotFound, "modelID")}`,
       ...(suggestions.length ? ["Did you mean: " + suggestions.join(", ")] : []),
       `Try: \`opencode models\` to list available models`,
       `Or check your config (opencode.json) provider/model names`,

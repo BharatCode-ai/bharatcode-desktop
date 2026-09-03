@@ -1,5 +1,6 @@
 import type { Hooks } from "@opencode-ai/plugin"
 import { Context, Effect, Layer, Schema } from "effect"
+import { BharatCodeModel } from "@/bharatcode/model"
 
 export const PROVIDER_ID = "bharatcode"
 
@@ -61,6 +62,14 @@ export function recoveryMessage(source: unknown) {
   if (source === "provider_configuration") {
     return `${ONLY_BHARATCODE} Provider endpoints, packages, credentials, and models are product-managed; remove provider overrides from \`bharatcode.json\`.`
   }
+  if (
+    source === "default_model" ||
+    source === "small_model" ||
+    source === "agent_model" ||
+    source === "command_model"
+  ) {
+    return BharatCodeModel.recoveryMessage()
+  }
   return `${ONLY_BHARATCODE} Sign in, run \`bharatcode models\`, and remove unsupported provider or model entries from \`bharatcode.json\`.`
 }
 
@@ -78,8 +87,10 @@ function modelProvider(value: unknown) {
 }
 
 function modelViolation(value: unknown, source: ViolationSource) {
+  if (value === undefined) return
+  if (value === BharatCodeModel.CODING_MODEL) return
   const providerID = modelProvider(value)
-  if (!providerID || providerID === PROVIDER_ID) return
+  if (!providerID) return
   return violation(providerID, source)
 }
 

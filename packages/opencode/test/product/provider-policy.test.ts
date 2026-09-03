@@ -2,17 +2,21 @@ import { describe, expect, test } from "bun:test"
 import type { Hooks } from "@opencode-ai/plugin"
 import { ProductPolicy } from "@/product/policy"
 import { BharatCodeCatalog } from "@/bharatcode/catalog"
+import { BharatCodeModel } from "@/bharatcode/model"
 import { Provider } from "@/provider/provider"
+
+const CODING_MODEL_ID = "bharatcode:qwen36-35b-awq-200k"
+const CODING_MODEL = `bharatcode/${CODING_MODEL_ID}`
 
 describe("BharatCode shipped provider policy", () => {
   test("accepts only BharatCode provider configuration and model references", () => {
     expect(
       ProductPolicy.findConfigViolation({
         enabled_providers: ["bharatcode"],
-        model: "bharatcode/chat",
-        small_model: "bharatcode/small",
-        agent: { build: { model: "bharatcode/chat" } },
-        command: { review: { model: "bharatcode/chat" } },
+        model: CODING_MODEL,
+        small_model: CODING_MODEL,
+        agent: { build: { model: CODING_MODEL } },
+        command: { review: { model: CODING_MODEL } },
       }),
     ).toBeUndefined()
   })
@@ -29,6 +33,8 @@ describe("BharatCode shipped provider policy", () => {
     [{ agent: { build: { model: "google/gemini" } } }, "agent_model"],
     [{ mode: { plan: { model: "openrouter/model" } } }, "agent_model"],
     [{ command: { review: { model: "mistral/model" } } }, "command_model"],
+    [{ model: "bharatcode/bharatcode:qwen36-35b-q6-256k-vision" }, "default_model"],
+    [{ small_model: "bharatcode/bharatcode:qwen36-35b-q8-256k" }, "small_model"],
   ])("rejects unsupported config %#", (config, source) => {
     expect(ProductPolicy.findConfigViolation(config)).toMatchObject({ source })
     expect(ProductPolicy.findConfigViolation(config)).not.toHaveProperty("providerID")
@@ -60,27 +66,42 @@ describe("BharatCode shipped provider policy", () => {
     expect(error.message).not.toContain("openai")
   })
 
+  test("names the sole supported model without translating retired IDs", () => {
+    const error = ProductPolicy.findConfigViolation({
+      model: "bharatcode/bharatcode:qwen36-35b-q6-256k-vision",
+    })
+
+    expect(error?.message).toContain(CODING_MODEL)
+    expect(error?.message).toContain("not translated")
+    expect(BharatCodeModel.rejection("bharatcode:qwen36-35b-q8-256k")).toEqual({
+      suggestions: [CODING_MODEL_ID],
+      reason: BharatCodeModel.recoveryMessage(),
+    })
+    expect(BharatCodeModel.rejection(CODING_MODEL_ID)).toBeUndefined()
+  })
+
   test("maps only eligible live BharatCode records into the coding runtime", () => {
     const base: BharatCodeCatalog.Model = {
-      id: "coding-live",
+      id: CODING_MODEL_ID,
       ownedBy: "bharatcode",
-      modality: "chat",
+      modality: "vision_chat",
       endpoint: "/v1/chat/completions",
       protocol: "openai_chat_completions",
       runtime: "vllm",
       status: "live",
       displayName: "Coding Live",
-      metadata: { input: ["text"], output: ["text"], toolCalling: true },
-      contextWindow: 64_000,
-      maxOutputTokens: 8_000,
+      metadata: { input: ["text", "image"], output: ["text"], toolCalling: true, reasoning: true },
+      contextWindow: 200_000,
+      maxOutputTokens: 32_000,
     }
     expect(Provider.fromBharatCodeCatalogModel(base)).toMatchObject({
-      id: "coding-live",
+      id: CODING_MODEL_ID,
       providerID: "bharatcode",
       api: { url: "https://bharatcode.ai/api/model/v1" },
-      limit: { context: 64_000, output: 8_000 },
+      limit: { context: 200_000, output: 32_000 },
     })
     expect(Provider.fromBharatCodeCatalogModel({ ...base, protocol: "openai_responses" })).toBeUndefined()
+    expect(Provider.fromBharatCodeCatalogModel({ ...base, id: "bharatcode:qwen36-35b-q6-256k-vision" })).toBeUndefined()
   })
 
   test("keeps shipped command and v2 query sources free of generic public fallbacks", async () => {
