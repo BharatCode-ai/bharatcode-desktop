@@ -34,7 +34,7 @@ const reviewedSecurityStepSha256 = {
   windowsUnsigned: "a3c024ac9c6087fca041b9d2aeeab56f59e5086557e1dbb56169846d701f5c6d",
 } as const
 const acceptedApplicationSourceSha = "80c962f4148db531c35abcf4922059d2101c9bcd"
-const acceptedReleaseParentSha = "3d117b97e96af1d344a1629b7d3d3a034d290079"
+const acceptedReleaseParentSha = "7a3302264fa3a6db7a5649369b91ddce2a567bfa"
 const wslRunnerLabel = "bharatcode-acceptance-${{ github.run_id }}-${{ github.run_attempt }}"
 const frozenWslPaths = [
   "packages/desktop/electron-builder.config.ts",
@@ -1400,8 +1400,8 @@ describe("lean next-beta candidate workflow", () => {
       "source_sha",
       "wsl_acceptance_mode",
       "upgrade_acceptance_mode",
-      "publish_release",
-      "notify_website",
+      "publication_action",
+      "website_action",
     ])
     expect(workflow.on.workflow_dispatch.inputs.wsl_acceptance_mode).toEqual({
       description: "Require formal WSL2 automation, or record a fresh owner-authorized 1.15.24 waiver",
@@ -1417,6 +1417,20 @@ describe("lean next-beta candidate workflow", () => {
       default: "required",
       type: "choice",
       options: ["required", "owner-waived-hotfix-1.15.24"],
+    })
+    expect(workflow.on.workflow_dispatch.inputs.publication_action).toEqual({
+      description: "Finalize the complete immutable cohort as a public prerelease",
+      required: true,
+      default: "hold",
+      type: "choice",
+      options: ["hold", "publish"],
+    })
+    expect(workflow.on.workflow_dispatch.inputs.website_action).toEqual({
+      description: "Notify the website only after successful prerelease finalization",
+      required: true,
+      default: "hold",
+      type: "choice",
+      options: ["hold", "notify"],
     })
     expect(value).toContain("^[0-9a-f]{40}$")
     expect(value).toContain("github.ref == 'refs/heads/codex/desktop-1.15.24-release-control'")
@@ -2120,8 +2134,8 @@ describe("lean next-beta candidate workflow", () => {
     const value = await source()
     const workflow = parse(value)
     const publish = workflow.jobs["publish-release"] as (typeof workflow.jobs)[string] & { environment?: string }
-    expect(publish.if).toBe("github.event.inputs.publish_release == 'true'")
-    expect((publish as unknown as { needs: string }).needs).toBe("assemble-cohort")
+    expect(publish.if).toBe("needs.admit-source.outputs.publish_requested == 'true'")
+    expect((publish as unknown as { needs: string[] }).needs).toEqual(["admit-source", "assemble-cohort"])
     expect(publish.environment).toBe("desktop-beta-release")
     expect(publish.permissions).toEqual({ contents: "write" })
     const steps = publish.steps ?? []
@@ -2161,7 +2175,7 @@ describe("lean next-beta candidate workflow", () => {
     expect(createRun).toContain("--draft --prerelease")
     expect(createRun).toContain('[[ "${#assets[@]}" -eq 26 ]]')
     expect(createRun).not.toContain("--clobber")
-    expect(steps[notify]?.if).toBe("github.event.inputs.notify_website == 'true'")
+    expect(steps[notify]?.if).toBe("needs.admit-source.outputs.notify_requested == 'true'")
     expect(steps[notify]?.env).toEqual({ GH_TOKEN: "${{ secrets.BHARATCODE_WEBSITE_DISPATCH_TOKEN }}" })
     expect(steps[notify]?.run).toContain('"event_type": "desktop_release_published"')
     expect(value).not.toMatch(/gh\s+release\s+delete|git\s+push\s+.*--force/iu)
@@ -2189,32 +2203,60 @@ describe("lean next-beta candidate workflow", () => {
     expect(fixture.releaseAssets).toContain("beta-linux.yml")
   })
 
-  test("uses string-normalized workflow-dispatch booleans for publication authority", async () => {
-    const workflow = parse(await source())
+  test("admits closed publication choices once before mutation authority", async () => {
+    const value = await source()
+    const workflow = parse(value)
+    const admission = runStep(value, "admit-source", "Admit immutable source and source-derived versions")
+    const admitSource = workflow.jobs["admit-source"] as (typeof workflow.jobs)[string] & {
+      outputs?: Record<string, string>
+    }
     const publish = workflow.jobs["publish-release"] as (typeof workflow.jobs)[string]
     const notify = (publish.steps ?? []).find((step) => step.name === "Notify website after finalization")
-    const eventInputs = (payload: Record<string, unknown>) =>
-      Object.fromEntries(Object.entries(payload).map(([key, value]) => [key, String(value)]))
-    const enabled = (payload: Record<string, string>, key: string) => payload[key] === "true"
 
-    expect(publish.if).toBe("github.event.inputs.publish_release == 'true'")
-    expect(notify?.if).toBe("github.event.inputs.notify_website == 'true'")
+    expect(admitSource.outputs).toEqual({
+      candidate_tag: "${{ steps.identity.outputs.candidate_tag }}",
+      cli_version: "${{ steps.identity.outputs.cli_version }}",
+      desktop_version: "${{ steps.identity.outputs.desktop_version }}",
+      wsl_runtime_version: "${{ steps.identity.outputs.wsl_runtime_version }}",
+      publish_requested: "${{ steps.identity.outputs.publish_requested }}",
+      notify_requested: "${{ steps.identity.outputs.notify_requested }}",
+    })
+    expect(admission).toContain('[[ "$PUBLICATION_ACTION" == "hold" || "$PUBLICATION_ACTION" == "publish" ]]')
+    expect(admission).toContain('[[ "$WEBSITE_ACTION" == "hold" || "$WEBSITE_ACTION" == "notify" ]]')
+    expect(admission).toContain('[[ "$PUBLICATION_ACTION" == "publish" ]]')
+    expect(admission).toContain("publish_requested=false")
+    expect(admission).toContain("notify_requested=false")
+    expect(admission).toContain("publish_requested=true")
+    expect(admission).toContain("notify_requested=true")
+    expect(admission).toContain("printf 'publish_requested=%s\\n'")
+    expect(admission).toContain("printf 'notify_requested=%s\\n'")
+    expect(publish.if).toBe("needs.admit-source.outputs.publish_requested == 'true'")
+    expect(notify?.if).toBe("needs.admit-source.outputs.notify_requested == 'true'")
+    expect(value).not.toContain("inputs.publish_release")
+    expect(value).not.toContain("inputs.notify_website")
+    expect(value).not.toContain("github.event.inputs")
+    for (const legacy of ["publish_release:", "notify_website:"]) expect(value).not.toContain(legacy)
 
-    // gh workflow run -f sends strings; direct REST booleans are exposed through
-    // github.event.inputs using the same documented string-normalized contract.
-    expect(enabled({ publish_release: "true" }, "publish_release")).toBeTrue()
-    expect(enabled(eventInputs({ publish_release: true }), "publish_release")).toBeTrue()
-    for (const payload of [
-      {},
-      { publish_release: "false" },
-      eventInputs({ publish_release: false }),
-      { publish_release: "TRUE" },
-      { publish_release: "1" },
-    ]) {
-      expect(enabled(payload, "publish_release")).toBeFalse()
+    const admit = (publication: string | undefined, website: string | undefined) => {
+      if (!publication || !website) return undefined
+      if (!["hold", "publish"].includes(publication) || !["hold", "notify"].includes(website)) return undefined
+      if (website === "notify" && publication !== "publish") return undefined
+      return { publish_requested: publication === "publish", notify_requested: website === "notify" }
     }
-    const releaseWithoutWebsite = eventInputs({ publish_release: true, notify_website: false })
-    expect(enabled(releaseWithoutWebsite, "publish_release")).toBeTrue()
-    expect(enabled(releaseWithoutWebsite, "notify_website")).toBeFalse()
+    expect(admit("hold", "hold")).toEqual({ publish_requested: false, notify_requested: false })
+    expect(admit("publish", "hold")).toEqual({ publish_requested: true, notify_requested: false })
+    expect(admit("publish", "notify")).toEqual({ publish_requested: true, notify_requested: true })
+    for (const input of [
+      [undefined, "hold"],
+      ["hold", undefined],
+      ["hold", "notify"],
+      ["true", "hold"],
+      ["publish", "true"],
+      ["PUBLISH", "hold"],
+      ["publish", "NOTIFY"],
+      ["1", "hold"],
+    ] as const) {
+      expect(admit(input[0], input[1])).toBeUndefined()
+    }
   })
 })
