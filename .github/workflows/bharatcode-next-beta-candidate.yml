@@ -39,7 +39,7 @@ permissions:
 
 env:
   ACCEPTED_APPLICATION_SOURCE_SHA: 80c962f4148db531c35abcf4922059d2101c9bcd
-  ACCEPTED_RELEASE_PARENT_SHA: b58ba1a1fca7fa331777253490aa8c4a01b3e92f
+  ACCEPTED_RELEASE_PARENT_SHA: 3d117b97e96af1d344a1629b7d3d3a034d290079
   BHARATCODE_CHANNEL: beta
   PREVIOUS_RELEASE_TAG: desktop-beta-1.15.23
   RELEASE_TAG: desktop-beta-1.15.24
@@ -87,7 +87,7 @@ jobs:
           [[ "$(git status --porcelain)" == "" ]]
           git merge-base --is-ancestor "$ACCEPTED_APPLICATION_SOURCE_SHA" "$SOURCE_SHA"
           [[ "$(git rev-parse "$SOURCE_SHA^")" == "$ACCEPTED_RELEASE_PARENT_SHA" ]]
-          [[ "$(git diff --name-only "$ACCEPTED_RELEASE_PARENT_SHA" "$SOURCE_SHA")" == $'.github/workflows/bharatcode-next-beta-candidate.yml\npackages/opencode/script/lean-cohort.mjs\npackages/opencode/test/distribution/fixtures/beta-linux.producer.yml\npackages/opencode/test/distribution/lean-candidate-workflow.test.ts\npackages/opencode/test/distribution/lean-cohort.test.ts\npackages/opencode/test/distribution/preliminary-unsigned-wsl-workflow.test.ts' ]]
+          [[ "$(git diff --name-only "$ACCEPTED_RELEASE_PARENT_SHA" "$SOURCE_SHA")" == $'.github/workflows/bharatcode-next-beta-candidate.yml\npackages/opencode/test/distribution/lean-candidate-workflow.test.ts\npackages/opencode/test/distribution/preliminary-unsigned-wsl-workflow.test.ts' ]]
           [[ "$UPGRADE_ACCEPTANCE_MODE" == "required" || "$UPGRADE_ACCEPTANCE_MODE" == "owner-waived-hotfix-1.15.24" ]]
           [[ "$WSL_ACCEPTANCE_MODE" == "required" || "$WSL_ACCEPTANCE_MODE" == "owner-waived-hotfix-1.15.24" ]]
           grep -F '"packageManager": "bun@1.3.14"' package.json
@@ -1457,7 +1457,7 @@ jobs:
 
   publish-release:
     name: Publish complete immutable Desktop 1.15.24 cohort
-    if: inputs.publish_release == true
+    if: github.event.inputs.publish_release == 'true'
     needs: assemble-cohort
     runs-on: ubuntu-24.04
     environment: desktop-beta-release
@@ -1610,7 +1610,7 @@ jobs:
           while IFS= read -r url; do curl --fail --silent --show-error --head --location --proto '=https' --tlsv1.2 "$url" >/dev/null; done < release-urls.txt
 
       - name: Notify website after finalization
-        if: inputs.notify_website == true
+        if: github.event.inputs.notify_website == 'true'
         env:
           GH_TOKEN: ${{ secrets.BHARATCODE_WEBSITE_DISPATCH_TOKEN }}
         run: |

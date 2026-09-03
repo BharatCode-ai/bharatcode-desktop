@@ -34,7 +34,7 @@ const reviewedSecurityStepSha256 = {
   windowsUnsigned: "a3c024ac9c6087fca041b9d2aeeab56f59e5086557e1dbb56169846d701f5c6d",
 } as const
 const acceptedApplicationSourceSha = "80c962f4148db531c35abcf4922059d2101c9bcd"
-const acceptedReleaseParentSha = "b58ba1a1fca7fa331777253490aa8c4a01b3e92f"
+const acceptedReleaseParentSha = "3d117b97e96af1d344a1629b7d3d3a034d290079"
 const wslRunnerLabel = "bharatcode-acceptance-${{ github.run_id }}-${{ github.run_attempt }}"
 const frozenWslPaths = [
   "packages/desktop/electron-builder.config.ts",
@@ -194,10 +194,7 @@ const internalWslInputs = [
 ]
 const releaseControlDeltaPaths = [
   ".github/workflows/bharatcode-next-beta-candidate.yml",
-  "packages/opencode/script/lean-cohort.mjs",
-  "packages/opencode/test/distribution/fixtures/beta-linux.producer.yml",
   "packages/opencode/test/distribution/lean-candidate-workflow.test.ts",
-  "packages/opencode/test/distribution/lean-cohort.test.ts",
   "packages/opencode/test/distribution/preliminary-unsigned-wsl-workflow.test.ts",
 ] as const
 
@@ -2123,7 +2120,7 @@ describe("lean next-beta candidate workflow", () => {
     const value = await source()
     const workflow = parse(value)
     const publish = workflow.jobs["publish-release"] as (typeof workflow.jobs)[string] & { environment?: string }
-    expect(publish.if).toBe("inputs.publish_release == true")
+    expect(publish.if).toBe("github.event.inputs.publish_release == 'true'")
     expect((publish as unknown as { needs: string }).needs).toBe("assemble-cohort")
     expect(publish.environment).toBe("desktop-beta-release")
     expect(publish.permissions).toEqual({ contents: "write" })
@@ -2164,7 +2161,7 @@ describe("lean next-beta candidate workflow", () => {
     expect(createRun).toContain("--draft --prerelease")
     expect(createRun).toContain('[[ "${#assets[@]}" -eq 26 ]]')
     expect(createRun).not.toContain("--clobber")
-    expect(steps[notify]?.if).toBe("inputs.notify_website == true")
+    expect(steps[notify]?.if).toBe("github.event.inputs.notify_website == 'true'")
     expect(steps[notify]?.env).toEqual({ GH_TOKEN: "${{ secrets.BHARATCODE_WEBSITE_DISPATCH_TOKEN }}" })
     expect(steps[notify]?.run).toContain('"event_type": "desktop_release_published"')
     expect(value).not.toMatch(/gh\s+release\s+delete|git\s+push\s+.*--force/iu)
@@ -2190,5 +2187,34 @@ describe("lean next-beta candidate workflow", () => {
     expect(fixture.releaseAssets).toContain("beta.yml")
     expect(fixture.releaseAssets).toContain("beta-mac.yml")
     expect(fixture.releaseAssets).toContain("beta-linux.yml")
+  })
+
+  test("uses string-normalized workflow-dispatch booleans for publication authority", async () => {
+    const workflow = parse(await source())
+    const publish = workflow.jobs["publish-release"] as (typeof workflow.jobs)[string]
+    const notify = (publish.steps ?? []).find((step) => step.name === "Notify website after finalization")
+    const eventInputs = (payload: Record<string, unknown>) =>
+      Object.fromEntries(Object.entries(payload).map(([key, value]) => [key, String(value)]))
+    const enabled = (payload: Record<string, string>, key: string) => payload[key] === "true"
+
+    expect(publish.if).toBe("github.event.inputs.publish_release == 'true'")
+    expect(notify?.if).toBe("github.event.inputs.notify_website == 'true'")
+
+    // gh workflow run -f sends strings; direct REST booleans are exposed through
+    // github.event.inputs using the same documented string-normalized contract.
+    expect(enabled({ publish_release: "true" }, "publish_release")).toBeTrue()
+    expect(enabled(eventInputs({ publish_release: true }), "publish_release")).toBeTrue()
+    for (const payload of [
+      {},
+      { publish_release: "false" },
+      eventInputs({ publish_release: false }),
+      { publish_release: "TRUE" },
+      { publish_release: "1" },
+    ]) {
+      expect(enabled(payload, "publish_release")).toBeFalse()
+    }
+    const releaseWithoutWebsite = eventInputs({ publish_release: true, notify_website: false })
+    expect(enabled(releaseWithoutWebsite, "publish_release")).toBeTrue()
+    expect(enabled(releaseWithoutWebsite, "notify_website")).toBeFalse()
   })
 })
