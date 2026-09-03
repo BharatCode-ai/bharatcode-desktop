@@ -45,4 +45,57 @@ describe("bundled BharatCode provider", () => {
       }
     },
   )
+
+  test("rejects stale BharatCode config fields without mutation or auth/network side effects", async () => {
+    const ids = [
+      "bharatcode:qwen36-35b-q6-256k-vision",
+      "bharatcode:qwen36-35b-q8-256k",
+      "bharatcode:embed-small-v1",
+      "bharatcode:unknown-coding-model",
+    ]
+
+    for (const field of ["model", "small_model"] as const) {
+      for (const id of ids) {
+        for (const value of [id, `bharatcode/${id}`]) {
+          let fetchCount = 0
+          const config = {
+            [field]: value,
+            unrelated: { provider: "external", enabled: true },
+            provider: { external: { models: { existing: {} } } },
+          }
+          const before = JSON.stringify(config)
+          const plugin = await BharatCodePlugin(null, {
+            fetchImpl: async () => {
+              fetchCount += 1
+              throw new Error("must not fetch")
+            },
+          })
+
+          await expect(plugin.config(config)).rejects.toThrow(`${CODING_MODEL}. Retired model IDs are not translated.`)
+          expect(JSON.stringify(config)).toBe(before)
+          expect(fetchCount).toBe(0)
+        }
+      }
+    }
+  })
+
+  test("is idempotent for canonical existing config fields", async () => {
+    const config = { model: CODING_MODEL, small_model: CODING_MODEL }
+    const plugin = await BharatCodePlugin(null, { accessToken: "test-token" })
+
+    await plugin.config(config)
+
+    expect(config.model).toBe(CODING_MODEL)
+    expect(config.small_model).toBe(CODING_MODEL)
+  })
+
+  test("preserves prior handling for unrelated provider config", async () => {
+    const config = { model: "external/model", unrelated: { keep: true } }
+    const plugin = await BharatCodePlugin(null, { accessToken: "test-token" })
+
+    await plugin.config(config)
+
+    expect(config.model).toBe(CODING_MODEL)
+    expect(config.unrelated).toEqual({ keep: true })
+  })
 })

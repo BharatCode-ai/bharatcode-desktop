@@ -34,6 +34,15 @@ function configuredModel(value) {
   throw new Error(`BharatCode supports only ${MODEL}. Retired model IDs are not translated.`)
 }
 
+function validateExistingConfigModels(config) {
+  for (const field of ["model", "small_model"]) {
+    const model = config?.[field]
+    if (typeof model !== "string") continue
+    if (model === MODEL || model === MODEL_ID) continue
+    if (model.startsWith(`${PROVIDER_ID}/`) || model.startsWith(`${PROVIDER_ID}:`)) configuredModel(model)
+  }
+}
+
 function homeDir(options = {}) {
   return options.credentialsHome || options.home || process.env.BHARATCODE_HOME || os.homedir()
 }
@@ -380,6 +389,7 @@ export const BharatCodePlugin = async (_ctx, options = {}) => {
 
   return {
     config: async (config) => {
+      validateExistingConfigModels(config)
       config.model = selectedModel
       config.small_model = selectedSmallModel
 
