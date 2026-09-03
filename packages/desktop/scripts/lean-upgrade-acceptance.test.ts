@@ -1266,6 +1266,20 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
     expect(acceptanceFailureCode(new Error("do-not-print-this-secret"))).toBe("PACKAGED_EXECUTION")
   })
 
+  test("preserves a closed value-free stage code through cleanup aggregation", async () => {
+    let failure: unknown
+    try {
+      await acceptance.atAcceptanceStage("CURRENT_BETA_INSTALL", async () => {
+        throw new Error("do-not-print-this-secret")
+      })
+    } catch (error) {
+      failure = new AggregateError([error, new Error("cleanup:boundary")], "masked")
+    }
+    expect(acceptanceFailureCode(failure)).toBe("CURRENT_BETA_INSTALL")
+    expect(String(failure)).not.toContain("do-not-print-this-secret")
+    await expect(acceptance.atAcceptanceStage("NOT_A_STAGE", async () => true)).rejects.toThrow()
+  })
+
   test("consumes the GitHub token before effects and excludes it from executable child environments", async () => {
     const environment = {
       GITHUB_TOKEN: "github-actions-fixture-token",
@@ -1418,6 +1432,7 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
       "validatePackagedNetLogBytes",
       "Get-CimInstance Win32_Process",
       "initializeIsolatedProfile",
+      "atAcceptanceStage",
       "parseLeanUpgradeReceiptBytes",
     ]) {
       expect(source).toContain(required)
@@ -1440,12 +1455,12 @@ describe("real packaged Windows upgrade and rollback acceptance", () => {
     for (const privateRoot of ["profile.data", "profile.config", "profile.state", "profile.userData"]) {
       expect(profileInitialization).not.toContain(privateRoot)
     }
-    const betaInstall = source.indexOf("const betaInstalled = await runInstaller(")
+    const betaInstall = source.indexOf('atAcceptanceStage("CURRENT_BETA_INSTALL"')
     const betaSchema = source.indexOf("initializePinnedBetaDatabase(profile.legacyDatabase)")
-    const candidateInstall = source.indexOf("runInstaller(input.candidate")
+    const candidateInstall = source.indexOf('atAcceptanceStage("CANDIDATE_INSTALL"')
     const recovery = source.indexOf("completeCandidateRecovery(candidateRuntime, profile)")
-    const egressStart = source.indexOf("egress = startLocalEgressControl(firewall.control_address)")
-    const candidateStart = source.indexOf("const candidateStart = await startDesktop(")
+    const egressStart = source.indexOf('atAcceptanceStage("EGRESS_CONTROL"')
+    const candidateStart = source.indexOf('atAcceptanceStage("CANDIDATE_START"')
     const liveShareProbe = source.indexOf("observeShareSurface(profile, candidateStart")
     const candidateCleanup = source.indexOf(
       'finishDesktop(candidateStart, active, profile, "candidate", share.controls)',

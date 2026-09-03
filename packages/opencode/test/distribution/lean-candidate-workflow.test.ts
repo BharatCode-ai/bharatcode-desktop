@@ -34,7 +34,7 @@ const reviewedSecurityStepSha256 = {
   windowsUnsigned: "a3c024ac9c6087fca041b9d2aeeab56f59e5086557e1dbb56169846d701f5c6d",
 } as const
 const acceptedApplicationSourceSha = "80c962f4148db531c35abcf4922059d2101c9bcd"
-const acceptedReleaseParentSha = "bc0935652228296a6b5fb23c931b74e90199ba02"
+const acceptedReleaseParentSha = "43df18cb4cc3d046a40a8fcbbfeb05d1a0e0bfdc"
 const wslRunnerLabel = "bharatcode-acceptance-${{ github.run_id }}-${{ github.run_attempt }}"
 const frozenWslPaths = [
   "packages/desktop/electron-builder.config.ts",
@@ -53,6 +53,7 @@ const frozenWslPaths = [
   "packages/opencode/src/server/wsl-desktop-transport.ts",
 ] as const
 const currentBetaFixture = "packages/desktop/test/fixtures/current-beta-windows-x64.json"
+const releaseReviewAuthority = "docs/superpowers/reports/2026-09-04-release-review-authority.md"
 const canonicalAppRunGzip =
   "H4sIAAAAAAAAA61W72/aSBD9vn/FdOOrklOMIfclR+RTncMhlpIcAlfiFEXWYg94hVm7u0tCSvnfq/WPFIfeNZX6BezlzXtvZ3ZnOHrnzLhwZkylRKEGGwnhc7iHd2B/BmoN/MuPQwoPcAE6RUEAUDwSgBK7IXNOSHgdTFxqdSk5glTrou84SrN4mT+inGf5UyfOV86nNSrNc6GcP3p/ds975w5hcqHcY2p9oCfk7uPtpT+O/rmKvPHQsB3R2kfpwhuNBsG4ZeMIrrhIzBt4RTHgsgOBBq7KlYRLjHUun0GnTEOcC824UAY5XotOGR6mXAFTar1CE8Q0aLOiYskLDRIVT1ABF+Z7TwZyCQzUevaiUdEF81Y8VyDXoglnwkQHK7bA03IDDWG5ZJCarxAyvsTsGVKmgGUSWfJc5rnePgEomE5dah0nXAq2QqDWsYFlXCzBngO1tqYYO3pCTygBeEp5hnB/D9QykRTeuUApvH9vqov1qmP1KDw8XECSE4Baw9qar9+c33cEIMkFEoDKhVtzlaXHTZFLDSMvvHapta0Qu/7Lk7NW0lEzLvrW1oB2tAmZDobRwAu9aBCMJy7tOCplEp1+FVE+L0S+wmohy2OWfQfSt7Ytom/8N4PoJrgce+N/o1fuKkI+61vbV6D/dPcSS/e16YH4gXvn/+03csOJH4bB3XASTf6+9m9LuteOa9aMz+yzTtdRcYorpvrW9nvBO0rIZXDnNjfHmaVMMh3nCdoz1Oz15QpuvaEf+dMgjLyr0B9Hwd0k9G5uWjdOS1YA07jhGgy0PAFc+euMeXGMhcbE7RFSIY5PyJYAlCpWGwSuC7194gbWbgJg4yfotnEAuMEYqHUZ3JkDDoCZwsOfzE0w7eX+w8Ouws05KT92hKCUudz3Z2+gTLFphJ9RcP3cVj04SxRqmG2XZGDbGjfaqPZ2FM7+chJ8dMQ6y0y/zA5ElglnWb74oUqDs+2VWszyzZsFpm8UmL5RoM4xxmleQ6psmqRzDT2T1mdUIq/TGgbhje9aPfPoT0PXOvsVuW5miEk31xm61CqFaJ1/8+5Pw5Z9+PKl8tj9VaUopWFPutw4NNo/0Pv5yhzoxRkyeaDb68J595V6q2xVGk+bnZy+SKy4UlwsOjBZ8qLgYgH1GOnUV6whrK5PnGK8jBIs6loP/FFV6aajWMdPKY/T8s/DiJ60t1ofoYE/MiPyJ6UPe1arQTWL39peNe8N1xGIXJtBK4zKXOYreOI65WJ/Nl9AiiJGWBtTzYgerwXMcwn+BmO37HlfAZCxA8c0CQAA"
 const canonicalAppRunSha256 = "897b7e36db7be71f3bf8a427cd24ece7d7fdd6763ecf79f9878e6e0a3f96b9d6"
@@ -193,9 +194,13 @@ const internalWslInputs = [
 ]
 const releaseControlDeltaPaths = [
   ".github/workflows/bharatcode-next-beta-candidate.yml",
-  "packages/opencode/script/lean-cohort.mjs",
+  "docs/superpowers/reports/2026-09-04-release-review-authority.md",
+  "packages/desktop/scripts/lean-upgrade-acceptance.mjs",
+  "packages/desktop/scripts/lean-upgrade-acceptance.test.ts",
+  "packages/desktop/scripts/lean-upgrade-receipt.mjs",
+  "packages/desktop/scripts/lean-upgrade-receipt.test.ts",
+  "packages/desktop/test/fixtures/current-beta-windows-x64.json",
   "packages/opencode/test/distribution/lean-candidate-workflow.test.ts",
-  "packages/opencode/test/distribution/lean-cohort.test.ts",
   "packages/opencode/test/distribution/preliminary-unsigned-wsl-workflow.test.ts",
 ] as const
 
@@ -1833,9 +1838,28 @@ describe("lean next-beta candidate workflow", () => {
 
   test("uses the exact checked-in current-beta fixture for packaged upgrade acceptance", async () => {
     const value = await source()
-    expect(await Bun.file(resolve(import.meta.dir, `../../../../${currentBetaFixture}`)).exists()).toBeTrue()
+    const fixture = parseCurrentBetaFixtureBytes(
+      new Uint8Array(await Bun.file(resolve(import.meta.dir, `../../../../${currentBetaFixture}`)).arrayBuffer()),
+    )
+    expect(fixture.tag).toBe("desktop-beta-1.15.23")
+    expect(fixture.source_sha).toBe("0ee3879a06275b55a432a5ed4bd63695aae16be1")
+    expect(fixture.assets[0].filename).toBe("bharatcode-desktop-next-beta-win-x64.exe")
     expect(value).toContain(`--fixture ${currentBetaFixture}`)
     expect(value).not.toContain("packages/desktop/test/fixtures/lean-current-beta.json")
+  })
+
+  test("requires the assigned independent reviewer for each publication stage", async () => {
+    const value = await source()
+    const policy = await Bun.file(resolve(import.meta.dir, `../../../../${releaseReviewAuthority}`)).text()
+
+    expect(value).toContain("environment: desktop-beta-release")
+    expect(policy).toContain("`desktop-beta-release` requires approval from `Pankaj-IIT`")
+    expect(policy).toContain("`npm-next` stage separately requires `Pankaj-IIT`")
+    expect(policy).toContain("`npm-latest` stage requires an independent approval")
+    expect(policy).toContain("from `satyamlohiya`")
+    expect(policy).toContain("`prevent_self_review` enabled")
+    expect(policy).toContain("administrator bypass is not accepted as review evidence")
+    expect(policy).toContain("Reviewer assignment alone does not permit workflow dispatch")
   })
 
   test("records the one-release owner waiver without claiming formal WSL scenarios passed", async () => {

@@ -7,16 +7,16 @@ const SAFE_FILENAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/u
 const CURRENT_BETA = Object.freeze({
   schema: "bharatcode-current-beta-fixture-v1",
   repository: "BharatCode-ai/bharatcode-desktop",
-  release_id: "351974071",
-  tag: "desktop-beta-2026-07-10-account-auth-001",
-  source_sha: "01737c1cb123909c2ca0626d3fc2ce475fe7c599",
+  release_id: "380659644",
+  tag: "desktop-beta-1.15.23",
+  source_sha: "0ee3879a06275b55a432a5ed4bd63695aae16be1",
   assets: Object.freeze([
     Object.freeze({
       key: "desktop-windows-x64",
-      asset_id: "472279670",
-      filename: "bharatcode-desktop-win-x64.exe",
-      bytes: 119910146,
-      sha256: "cb7d4252441da3704d915c3a3afa908ea04efa6e6cd5552fe683aef65e9982e1",
+      asset_id: "539821041",
+      filename: "bharatcode-desktop-next-beta-win-x64.exe",
+      bytes: 221165682,
+      sha256: "daa08b6ea61c94df6d248ac97cf4a4dee85e72e3b553ea35f16e699d4b4ca818",
     }),
   ]),
 })

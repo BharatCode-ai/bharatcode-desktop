@@ -89,6 +89,53 @@ const childEnvironmentKeys = [
   "NUMBER_OF_PROCESSORS",
   "PROCESSOR_ARCHITECTURE",
 ]
+const acceptanceStages = new Set([
+  "PROFILE_INITIALIZATION",
+  "CURRENT_BETA_FETCH",
+  "CURRENT_BETA_IDENTITY",
+  "CURRENT_BETA_INSTALL",
+  "CURRENT_BETA_SCHEMA",
+  "LEGACY_STATE",
+  "CANDIDATE_IDENTITY",
+  "CANDIDATE_INSTALL",
+  "CANDIDATE_REPLACEMENT",
+  "CANDIDATE_RECOVERY",
+  "CANDIDATE_RUNTIME",
+  "FIREWALL_OBSERVATION",
+  "EGRESS_CONTROL",
+  "CANDIDATE_START",
+  "SHARE_SURFACE",
+  "CANDIDATE_FINISH",
+  "NETWORK_BOUNDARY_CLEANUP",
+  "CANDIDATE_STATE",
+  "ROLLBACK_IDENTITY",
+  "ROLLBACK_INSTALL",
+  "ROLLBACK_REPLACEMENT",
+  "ROLLBACK_START",
+  "ROLLBACK_STATE",
+  "STATE_VALIDATION",
+  "NETWORK_ABSENCE",
+  "PROCESS_CLEANUP",
+])
+
+class AcceptanceStageError extends Error {
+  constructor(stage, cause) {
+    super("Packaged acceptance stage failed", { cause })
+    this.name = "AcceptanceStageError"
+    this.stage = stage
+  }
+}
+
+export async function atAcceptanceStage(stage, operation) {
+  requireValue(acceptanceStages.has(stage), "Packaged acceptance stage is invalid")
+  requireValue(typeof operation === "function", "Packaged acceptance stage operation is invalid")
+  try {
+    return await operation()
+  } catch (error) {
+    if (error instanceof AcceptanceStageError) throw error
+    throw new AcceptanceStageError(stage, error)
+  }
+}
 
 export function parseUpgradeAcceptanceArguments(argv) {
   if (argv.length !== argumentNames.size * 2) throw new Error("Upgrade acceptance requires the exact argument set")
@@ -975,81 +1022,116 @@ async function executeProductionAcceptance(input) {
   let candidateExecutable = join(installDirectory, PACKAGED_EXECUTABLE_FILENAME)
   const observation = await runAcceptanceWithCleanup(
     async () => {
-      await initializeIsolatedProfile(profile)
-      const prepared = await prepareProductionInputs(input, githubToken)
-      await verifyPinnedInstaller(prepared.betaInstaller, input.currentBeta.assets[0])
-      const betaInstalled = await runInstaller(prepared.betaInstaller, installDirectory, profile.env)
-      await initializePinnedBetaDatabase(profile.legacyDatabase)
-      const seeded = await seedLegacyBetaState(profile)
-      await verifyPinnedInstaller(input.candidate, prepared.candidate)
-      const candidateInstalled = await runInstaller(input.candidate, installDirectory, profile.env)
+      await atAcceptanceStage("PROFILE_INITIALIZATION", () => initializeIsolatedProfile(profile))
+      const prepared = await atAcceptanceStage("CURRENT_BETA_FETCH", () => prepareProductionInputs(input, githubToken))
+      await atAcceptanceStage("CURRENT_BETA_IDENTITY", () =>
+        verifyPinnedInstaller(prepared.betaInstaller, input.currentBeta.assets[0]),
+      )
+      const betaInstalled = await atAcceptanceStage("CURRENT_BETA_INSTALL", () =>
+        runInstaller(prepared.betaInstaller, installDirectory, profile.env),
+      )
+      await atAcceptanceStage("CURRENT_BETA_SCHEMA", () => initializePinnedBetaDatabase(profile.legacyDatabase))
+      const seeded = await atAcceptanceStage("LEGACY_STATE", () => seedLegacyBetaState(profile))
+      await atAcceptanceStage("CANDIDATE_IDENTITY", () => verifyPinnedInstaller(input.candidate, prepared.candidate))
+      const candidateInstalled = await atAcceptanceStage("CANDIDATE_INSTALL", () =>
+        runInstaller(input.candidate, installDirectory, profile.env),
+      )
       candidateExecutable = candidateInstalled.application.executable
-      requireValue(
-        candidateInstalled.executable.sha256 !== betaInstalled.executable.sha256 &&
-          candidateInstalled.inventory.sha256 !== betaInstalled.inventory.sha256,
-        "candidate did not replace the beta installation",
+      await atAcceptanceStage("CANDIDATE_REPLACEMENT", async () =>
+        requireValue(
+          candidateInstalled.executable.sha256 !== betaInstalled.executable.sha256 &&
+            candidateInstalled.inventory.sha256 !== betaInstalled.inventory.sha256,
+          "candidate did not replace the beta installation",
+        ),
       )
       const candidateRuntime = await packagedRuntime(installDirectory)
-      const recovery = await completeCandidateRecovery(candidateRuntime, profile)
-      const runtime = await verifyCandidateRuntime(candidateRuntime, profile)
+      const recovery = await atAcceptanceStage("CANDIDATE_RECOVERY", () =>
+        completeCandidateRecovery(candidateRuntime, profile),
+      )
+      const runtime = await atAcceptanceStage("CANDIDATE_RUNTIME", () =>
+        verifyCandidateRuntime(candidateRuntime, profile),
+      )
       const remoteDebuggingPort = await reserveLoopbackPort()
-      const firewall = await observeFirewallProfiles(profile.env)
-      egress = startLocalEgressControl(firewall.control_address)
-      await proveEgressControlReachability(egress)
+      const firewall = await atAcceptanceStage("FIREWALL_OBSERVATION", () => observeFirewallProfiles(profile.env))
+      egress = await atAcceptanceStage("EGRESS_CONTROL", async () => {
+        const control = startLocalEgressControl(firewall.control_address)
+        await proveEgressControlReachability(control)
+        return control
+      })
       profile.env.BHARATCODE_SHARE_BASE_URL = audit.url
       profile.env.BHARATCODE_SHARE_ACCESS_TOKEN = ACCEPTANCE_SHARE_TOKEN
-      const candidateStart = await startDesktop(
-        candidateInstalled.application,
-        installDirectory,
-        profile,
-        "candidate",
-        active,
-        { keepAlive: true, remoteDebuggingPort, localNetworkControlUrl: egress.urls.rendererBefore },
+      const candidateStart = await atAcceptanceStage("CANDIDATE_START", () =>
+        startDesktop(candidateInstalled.application, installDirectory, profile, "candidate", active, {
+          keepAlive: true,
+          remoteDebuggingPort,
+          localNetworkControlUrl: egress.urls.rendererBefore,
+        }),
       )
-      const share = await observeShareSurface(profile, candidateStart, remoteDebuggingPort, audit, firewall, egress)
-      await finishDesktop(candidateStart, active, profile, "candidate", share.controls)
+      const share = await atAcceptanceStage("SHARE_SURFACE", () =>
+        observeShareSurface(profile, candidateStart, remoteDebuggingPort, audit, firewall, egress),
+      )
+      await atAcceptanceStage("CANDIDATE_FINISH", () =>
+        finishDesktop(candidateStart, active, profile, "candidate", share.controls),
+      )
       requireValue(audit.requests === 0, "ShareNext network audit changed before candidate cleanup completed")
-      requireValue(
-        await removeCandidateNetworkBoundary(candidateInstalled.application.executable, profile.env),
-        "Candidate public-network boundary cleanup failed",
+      await atAcceptanceStage("NETWORK_BOUNDARY_CLEANUP", async () =>
+        requireValue(
+          await removeCandidateNetworkBoundary(candidateInstalled.application.executable, profile.env),
+          "Candidate public-network boundary cleanup failed",
+        ),
       )
       delete profile.env.BHARATCODE_SHARE_BASE_URL
       delete profile.env.BHARATCODE_SHARE_ACCESS_TOKEN
-      const candidateState = await observeCandidateState(candidateRuntime, profile)
-      await verifyPinnedInstaller(prepared.betaInstaller, input.currentBeta.assets[0])
-      const rollbackInstalled = await runInstaller(prepared.betaInstaller, installDirectory, profile.env)
-      requireValue(
-        rollbackInstalled.executable.bytes === betaInstalled.executable.bytes &&
-          rollbackInstalled.executable.sha256 === betaInstalled.executable.sha256 &&
-          rollbackInstalled.inventory.files === betaInstalled.inventory.files &&
-          rollbackInstalled.inventory.sha256 === betaInstalled.inventory.sha256,
-        "rollback did not restore the exact beta installation",
+      const candidateState = await atAcceptanceStage("CANDIDATE_STATE", () =>
+        observeCandidateState(candidateRuntime, profile),
       )
-      const rollbackStart = await startDesktop(
-        rollbackInstalled.application,
-        installDirectory,
-        profile,
-        "rollback",
-        active,
+      await atAcceptanceStage("ROLLBACK_IDENTITY", () =>
+        verifyPinnedInstaller(prepared.betaInstaller, input.currentBeta.assets[0]),
       )
-      const rollbackState = await observeRollbackState(await packagedRuntime(installDirectory), profile)
-      const state = validateStateEvidence(
-        {
-          schema: "bharatcode-packaged-state-evidence-v1",
-          source: {
-            database_before_sha256: seeded.databaseSha256,
-            database_after_sha256: digest(await readStableFile(profile.legacyDatabase, "legacy beta database")),
-            config_before_sha256: seeded.configSha256,
-            config_after_sha256: digest(await readStableFile(profile.legacyConfigFile, "legacy beta config")),
+      const rollbackInstalled = await atAcceptanceStage("ROLLBACK_INSTALL", () =>
+        runInstaller(prepared.betaInstaller, installDirectory, profile.env),
+      )
+      await atAcceptanceStage("ROLLBACK_REPLACEMENT", async () =>
+        requireValue(
+          rollbackInstalled.executable.bytes === betaInstalled.executable.bytes &&
+            rollbackInstalled.executable.sha256 === betaInstalled.executable.sha256 &&
+            rollbackInstalled.inventory.files === betaInstalled.inventory.files &&
+            rollbackInstalled.inventory.sha256 === betaInstalled.inventory.sha256,
+          "rollback did not restore the exact beta installation",
+        ),
+      )
+      const rollbackStart = await atAcceptanceStage("ROLLBACK_START", () =>
+        startDesktop(rollbackInstalled.application, installDirectory, profile, "rollback", active),
+      )
+      const rollbackState = await atAcceptanceStage("ROLLBACK_STATE", async () =>
+        observeRollbackState(await packagedRuntime(installDirectory), profile),
+      )
+      const state = await atAcceptanceStage("STATE_VALIDATION", async () =>
+        validateStateEvidence(
+          {
+            schema: "bharatcode-packaged-state-evidence-v1",
+            source: {
+              database_before_sha256: seeded.databaseSha256,
+              database_after_sha256: digest(await readStableFile(profile.legacyDatabase, "legacy beta database")),
+              config_before_sha256: seeded.configSha256,
+              config_after_sha256: digest(await readStableFile(profile.legacyConfigFile, "legacy beta config")),
+            },
+            recovery,
+            candidate: candidateState,
+            rollback: rollbackState,
           },
-          recovery,
-          candidate: candidateState,
-          rollback: rollbackState,
-        },
-        ACCEPTANCE_SESSION,
+          ACCEPTANCE_SESSION,
+        ),
       )
-      const shareNetworkAttemptAbsent = await verifyShareNetworkAbsence([candidateStart.netLog, rollbackStart.netLog])
-      requireValue(await verifyNoOwnedProcesses(active, profile.env), "Packaged upgrade process cleanup is incomplete")
+      const shareNetworkAttemptAbsent = await atAcceptanceStage("NETWORK_ABSENCE", () =>
+        verifyShareNetworkAbsence([candidateStart.netLog, rollbackStart.netLog]),
+      )
+      await atAcceptanceStage("PROCESS_CLEANUP", async () =>
+        requireValue(
+          await verifyNoOwnedProcesses(active, profile.env),
+          "Packaged upgrade process cleanup is incomplete",
+        ),
+      )
       return {
         schema: "bharatcode-packaged-upgrade-observation-v1",
         candidate: prepared.candidate,
@@ -2869,12 +2951,25 @@ function requireValue(condition, message) {
 }
 
 export function acceptanceFailureCode(error) {
+  const stage = findAcceptanceStage(error)
+  if (stage) return stage
   const message = error instanceof Error ? error.message : ""
   if (/GitHub identity request|current-beta asset download/iu.test(message)) return "GITHUB_IDENTITY"
   if (/GitHub Actions token/iu.test(message)) return "GITHUB_AUTHORITY"
   if (/Acceptance directory/iu.test(message)) return "ACCEPTANCE_DIRECTORY"
   if (/candidate installer/iu.test(message)) return "CANDIDATE_IDENTITY"
   return "PACKAGED_EXECUTION"
+}
+
+function findAcceptanceStage(error) {
+  if (error instanceof AcceptanceStageError && acceptanceStages.has(error.stage)) return error.stage
+  if (error instanceof AggregateError) {
+    for (const nested of error.errors) {
+      const stage = findAcceptanceStage(nested)
+      if (stage) return stage
+    }
+  }
+  return undefined
 }
 
 if (import.meta.main) {
