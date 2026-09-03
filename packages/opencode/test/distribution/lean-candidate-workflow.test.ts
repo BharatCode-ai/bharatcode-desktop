@@ -25,17 +25,16 @@ const download = "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a546
 const attest = "actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6"
 const reviewedSecurityEnclosureSha256 = {
   nativePreflight: "96c72efbac3d82b23c8aa3232608b63afea496818381c7aad4f3e922c896ab2d",
-  linuxPackage: "5120170c09954e6e2d57d72cd856cd1e3c193b19cfe8243d20154b73d5289b67",
+  linuxPackage: "32d6c30e4226645a9d9cce2bcfb6a7dd832a4604439c5dfb57d6715fb7c28783",
   windowsUnsigned: "5a357c93583798fd698b5fbab946ebcd058a6c6eee3391a2f58b5ab618fbca00",
 } as const
 const reviewedSecurityStepSha256 = {
   nativePreflight: "fb81af32a451e1fbb04c88c7b5cfc4e63eca4f759f73c3d967f17cd4001617d5",
-  linuxPackage: "54d38a70454ffd857a51ca05848eb30afc19bcd86dbe22d1d9b5944ac3fbf8d7",
+  linuxPackage: "2b61f85cfa27650f30049e9d849a300d2d53a3420c11588a4964a75e16ea6278",
   windowsUnsigned: "a3c024ac9c6087fca041b9d2aeeab56f59e5086557e1dbb56169846d701f5c6d",
 } as const
-const previousAcceptedWslSha = "17ac654639ef2d0f9e6e79370d39ecbfe67a8654"
-const acceptedWslSha = "205e5f670fae8e18e49f58b504b630cbe255da2d"
-const acceptedHotfixParentSha = "14046b6b4a5a7fd35ab6e7cfd0ac4655a6c8ca8e"
+const acceptedApplicationSourceSha = "80c962f4148db531c35abcf4922059d2101c9bcd"
+const acceptedReleaseParentSha = "bc0935652228296a6b5fb23c931b74e90199ba02"
 const wslRunnerLabel = "bharatcode-acceptance-${{ github.run_id }}-${{ github.run_attempt }}"
 const frozenWslPaths = [
   "packages/desktop/electron-builder.config.ts",
@@ -178,6 +177,12 @@ const cohortSubjectNames = [
   "bharatcode-desktop-next-beta-mac-arm64.zip",
   "bharatcode-desktop-next-beta-mac-x64.zip",
   "bharatcode-desktop-next-beta-win-x64.exe",
+  "beta.yml",
+  "bharatcode-desktop-next-beta-win-x64.exe.blockmap",
+  "beta-mac.yml",
+  "bharatcode-desktop-next-beta-mac-arm64.zip.blockmap",
+  "bharatcode-desktop-next-beta-mac-x64.zip.blockmap",
+  "beta-linux.yml",
   "bharatcode-upgrade-rollback-windows-x64.json",
   "bharatcode-wsl-scenarios-9-10.json",
 ]
@@ -186,20 +191,12 @@ const internalWslInputs = [
   "bharatcode-runtime-linux-x64-glibc",
   "bharatcode-wsl-runtime-manifest.json",
 ]
-const hotfixReleaseDeltaPaths = [
+const releaseControlDeltaPaths = [
   ".github/workflows/bharatcode-next-beta-candidate.yml",
-  "bun.lock",
-  "packages/desktop/package.json",
-  "packages/desktop/scripts/lean-upgrade-acceptance.mjs",
-  "packages/desktop/scripts/lean-upgrade-acceptance.test.ts",
-  "packages/desktop/scripts/lean-upgrade-receipt.mjs",
-  "packages/desktop/scripts/lean-upgrade-receipt.test.ts",
   "packages/opencode/script/lean-cohort.mjs",
-  "packages/opencode/src/migration/capture.ts",
   "packages/opencode/test/distribution/lean-candidate-workflow.test.ts",
   "packages/opencode/test/distribution/lean-cohort.test.ts",
   "packages/opencode/test/distribution/preliminary-unsigned-wsl-workflow.test.ts",
-  "packages/opencode/test/migration/capture.test.ts",
 ] as const
 
 async function source() {
@@ -434,7 +431,7 @@ function runWorkflowWaiverFixture(run: string) {
   }
 }
 
-function runWorkflowCohortFixture(run: string) {
+function runWorkflowCohortFixture(run: string, releaseStage?: string, updaterPrepare?: string) {
   const script = bunEvalScripts(run).find((value) => value.includes("validateLeanCohort"))
   if (!script) throw new Error("workflow cohort implementation is missing")
   const root = mkdtempSync(resolve(process.env.TMPDIR ?? tmpdir(), "lean-workflow-cohort-"))
@@ -455,15 +452,66 @@ function runWorkflowCohortFixture(run: string) {
       return path
     }
     for (const name of ["bharatcode", ...PLATFORM_PACKAGE_NAMES]) writeSubject(`${name}-${cliVersion}.tgz`)
-    for (const name of [
+    const desktopSubjects = [
       "bharatcode-desktop-next-beta-linux-x64.AppImage",
       "bharatcode-desktop-next-beta-linux-x64.deb",
       "bharatcode-desktop-next-beta-mac-arm64.zip",
       "bharatcode-desktop-next-beta-mac-x64.zip",
-    ])
-      writeSubject(name)
+    ]
+    for (const name of desktopSubjects) writeSubject(name)
     const windowsName = "bharatcode-desktop-next-beta-win-x64.exe"
     const windowsPath = writeSubject(windowsName, "MZ-cohort-windows")
+    const sha512 = (path: string) => new Bun.CryptoHasher("sha512").update(readFileSync(path)).digest("base64")
+    const updaterInfo = (entries: Array<[string, string]>) => ({
+      version: desktopVersion,
+      files: entries.map(([sourceName, publicName]) => {
+        const path = resolve(input, publicName)
+        return { url: sourceName, sha512: sha512(path), size: readFileSync(path).byteLength }
+      }),
+      path: entries[0][0],
+      sha512: sha512(resolve(input, entries[0][1])),
+      releaseDate: "2026-09-01T09:59:00.000Z",
+    })
+    writeFileSync(
+      resolve(input, "beta-windows.producer.yml"),
+      Bun.YAML.stringify(updaterInfo([["bharatcode-desktop-win-x64.exe", windowsName]])),
+    )
+    writeFileSync(
+      resolve(input, "beta-mac-arm64.producer.yml"),
+      Bun.YAML.stringify(
+        updaterInfo([["bharatcode-desktop-mac-arm64.zip", "bharatcode-desktop-next-beta-mac-arm64.zip"]]),
+      ),
+    )
+    writeFileSync(
+      resolve(input, "beta-mac-x64.producer.yml"),
+      Bun.YAML.stringify(updaterInfo([["bharatcode-desktop-mac-x64.zip", "bharatcode-desktop-next-beta-mac-x64.zip"]])),
+    )
+    writeFileSync(
+      resolve(input, "beta-linux.producer.yml"),
+      Bun.YAML.stringify(
+        updaterInfo([
+          ["bharatcode-desktop-linux-x64.AppImage", "bharatcode-desktop-next-beta-linux-x64.AppImage"],
+          ["bharatcode-desktop-linux-x64.deb", "bharatcode-desktop-next-beta-linux-x64.deb"],
+        ]),
+      ),
+    )
+    for (const name of [
+      "bharatcode-desktop-next-beta-win-x64.exe.producer.blockmap",
+      "bharatcode-desktop-next-beta-mac-arm64.zip.producer.blockmap",
+      "bharatcode-desktop-next-beta-mac-x64.zip.producer.blockmap",
+    ])
+      writeFileSync(resolve(input, name), `blockmap:${name}`)
+    if (!updaterPrepare) throw new Error("workflow updater preparation implementation is missing")
+    const prepared = Bun.spawnSync(["bun", "--eval", updaterPrepare], {
+      cwd: root,
+      env: { ...process.env, DESKTOP_VERSION: desktopVersion },
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    if (prepared.exitCode !== 0) throw new Error(`workflow updater preparation failed: ${prepared.stderr}`)
+    for (const name of readdirSync(resolve(root, "updater-assets"))) {
+      writeFileSync(resolve(root, "updater-assets", `${name}.intoto.jsonl`), `attestation:${name}`)
+    }
     const runtimeManifestPath = resolve(input, "bharatcode-wsl-runtime-manifest.json")
     writeFileSync(runtimeManifestPath, '{"schema":1}\n')
     const digest = (path: string) => new Bun.CryptoHasher("sha256").update(readFileSync(path)).digest("hex")
@@ -541,11 +589,38 @@ function runWorkflowCohortFixture(run: string) {
         GITHUB_RUN_ID: runId,
         SOURCE_SHA: sourceSha,
         WORKFLOW_PATH: ".github/workflows/bharatcode-next-beta-candidate.yml",
-        WSL_ACCEPTANCE_MODE: "owner-waived-hotfix-1.15.23",
+        RELEASE_TAG: "desktop-beta-1.15.24",
+        WSL_ACCEPTANCE_MODE: "owner-waived-hotfix-1.15.24",
       },
       stdout: "pipe",
       stderr: "pipe",
     })
+    let releaseStageExitCode: number | undefined
+    let releaseStageError: string | undefined
+    let releaseAssets: string[] | undefined
+    if (execution.exitCode === 0 && releaseStage) {
+      symlinkSync(input, resolve(root, "release-input"), "dir")
+      for (const filename of ["bharatcode-next-beta-cohort.json", "bharatcode-next-beta-cohort.json.sha256"]) {
+        cpSync(resolve(root, filename), resolve(input, filename))
+      }
+      writeFileSync(resolve(input, "bharatcode-next-beta-cohort.json.intoto.jsonl"), "cohort-attestation")
+      cpSync(resolve(root, "updater-assets"), resolve(input, "updater-assets"), { recursive: true })
+      const staged = Bun.spawnSync(["bun", "--eval", releaseStage], {
+        cwd: root,
+        env: {
+          ...process.env,
+          GITHUB_RUN_ATTEMPT: runAttempt,
+          GITHUB_RUN_ID: runId,
+          RELEASE_TAG: "desktop-beta-1.15.24",
+          SOURCE_SHA: sourceSha,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      })
+      releaseStageExitCode = staged.exitCode
+      releaseStageError = staged.stderr.toString()
+      releaseAssets = staged.exitCode === 0 ? readdirSync(resolve(root, "release-assets")).sort() : undefined
+    }
     return {
       ...execution,
       manifest:
@@ -556,6 +631,9 @@ function runWorkflowCohortFixture(run: string) {
         execution.exitCode === 0
           ? readFileSync(resolve(root, "bharatcode-next-beta-cohort.json.sha256"), "utf8")
           : undefined,
+      releaseAssets,
+      releaseStageError,
+      releaseStageExitCode,
     }
   } finally {
     rmSync(root, { recursive: true, force: true })
@@ -1010,7 +1088,7 @@ function upgradeValidationViolations(value: string) {
     "run_id: process.env.GITHUB_RUN_ID",
     "run_attempt: process.env.GITHUB_RUN_ATTEMPT",
     "current_beta: currentBeta",
-    "candidate: { key: expectedKeys[17], filename: windows.filename, bytes: windows.bytes, sha256: windows.sha256 }",
+    'candidate: { key: "desktop-windows-x64", filename: windows.filename, bytes: windows.bytes, sha256: windows.sha256 }',
   ]
   return [
     ...required.filter((fragment) => !run.includes(fragment)),
@@ -1021,13 +1099,13 @@ function upgradeValidationViolations(value: string) {
 function authorityViolations(value: string) {
   const workflow = parse(value)
   const permissions = [
-    workflow.permissions,
-    ...Object.values(workflow.jobs).flatMap((job) => (job.permissions ? [job.permissions] : [])),
+    ["workflow", workflow.permissions] as const,
+    ...Object.entries(workflow.jobs).flatMap(([name, job]) =>
+      job.permissions ? ([[name, job.permissions]] as const) : [],
+    ),
   ]
   const forbidden = [
-    /gh\s+release\s+(?:create|upload)/iu,
     /npm\s+publish/iu,
-    /repository_dispatch/iu,
     /homebrew.*(?:push|update)/iu,
     /(?:updater|channel).*(?:promote|publish)/iu,
     /--clobber/iu,
@@ -1036,13 +1114,14 @@ function authorityViolations(value: string) {
     /BHARATCODE_ALLOW_UNSIGNED_MAC/u,
   ]
   return [
-    ...permissions.flatMap((item) =>
+    ...permissions.flatMap(([job, item]) =>
       Object.entries(item).flatMap(([name, access]) =>
         (name === "contents" && access === "read") ||
+        (job === "publish-release" && name === "contents" && access === "write") ||
         (name === "id-token" && access === "write") ||
         (name === "attestations" && access === "write")
           ? []
-          : [`${name}:${access}`],
+          : [`${job}:${name}:${access}`],
       ),
     ),
     ...forbidden.flatMap((pattern) => (pattern.test(value) ? [pattern.source] : [])),
@@ -1295,39 +1374,40 @@ function windowsUnsignedPolicyViolations(value: string) {
 }
 
 describe("lean next-beta candidate workflow", () => {
-  test("is manual-only, contained-hotfix-only, and binds one exact source plus the accepted WSL gate", async () => {
+  test("is manual-only and binds one exact 1.15.24 source plus a fresh WSL decision", async () => {
     const value = await source()
     const workflow = parse(value)
     expect(Object.keys(workflow.on)).toEqual(["workflow_dispatch"])
-    expect(Object.keys(workflow.on.workflow_dispatch.inputs)).toEqual(["source_sha", "wsl_acceptance_mode"])
+    expect(Object.keys(workflow.on.workflow_dispatch.inputs)).toEqual([
+      "source_sha",
+      "wsl_acceptance_mode",
+      "publish_release",
+      "notify_website",
+    ])
     expect(workflow.on.workflow_dispatch.inputs.wsl_acceptance_mode).toEqual({
-      description: "Require formal WSL2 automation, or record the owner's migration-corrected 1.15.23 hotfix waiver",
+      description: "Require formal WSL2 automation, or record a fresh owner-authorized 1.15.24 waiver",
       required: true,
       default: "required",
       type: "choice",
-      options: ["required", "owner-waived-hotfix-1.15.23"],
+      options: ["required", "owner-waived-hotfix-1.15.24"],
     })
     expect(value).toContain("^[0-9a-f]{40}$")
-    expect(value).toContain("github.ref == 'refs/heads/codex/desktop-1.15.23-migration-hotfix'")
+    expect(value).toContain("github.ref == 'refs/heads/codex/desktop-1.15.24-release-control'")
     expect(value).toContain("github.sha")
     expect(value).toContain("inputs.source_sha")
     expect(value).toContain("ref: ${{ inputs.source_sha }}")
-    expect(value).toContain("next-beta-${source_sha:0:12}")
+    expect(value).toContain("RELEASE_TAG: desktop-beta-1.15.24")
     const admission = runStep(value, "admit-source", "Admit immutable source and source-derived versions")
-    expect(value).toContain(acceptedWslSha)
-    expect(value).toContain(`ACCEPTED_HOTFIX_PARENT_SHA: ${acceptedHotfixParentSha}`)
+    expect(value).toContain(acceptedApplicationSourceSha)
+    expect(value).toContain(`ACCEPTED_RELEASE_PARENT_SHA: ${acceptedReleaseParentSha}`)
     expect(admission).toContain('git rev-parse "$SOURCE_SHA^"')
-    expect(admission).toContain('== "$ACCEPTED_HOTFIX_PARENT_SHA"')
-    expect(value).not.toContain(previousAcceptedWslSha)
+    expect(admission).toContain('== "$ACCEPTED_RELEASE_PARENT_SHA"')
     expect(value).toContain("git merge-base --is-ancestor")
-    for (const path of hotfixReleaseDeltaPaths) expect(admission).toContain(path)
+    for (const path of releaseControlDeltaPaths) expect(admission).toContain(path)
     const root = resolve(import.meta.dir, "../../../..")
     const git = (...args: string[]) => Bun.spawnSync(["git", ...args], { cwd: root, stdout: "pipe", stderr: "pipe" })
-    expect(git("merge-base", "--is-ancestor", previousAcceptedWslSha, acceptedWslSha).exitCode).toBe(0)
-    expect(git("diff", "--quiet", acceptedWslSha, "HEAD", "--", ...frozenWslPaths).exitCode).toBe(0)
-    expect(
-      git("diff", "--quiet", previousAcceptedWslSha, acceptedWslSha, "--", ...hotfixReleaseDeltaPaths).exitCode,
-    ).not.toBe(0)
+    expect(git("merge-base", "--is-ancestor", acceptedApplicationSourceSha, "HEAD").exitCode).toBe(0)
+    expect(git("diff", "--quiet", acceptedReleaseParentSha, "HEAD", "--", ...frozenWslPaths).exitCode).toBe(0)
   })
 
   test("requires one immutable run-attempt-scoped WSL runner label through cohort finalization", async () => {
@@ -1357,7 +1437,7 @@ describe("lean next-beta candidate workflow", () => {
     expect(() => renderWslRunnerLabels(value, "29722640762", "01")).toThrow("test run identity is invalid")
   })
 
-  test("pins every action and Bun while denying publication and overwrite authority", async () => {
+  test("pins every action and Bun while confining publication and denying overwrite authority", async () => {
     const value = await source()
     const actionUses = [...value.matchAll(/^\s*uses:\s*([^\s#]+)/gmu)].map((match) => match[1])
     expect(actionUses.length).toBeGreaterThan(20)
@@ -1381,6 +1461,7 @@ describe("lean next-beta candidate workflow", () => {
         "package-linux",
         "package-macos",
         "package-windows",
+        "publish-release",
         "record-wsl-waiver",
         "upgrade-rollback-windows-x64",
       ].sort(),
@@ -1761,7 +1842,7 @@ describe("lean next-beta candidate workflow", () => {
     const value = await source()
     const workflow = parse(value)
     const job = workflow.jobs["record-wsl-waiver"]
-    expect(job.if).toBe("inputs.wsl_acceptance_mode == 'owner-waived-hotfix-1.15.23'")
+    expect(job.if).toBe("inputs.wsl_acceptance_mode == 'owner-waived-hotfix-1.15.24'")
     expect(workflow.jobs["accept-wsl"].if).toBe("inputs.wsl_acceptance_mode == 'required'")
     const run = runStep(value, "record-wsl-waiver", "Record exact owner-authorized WSL automation waiver")
     expect(run).toContain('result: "OWNER_WAIVED"')
@@ -1796,13 +1877,70 @@ describe("lean next-beta candidate workflow", () => {
     expect(run.replace("! -name 'bharatcode-wsl-runtime-manifest.json'", "")).not.toContain(
       "! -name 'bharatcode-wsl-runtime-manifest.json'",
     )
+    const updaterScript = bunEvalScripts(
+      runStep(value, "assemble-cohort", "Normalize and verify updater artifacts against exact packages"),
+    ).find((script) => script.includes("validateLeanUpdaterInfo"))
+    expect(updaterScript).toBeDefined()
     const cohort = runWorkflowCohortFixture(
       runStep(value, "assemble-cohort", "Rehash, close, and validate final manifest"),
+      undefined,
+      updaterScript,
     )
     expect(cohort.exitCode).toBe(0)
     expect(cohort.manifest?.wsl_gate_result).toBe("OWNER_WAIVED")
     expect(cohort.manifest?.artifacts).toHaveLength(REQUIRED_COHORT_KEYS.length)
     expect(cohort.checksum).toMatch(/^[0-9a-f]{64}  bharatcode-next-beta-cohort\.json\n$/u)
+  })
+
+  test("carries exact updater metadata and blockmaps through producers, attestation, and cohort publication", async () => {
+    const value = await source()
+    const workflow = parse(value)
+    const producerBindings = [
+      ["package-windows", "bharatcode-desktop-next-beta-win-x64.exe.producer.blockmap"],
+      ["package-windows", "beta-windows.producer.yml"],
+      ["package-macos", "bharatcode-desktop-next-beta-mac-${{ matrix.arch }}.zip.producer.blockmap"],
+      ["package-macos", "beta-mac-${{ matrix.arch }}.producer.yml"],
+      ["package-linux", "beta-linux.producer.yml"],
+    ] as const
+    for (const [job, filename] of producerBindings) {
+      expect(JSON.stringify(workflow.jobs[job])).toContain(filename)
+    }
+
+    const prepare = runStep(value, "assemble-cohort", "Normalize and verify updater artifacts against exact packages")
+    for (const required of [
+      "validateLeanUpdaterInfo",
+      'createHash("sha512")',
+      "Bun.YAML.parse(await Bun.file(one(producer)).text())",
+      "files: expected",
+      "Bun.YAML.stringify(value)",
+      '"beta.yml"',
+      '"beta-mac.yml"',
+      '"beta-linux.yml"',
+      '"bharatcode-desktop-next-beta-win-x64.exe.blockmap"',
+      '"bharatcode-desktop-next-beta-mac-arm64.zip.blockmap"',
+      '"bharatcode-desktop-next-beta-mac-x64.zip.blockmap"',
+    ])
+      expect(prepare).toContain(required)
+    expect(prepare).not.toContain("value?.files?.map")
+
+    const updaterAttestations = (workflow.jobs["assemble-cohort"].steps ?? []).filter((step) =>
+      step.name?.startsWith("Attest "),
+    )
+    expect(updaterAttestations).toHaveLength(7)
+    for (const filename of [
+      "beta.yml",
+      "beta-mac.yml",
+      "beta-linux.yml",
+      "bharatcode-desktop-next-beta-win-x64.exe.blockmap",
+      "bharatcode-desktop-next-beta-mac-arm64.zip.blockmap",
+      "bharatcode-desktop-next-beta-mac-x64.zip.blockmap",
+    ]) {
+      expect(
+        updaterAttestations.some((step) => step.with?.["subject-path"] === `updater-assets/${filename}`),
+      ).toBeTrue()
+      expect(value).toContain(`${filename}.intoto.jsonl`)
+    }
+    expect(JSON.stringify(workflow.jobs["assemble-cohort"])).toContain("updater-assets")
   })
 
   test("canonically validates the upgrade receipt against fixture and assembled candidate identity", async () => {
@@ -1892,8 +2030,81 @@ describe("lean next-beta candidate workflow", () => {
     expect(authorityViolations(value.replace("overwrite: false", "overwrite: true"))).not.toEqual([])
     expect(authorityViolations(`${value}\n# npm publish\n`)).not.toEqual([])
     expect(authorityViolations(`${value}\n# BHARATCODE_ALLOW_UNSIGNED_MAC=1\n`)).not.toEqual([])
-    expect(value.replace("ref: ${{ inputs.source_sha }}", "ref: dev")).not.toContain("ref: ${{ inputs.source_sha }}")
+    expect(value.replaceAll("ref: ${{ inputs.source_sha }}", "ref: dev")).not.toContain("ref: ${{ inputs.source_sha }}")
     expect(value.replace(checkout, "actions/checkout@v7")).toContain("actions/checkout@v7")
     expect(value.replaceAll("desktop-windows-x64", "desktop-windows-arm64")).not.toContain("desktop-windows-x64")
+  })
+
+  test("publishes only an exact complete draft cohort before prerelease and website cutover", async () => {
+    const value = await source()
+    const workflow = parse(value)
+    const publish = workflow.jobs["publish-release"] as (typeof workflow.jobs)[string] & { environment?: string }
+    expect(publish.if).toBe("inputs.publish_release == true")
+    expect((publish as unknown as { needs: string }).needs).toBe("assemble-cohort")
+    expect(publish.environment).toBe("desktop-beta-release")
+    expect(publish.permissions).toEqual({ contents: "write" })
+    const steps = publish.steps ?? []
+    const stage = steps.findIndex((step) => step.name === "Revalidate and stage complete public update cohort")
+    const refuse = steps.findIndex((step) => step.name === "Refuse overwrite and verify rollback release")
+    const create = steps.findIndex((step) => step.name === "Create draft and upload without overwrite")
+    const verify = steps.findIndex((step) => step.name === "Verify draft asset identities and live URLs")
+    const finalize = steps.findIndex((step) => step.name === "Finalize verified prerelease")
+    const notify = steps.findIndex((step) => step.name === "Notify website after finalization")
+    expect([stage, refuse, create, verify, finalize, notify].every((index) => index >= 0)).toBeTrue()
+    expect(stage).toBeLessThan(refuse)
+    expect(refuse).toBeLessThan(create)
+    expect(create).toBeLessThan(verify)
+    expect(verify).toBeLessThan(finalize)
+    expect(finalize).toBeLessThan(notify)
+    const stageRun = steps[stage]?.run ?? ""
+    for (const identity of [
+      '"desktop-windows-x64", ["bharatcode-desktop-next-beta-win-x64.exe", "unsigned"]',
+      '"desktop-macos-arm64", ["bharatcode-desktop-next-beta-mac-arm64.zip", "apple-notarized-stapled"]',
+      '"desktop-macos-x64", ["bharatcode-desktop-next-beta-mac-x64.zip", "apple-notarized-stapled"]',
+      '"desktop-linux-x64-appimage", ["bharatcode-desktop-next-beta-linux-x64.AppImage", "not-applicable"]',
+      '"desktop-linux-x64-deb", ["bharatcode-desktop-next-beta-linux-x64.deb", "not-applicable"]',
+      '"desktop-windows-update-info", ["beta.yml", "not-applicable"]',
+      '"desktop-windows-x64-blockmap", ["bharatcode-desktop-next-beta-win-x64.exe.blockmap", "not-applicable"]',
+      '"desktop-macos-update-info", ["beta-mac.yml", "not-applicable"]',
+      '"desktop-macos-arm64-blockmap", ["bharatcode-desktop-next-beta-mac-arm64.zip.blockmap", "not-applicable"]',
+      '"desktop-macos-x64-blockmap", ["bharatcode-desktop-next-beta-mac-x64.zip.blockmap", "not-applicable"]',
+      '"desktop-linux-x64-update-info", ["beta-linux.yml", "not-applicable"]',
+    ])
+      expect(stageRun).toContain(identity)
+    const refuseRun = steps[refuse]?.run ?? ""
+    expect(value).toContain("PREVIOUS_RELEASE_TAG: desktop-beta-1.15.23")
+    expect(refuseRun).toContain("Release already exists; refusing overwrite.")
+    expect(refuseRun).toContain("Tag already exists; refusing mixed provenance.")
+    const createRun = steps[create]?.run ?? ""
+    expect(createRun).toContain('gh release create "$RELEASE_TAG"')
+    expect(createRun).toContain("--draft --prerelease")
+    expect(createRun).toContain('[[ "${#assets[@]}" -eq 26 ]]')
+    expect(createRun).not.toContain("--clobber")
+    expect(steps[notify]?.if).toBe("inputs.notify_website == true")
+    expect(steps[notify]?.env).toEqual({ GH_TOKEN: "${{ secrets.BHARATCODE_WEBSITE_DISPATCH_TOKEN }}" })
+    expect(steps[notify]?.run).toContain('"event_type": "desktop_release_published"')
+    expect(value).not.toMatch(/gh\s+release\s+delete|git\s+push\s+.*--force/iu)
+
+    const assemblyRun = runStep(value, "assemble-cohort", "Rehash, close, and validate final manifest")
+    const assemblyScript = bunEvalScripts(assemblyRun).find((script) => script.includes("validateLeanCohort"))
+    const stageScript = bunEvalScripts(stageRun).find((script) => script.includes("Public release asset set drift"))
+    expect(assemblyScript).toBeDefined()
+    expect(stageScript).toBeDefined()
+    const updaterRun = runStep(
+      value,
+      "assemble-cohort",
+      "Normalize and verify updater artifacts against exact packages",
+    )
+    const updaterScript = bunEvalScripts(updaterRun).find((script) => script.includes("validateLeanUpdaterInfo"))
+    expect(updaterScript).toBeDefined()
+    const fixture = runWorkflowCohortFixture(assemblyRun, stageScript, updaterScript)
+    expect(fixture.exitCode).toBe(0)
+    expect(fixture.releaseStageError).toBe("")
+    expect(fixture.releaseStageExitCode).toBe(0)
+    expect(fixture.releaseAssets).toHaveLength(26)
+    expect(fixture.releaseAssets).toContain("SHA256SUMS")
+    expect(fixture.releaseAssets).toContain("beta.yml")
+    expect(fixture.releaseAssets).toContain("beta-mac.yml")
+    expect(fixture.releaseAssets).toContain("beta-linux.yml")
   })
 })

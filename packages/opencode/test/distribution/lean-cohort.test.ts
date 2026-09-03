@@ -6,6 +6,7 @@ import {
   canonicalLeanJson,
   parseLeanCohortBytes,
   validateLeanCohort,
+  validateLeanUpdaterInfo,
   validateLeanWslWaiver,
 } from "../../script/lean-cohort.mjs"
 
@@ -16,6 +17,7 @@ const adapterPath = resolve(import.meta.dir, "../../script/preliminary-jit-evide
 
 function signing(key: string, wslGateResult = "PASS") {
   if (key === "desktop-windows-x64") return "unsigned"
+  if (key.includes("blockmap") || key.includes("update-info")) return "not-applicable"
   if (key.startsWith("desktop-macos-")) return "apple-notarized-stapled"
   if (key === "wsl-gate") return wslGateResult === "PASS" ? "acceptance-receipt" : "owner-waiver-receipt"
   if (key.endsWith("receipt") || key === "upgrade-rollback-windows-x64") {
@@ -34,6 +36,7 @@ function platform(key: string) {
 
 function arch(key: string) {
   if (key === "cli-bharatcode") return "universal"
+  if (key === "desktop-macos-update-info") return "universal"
   if (key.includes("arm64")) return "arm64"
   return "x64"
 }
@@ -45,7 +48,16 @@ function artifact(key: string, index: number, wslGateResult = "PASS") {
     key,
     platform: platform(key),
     arch: arch(key),
-    filename: key.startsWith("cli-") ? `${key}-1.15.10.tgz` : `${key}.json`,
+    filename: key.startsWith("cli-")
+      ? `${key}-1.15.10.tgz`
+      : ({
+          "desktop-linux-x64-update-info": "beta-linux.yml",
+          "desktop-macos-arm64-blockmap": "bharatcode-desktop-next-beta-mac-arm64.zip.blockmap",
+          "desktop-macos-update-info": "beta-mac.yml",
+          "desktop-macos-x64-blockmap": "bharatcode-desktop-next-beta-mac-x64.zip.blockmap",
+          "desktop-windows-update-info": "beta.yml",
+          "desktop-windows-x64-blockmap": "bharatcode-desktop-next-beta-win-x64.exe.blockmap",
+        }[key] ?? `${key}.json`),
     bytes: 1_000 + index,
     sha256,
     artifact_attestation: {
@@ -70,10 +82,10 @@ function manifest(wslGateResult = "PASS") {
     schema: "bharatcode-next-beta-cohort-v2",
     repository: "BharatCode-ai/bharatcode-desktop",
     source_sha: sourceSha,
-    candidate_tag: `next-beta-${sourceSha.slice(0, 12)}`,
-    desktop_version: "1.15.21",
+    candidate_tag: "desktop-beta-1.15.24",
+    desktop_version: "1.15.24",
     cli_version: "1.15.10",
-    wsl_runtime_version: "1.15.21",
+    wsl_runtime_version: "1.15.24",
     channel: "beta",
     workflow: ".github/workflows/bharatcode-next-beta-candidate.yml",
     run_id: bindings.run_id,
@@ -148,12 +160,12 @@ describe("lean next-beta cohort contract", () => {
     ).toThrow(/canonical|duplicate|keys/i)
   })
 
-  test("rejects wrong source, run, attempt, or derived candidate tag", () => {
+  test("rejects wrong source, run, attempt, or release tag", () => {
     for (const value of [
       { ...manifest(), source_sha: "0".repeat(40) },
       { ...manifest(), run_id: "123456788" },
       { ...manifest(), run_attempt: "2" },
-      { ...manifest(), candidate_tag: "next-beta-latest" },
+      { ...manifest(), candidate_tag: "desktop-beta-latest" },
     ]) {
       expect(() => validateLeanCohort(value, bindings)).toThrow(/source|run|attempt|tag/i)
     }
@@ -219,6 +231,95 @@ describe("lean next-beta cohort contract", () => {
       },
     ]
     for (const hostile of cases) expect(() => validateLeanCohort(hostile(), bindings)).toThrow()
+  })
+
+  test("normalizes exact electron-builder updater metadata to immutable public package names", () => {
+    const sha512 = Buffer.alloc(64, 97).toString("base64")
+    const value = {
+      version: "1.15.24",
+      files: [{ url: "bharatcode-desktop-windows-x64.exe", sha512, size: 1234 }],
+      path: "bharatcode-desktop-windows-x64.exe",
+      sha512,
+      releaseDate: "2026-09-03T12:00:00.000Z",
+    }
+    const normalized = validateLeanUpdaterInfo(value, {
+      label: "Windows beta updater",
+      version: "1.15.24",
+      files: [
+        {
+          source_url: "bharatcode-desktop-windows-x64.exe",
+          public_url: "bharatcode-desktop-next-beta-win-x64.exe",
+          bytes: 1234,
+          sha512,
+        },
+      ],
+    })
+    expect(normalized).toEqual({
+      ...value,
+      files: [{ url: "bharatcode-desktop-next-beta-win-x64.exe", sha512, size: 1234 }],
+      path: "bharatcode-desktop-next-beta-win-x64.exe",
+    })
+
+    for (const hostile of [
+      { ...value, version: "1.15.23" },
+      { ...value, path: "https://example.invalid/latest.exe" },
+      { ...value, files: [{ ...value.files[0], sha512: Buffer.alloc(64, 98).toString("base64") }] },
+      { ...value, extra: true },
+    ]) {
+      expect(() =>
+        validateLeanUpdaterInfo(hostile, {
+          label: "Windows beta updater",
+          version: "1.15.24",
+          files: [
+            {
+              source_url: "bharatcode-desktop-windows-x64.exe",
+              public_url: "bharatcode-desktop-next-beta-win-x64.exe",
+              bytes: 1234,
+              sha512,
+            },
+          ],
+        }),
+      ).toThrow()
+    }
+  })
+
+  test("requires each expected updater package exactly once and normalizes producer order", () => {
+    const appimageSha512 = Buffer.alloc(64, 97).toString("base64")
+    const debSha512 = Buffer.alloc(64, 98).toString("base64")
+    const updaterBindings = {
+      label: "Linux beta updater",
+      version: "1.15.24",
+      files: [
+        {
+          source_url: "bharatcode-desktop-linux-x64.AppImage",
+          public_url: "bharatcode-desktop-next-beta-linux-x64.AppImage",
+          bytes: 100,
+          sha512: appimageSha512,
+        },
+        {
+          source_url: "bharatcode-desktop-linux-x64.deb",
+          public_url: "bharatcode-desktop-next-beta-linux-x64.deb",
+          bytes: 200,
+          sha512: debSha512,
+        },
+      ],
+    }
+    const appimage = { url: updaterBindings.files[0].source_url, sha512: appimageSha512, size: 100 }
+    const deb = { url: updaterBindings.files[1].source_url, sha512: debSha512, size: 200 }
+    const metadata = (files: Array<typeof appimage>) => ({
+      version: "1.15.24",
+      files,
+      path: files[0].url,
+      sha512: files[0].sha512,
+      releaseDate: "2026-09-03T12:00:00.000Z",
+    })
+
+    const normalized = validateLeanUpdaterInfo(metadata([deb, appimage]), updaterBindings)
+    expect(normalized.files.map((file: { url: string }) => file.url)).toEqual(
+      updaterBindings.files.map((file) => file.public_url),
+    )
+    expect(() => validateLeanUpdaterInfo(metadata([appimage]), updaterBindings)).toThrow(/incomplete/i)
+    expect(() => validateLeanUpdaterInfo(metadata([appimage, appimage]), updaterBindings)).toThrow(/duplicated/i)
   })
 
   test("rejects incomplete receipt records, wrong WSL binding, version drift, and late artifact completion", () => {

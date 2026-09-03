@@ -4,25 +4,37 @@ on:
   workflow_dispatch:
     inputs:
       source_sha:
-        description: Exact lowercase 40-hex contained Windows hotfix source to build without publication
+        description: Exact lowercase 40-hex reviewed Desktop 1.15.24 release source
         required: true
         type: string
       wsl_acceptance_mode:
-        description: Require formal WSL2 automation, or record the owner's migration-corrected 1.15.23 hotfix waiver
+        description: Require formal WSL2 automation, or record a fresh owner-authorized 1.15.24 waiver
         required: true
         default: required
         type: choice
         options:
           - required
-          - owner-waived-hotfix-1.15.23
+          - owner-waived-hotfix-1.15.24
+      publish_release:
+        description: Finalize the complete immutable cohort as a public prerelease
+        required: true
+        default: false
+        type: boolean
+      notify_website:
+        description: Notify the website only after successful prerelease finalization
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
 env:
-  ACCEPTED_HOTFIX_PARENT_SHA: 14046b6b4a5a7fd35ab6e7cfd0ac4655a6c8ca8e
-  ACCEPTED_WSL_SOURCE_SHA: 205e5f670fae8e18e49f58b504b630cbe255da2d
+  ACCEPTED_APPLICATION_SOURCE_SHA: 80c962f4148db531c35abcf4922059d2101c9bcd
+  ACCEPTED_RELEASE_PARENT_SHA: bc0935652228296a6b5fb23c931b74e90199ba02
   BHARATCODE_CHANNEL: beta
+  PREVIOUS_RELEASE_TAG: desktop-beta-1.15.23
+  RELEASE_TAG: desktop-beta-1.15.24
   OPENCODE_CHANNEL: beta
   SOURCE_SHA: ${{ inputs.source_sha }}
   VITE_OPENCODE_CHANNEL: beta
@@ -30,7 +42,7 @@ env:
 
 jobs:
   admit-source:
-    if: github.ref == 'refs/heads/codex/desktop-1.15.23-migration-hotfix'
+    if: github.ref == 'refs/heads/codex/desktop-1.15.24-release-control'
     runs-on: ubuntu-24.04
     outputs:
       candidate_tag: ${{ steps.identity.outputs.candidate_tag }}
@@ -64,21 +76,21 @@ jobs:
           [[ "$GITHUB_SHA" == "$SOURCE_SHA" ]]
           [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]]
           [[ "$(git status --porcelain)" == "" ]]
-          git merge-base --is-ancestor "$ACCEPTED_WSL_SOURCE_SHA" "$SOURCE_SHA"
-          [[ "$(git rev-parse "$SOURCE_SHA^")" == "$ACCEPTED_HOTFIX_PARENT_SHA" ]]
-          [[ "$(git diff --name-only "$ACCEPTED_WSL_SOURCE_SHA" "$SOURCE_SHA")" == $'.github/workflows/bharatcode-next-beta-candidate.yml\nbun.lock\npackages/desktop/package.json\npackages/desktop/scripts/lean-upgrade-acceptance.mjs\npackages/desktop/scripts/lean-upgrade-acceptance.test.ts\npackages/desktop/scripts/lean-upgrade-receipt.mjs\npackages/desktop/scripts/lean-upgrade-receipt.test.ts\npackages/opencode/script/lean-cohort.mjs\npackages/opencode/src/migration/capture.ts\npackages/opencode/test/distribution/lean-candidate-workflow.test.ts\npackages/opencode/test/distribution/lean-cohort.test.ts\npackages/opencode/test/distribution/preliminary-unsigned-wsl-workflow.test.ts\npackages/opencode/test/migration/capture.test.ts' ]]
-          [[ "$WSL_ACCEPTANCE_MODE" == "required" || "$WSL_ACCEPTANCE_MODE" == "owner-waived-hotfix-1.15.23" ]]
+          git merge-base --is-ancestor "$ACCEPTED_APPLICATION_SOURCE_SHA" "$SOURCE_SHA"
+          [[ "$(git rev-parse "$SOURCE_SHA^")" == "$ACCEPTED_RELEASE_PARENT_SHA" ]]
+          [[ "$(git diff --name-only "$ACCEPTED_RELEASE_PARENT_SHA" "$SOURCE_SHA")" == $'.github/workflows/bharatcode-next-beta-candidate.yml\npackages/opencode/script/lean-cohort.mjs\npackages/opencode/test/distribution/lean-candidate-workflow.test.ts\npackages/opencode/test/distribution/lean-cohort.test.ts\npackages/opencode/test/distribution/preliminary-unsigned-wsl-workflow.test.ts' ]]
+          [[ "$WSL_ACCEPTANCE_MODE" == "required" || "$WSL_ACCEPTANCE_MODE" == "owner-waived-hotfix-1.15.24" ]]
           grep -F '"packageManager": "bun@1.3.14"' package.json
           [[ "$(bun --version)" == "1.3.14" ]]
 
           source_sha="$SOURCE_SHA"
-          candidate_tag="next-beta-${source_sha:0:12}"
+          candidate_tag="$RELEASE_TAG"
           cli_version="$(bun -e 'process.stdout.write((await Bun.file("packages/opencode/package.json").json()).version)')"
           desktop_version="$(bun -e 'process.stdout.write((await Bun.file("packages/desktop/package.json").json()).version)')"
           [[ "$cli_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
           [[ "$desktop_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
-          if [[ "$WSL_ACCEPTANCE_MODE" == "owner-waived-hotfix-1.15.23" ]]; then
-            [[ "$desktop_version" == "1.15.23" ]]
+          if [[ "$WSL_ACCEPTANCE_MODE" == "owner-waived-hotfix-1.15.24" ]]; then
+            [[ "$desktop_version" == "1.15.24" ]]
           fi
           {
             printf 'candidate_tag=%s\n' "$candidate_tag"
@@ -390,7 +402,13 @@ jobs:
           bunx electron-builder --win nsis --x64 --config electron-builder.config.ts --publish never
           $files = @(Get-ChildItem dist -File -Filter *.exe)
           if ($files.Count -ne 1) { throw "Expected exactly one Windows installer" }
+          $blockmaps = @(Get-ChildItem dist -File -Filter *.exe.blockmap)
+          if ($blockmaps.Count -ne 1 -or $blockmaps[0].Name -ne "$($files[0].Name).blockmap") { throw "Expected the matching Windows updater blockmap" }
+          $metadata = @(Get-ChildItem dist -File -Filter beta.yml)
+          if ($metadata.Count -ne 1) { throw "Expected exactly one Windows beta updater manifest" }
           Move-Item $files[0].FullName "$env:GITHUB_WORKSPACE/bharatcode-desktop-next-beta-win-x64.exe"
+          Copy-Item $blockmaps[0].FullName "$env:GITHUB_WORKSPACE/bharatcode-desktop-next-beta-win-x64.exe.producer.blockmap"
+          Copy-Item $metadata[0].FullName "$env:GITHUB_WORKSPACE/beta-windows.producer.yml"
           Copy-Item resources/wsl-runtime/manifest.json "$env:GITHUB_WORKSPACE/bharatcode-wsl-runtime-manifest.json"
 
       - name: Verify unsigned Windows policy and package version
@@ -423,6 +441,8 @@ jobs:
           path: |
             bharatcode-desktop-next-beta-win-x64.exe
             bharatcode-desktop-next-beta-win-x64.exe.intoto.jsonl
+            bharatcode-desktop-next-beta-win-x64.exe.producer.blockmap
+            beta-windows.producer.yml
             bharatcode-wsl-runtime-manifest.json
           if-no-files-found: error
           overwrite: ${{ false }}
@@ -520,7 +540,12 @@ jobs:
           [[ "$(lipo -archs "$app_path/Contents/MacOS/$executable")" == "$expected_arch" ]]
           zip_path="$(find packages/desktop/dist -maxdepth 1 -type f -name '*.zip' -print -quit)"
           [[ -n "$zip_path" ]]
+          blockmap_path="${zip_path}.blockmap"
+          metadata_path="packages/desktop/dist/beta-mac.yml"
+          [[ -f "$blockmap_path" && -f "$metadata_path" ]]
           cp "$zip_path" "bharatcode-desktop-next-beta-mac-${{ matrix.arch }}.zip"
+          cp "$blockmap_path" "bharatcode-desktop-next-beta-mac-${{ matrix.arch }}.zip.producer.blockmap"
+          cp "$metadata_path" "beta-mac-${{ matrix.arch }}.producer.yml"
 
       - name: Attest macOS package
         id: attest_macos
@@ -542,6 +567,8 @@ jobs:
           path: |
             bharatcode-desktop-next-beta-mac-${{ matrix.arch }}.zip
             bharatcode-desktop-next-beta-mac-${{ matrix.arch }}.zip.intoto.jsonl
+            bharatcode-desktop-next-beta-mac-${{ matrix.arch }}.zip.producer.blockmap
+            beta-mac-${{ matrix.arch }}.producer.yml
           if-no-files-found: error
           overwrite: ${{ false }}
 
@@ -601,6 +628,8 @@ jobs:
           file -L -b "$appimage_target" | grep -E '^ELF 64-bit LSB (pie )?executable, x86-64,'
           cp "$appimage" bharatcode-desktop-next-beta-linux-x64.AppImage
           cp "$deb" bharatcode-desktop-next-beta-linux-x64.deb
+          [[ -f packages/desktop/dist/beta-linux.yml ]]
+          cp packages/desktop/dist/beta-linux.yml beta-linux.producer.yml
 
       - name: Attest Linux AppImage
         id: attest_appimage
@@ -634,6 +663,7 @@ jobs:
             bharatcode-desktop-next-beta-linux-x64.AppImage.intoto.jsonl
             bharatcode-desktop-next-beta-linux-x64.deb
             bharatcode-desktop-next-beta-linux-x64.deb.intoto.jsonl
+            beta-linux.producer.yml
           if-no-files-found: error
           overwrite: ${{ false }}
 
@@ -812,7 +842,7 @@ jobs:
         run: if ($env:ARTIFACT_DIGEST -notmatch '^(sha256:)?[0-9a-f]{64}$') { throw "Invalid artifact digest" }
 
   record-wsl-waiver:
-    if: inputs.wsl_acceptance_mode == 'owner-waived-hotfix-1.15.23'
+    if: inputs.wsl_acceptance_mode == 'owner-waived-hotfix-1.15.24'
     needs: [admit-source, build-cli, package-windows]
     runs-on: ubuntu-24.04
     permissions:
@@ -840,7 +870,7 @@ jobs:
 
       - name: Record exact owner-authorized WSL automation waiver
         env:
-          ACCEPTED_APPLICATION_SOURCE_SHA: 80c962f4148db531c35abcf4922059d2101c9bcd
+          ACCEPTED_APPLICATION_SOURCE_SHA: ${{ env.ACCEPTED_APPLICATION_SOURCE_SHA }}
           GITHUB_ACTOR_VALUE: ${{ github.actor }}
           SOURCE_SHA: ${{ inputs.source_sha }}
         run: |
@@ -999,7 +1029,7 @@ jobs:
         needs.accept-cli-native.result == 'success' &&
         needs.upgrade-rollback-windows-x64.result == 'success' &&
         ((inputs.wsl_acceptance_mode == 'required' && needs.accept-wsl.result == 'success' && needs.record-wsl-waiver.result == 'skipped') ||
-         (inputs.wsl_acceptance_mode == 'owner-waived-hotfix-1.15.23' && needs.accept-wsl.result == 'skipped' && needs.record-wsl-waiver.result == 'success'))
+         (inputs.wsl_acceptance_mode == 'owner-waived-hotfix-1.15.24' && needs.accept-wsl.result == 'skipped' && needs.record-wsl-waiver.result == 'success'))
       }}
     needs:
       - admit-source
@@ -1054,6 +1084,122 @@ jobs:
             if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error("Artifact API set is incomplete or duplicated")
           '
 
+      - name: Normalize and verify updater artifacts against exact packages
+        env:
+          DESKTOP_VERSION: ${{ needs.admit-source.outputs.desktop_version }}
+        run: |
+          set -euo pipefail
+          bun --eval '
+            import { createHash } from "node:crypto"
+            import { mkdir, stat } from "node:fs/promises"
+            import { basename, join } from "node:path"
+            import { Glob } from "bun"
+            import { validateLeanUpdaterInfo } from "./packages/opencode/script/lean-cohort.mjs"
+            const paths = await Array.fromAsync(new Glob("**/*").scan({ cwd: "cohort-input", absolute: true, onlyFiles: true }))
+            const one = (name) => {
+              const matches = paths.filter((path) => basename(path) === name)
+              if (matches.length !== 1) throw new Error(`Expected exactly one ${name}`)
+              return matches[0]
+            }
+            const packageBinding = async (source_url, public_url) => {
+              const path = one(public_url)
+              const bytes = new Uint8Array(await Bun.file(path).arrayBuffer())
+              return { source_url, public_url, bytes: (await stat(path)).size, sha512: createHash("sha512").update(bytes).digest("base64") }
+            }
+            const normalize = async (producer, label, expected) => {
+              const value = Bun.YAML.parse(await Bun.file(one(producer)).text())
+              return validateLeanUpdaterInfo(value, { label, version: process.env.DESKTOP_VERSION, files: expected })
+            }
+            const windowsExpected = [await packageBinding("bharatcode-desktop-win-x64.exe", "bharatcode-desktop-next-beta-win-x64.exe")]
+            const linuxExpected = [
+              await packageBinding("bharatcode-desktop-linux-x64.AppImage", "bharatcode-desktop-next-beta-linux-x64.AppImage"),
+              await packageBinding("bharatcode-desktop-linux-x64.deb", "bharatcode-desktop-next-beta-linux-x64.deb"),
+            ]
+            const macArm64Expected = [await packageBinding("bharatcode-desktop-mac-arm64.zip", "bharatcode-desktop-next-beta-mac-arm64.zip")]
+            const macX64Expected = [await packageBinding("bharatcode-desktop-mac-x64.zip", "bharatcode-desktop-next-beta-mac-x64.zip")]
+            const windows = await normalize("beta-windows.producer.yml", "Windows beta updater", windowsExpected)
+            const linux = await normalize("beta-linux.producer.yml", "Linux beta updater", linuxExpected)
+            const macArm64 = await normalize("beta-mac-arm64.producer.yml", "macOS arm64 beta updater", macArm64Expected)
+            const macX64 = await normalize("beta-mac-x64.producer.yml", "macOS x64 beta updater", macX64Expected)
+            const macFiles = [...macArm64.files, ...macX64.files].sort((left, right) => left.url.localeCompare(right.url))
+            const mac = validateLeanUpdaterInfo(
+              { version: process.env.DESKTOP_VERSION, files: macFiles, path: macFiles[0].url, sha512: macFiles[0].sha512, releaseDate: [macArm64.releaseDate, macX64.releaseDate].sort().at(-1) },
+              { label: "macOS beta updater", version: process.env.DESKTOP_VERSION, files: macFiles.map((file) => ({ source_url: file.url, public_url: file.url, bytes: file.size, sha512: file.sha512 })) },
+            )
+            await mkdir("updater-assets", { recursive: false })
+            for (const [filename, value] of [["beta.yml", windows], ["beta-mac.yml", mac], ["beta-linux.yml", linux]]) {
+              await Bun.write(join("updater-assets", filename), Bun.YAML.stringify(value))
+            }
+            for (const [producer, filename] of [
+              ["bharatcode-desktop-next-beta-win-x64.exe.producer.blockmap", "bharatcode-desktop-next-beta-win-x64.exe.blockmap"],
+              ["bharatcode-desktop-next-beta-mac-arm64.zip.producer.blockmap", "bharatcode-desktop-next-beta-mac-arm64.zip.blockmap"],
+              ["bharatcode-desktop-next-beta-mac-x64.zip.producer.blockmap", "bharatcode-desktop-next-beta-mac-x64.zip.blockmap"],
+            ]) {
+              const bytes = new Uint8Array(await Bun.file(one(producer)).arrayBuffer())
+              if (bytes.byteLength === 0) throw new Error(`Empty updater blockmap: ${producer}`)
+              await Bun.write(join("updater-assets", filename), bytes)
+            }
+          '
+
+      - name: Attest Windows updater metadata
+        id: attest_windows_updater_metadata
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-path: updater-assets/beta.yml
+          show-summary: false
+
+      - name: Attest Windows updater blockmap
+        id: attest_windows_updater_blockmap
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-path: updater-assets/bharatcode-desktop-next-beta-win-x64.exe.blockmap
+          show-summary: false
+
+      - name: Attest macOS updater metadata
+        id: attest_macos_updater_metadata
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-path: updater-assets/beta-mac.yml
+          show-summary: false
+
+      - name: Attest macOS arm64 updater blockmap
+        id: attest_macos_arm64_updater_blockmap
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-path: updater-assets/bharatcode-desktop-next-beta-mac-arm64.zip.blockmap
+          show-summary: false
+
+      - name: Attest macOS x64 updater blockmap
+        id: attest_macos_x64_updater_blockmap
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-path: updater-assets/bharatcode-desktop-next-beta-mac-x64.zip.blockmap
+          show-summary: false
+
+      - name: Attest Linux updater metadata
+        id: attest_linux_updater_metadata
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-path: updater-assets/beta-linux.yml
+          show-summary: false
+
+      - name: Stage updater provenance
+        env:
+          LINUX_METADATA_BUNDLE: ${{ steps.attest_linux_updater_metadata.outputs.bundle-path }}
+          MACOS_ARM64_BLOCKMAP_BUNDLE: ${{ steps.attest_macos_arm64_updater_blockmap.outputs.bundle-path }}
+          MACOS_METADATA_BUNDLE: ${{ steps.attest_macos_updater_metadata.outputs.bundle-path }}
+          MACOS_X64_BLOCKMAP_BUNDLE: ${{ steps.attest_macos_x64_updater_blockmap.outputs.bundle-path }}
+          WINDOWS_BLOCKMAP_BUNDLE: ${{ steps.attest_windows_updater_blockmap.outputs.bundle-path }}
+          WINDOWS_METADATA_BUNDLE: ${{ steps.attest_windows_updater_metadata.outputs.bundle-path }}
+        run: |
+          set -euo pipefail
+          cp "$WINDOWS_METADATA_BUNDLE" updater-assets/beta.yml.intoto.jsonl
+          cp "$WINDOWS_BLOCKMAP_BUNDLE" updater-assets/bharatcode-desktop-next-beta-win-x64.exe.blockmap.intoto.jsonl
+          cp "$MACOS_METADATA_BUNDLE" updater-assets/beta-mac.yml.intoto.jsonl
+          cp "$MACOS_ARM64_BLOCKMAP_BUNDLE" updater-assets/bharatcode-desktop-next-beta-mac-arm64.zip.blockmap.intoto.jsonl
+          cp "$MACOS_X64_BLOCKMAP_BUNDLE" updater-assets/bharatcode-desktop-next-beta-mac-x64.zip.blockmap.intoto.jsonl
+          cp "$LINUX_METADATA_BUNDLE" updater-assets/beta-linux.yml.intoto.jsonl
+
       - name: Verify every artifact attestation against exact source and signer
         env:
           CLI_VERSION: ${{ needs.admit-source.outputs.cli_version }}
@@ -1081,6 +1227,12 @@ jobs:
             "bharatcode-desktop-next-beta-mac-arm64.zip"
             "bharatcode-desktop-next-beta-mac-x64.zip"
             "bharatcode-desktop-next-beta-win-x64.exe"
+            "beta.yml"
+            "bharatcode-desktop-next-beta-win-x64.exe.blockmap"
+            "beta-mac.yml"
+            "bharatcode-desktop-next-beta-mac-arm64.zip.blockmap"
+            "bharatcode-desktop-next-beta-mac-x64.zip.blockmap"
+            "beta-linux.yml"
             "bharatcode-upgrade-rollback-windows-x64.json"
           )
           if [[ "$WSL_ACCEPTANCE_MODE" == "required" ]]; then
@@ -1089,8 +1241,10 @@ jobs:
             cohort_subjects+=("bharatcode-wsl-acceptance-waiver.json")
           fi
           mapfile -d '' actual_subjects < <(
-            find cohort-input -type f \
+            find cohort-input updater-assets -type f \
               ! -name '*.intoto.jsonl' \
+              ! -name '*.producer.yml' \
+              ! -name '*.producer.blockmap' \
               ! -name 'manifest.json' \
               ! -name 'bharatcode-runtime-linux-x64-glibc' \
               ! -name 'bharatcode-wsl-runtime-manifest.json' \
@@ -1098,7 +1252,7 @@ jobs:
           )
           [[ "${#actual_subjects[@]}" -eq "${#cohort_subjects[@]}" ]]
           for filename in "${cohort_subjects[@]}"; do
-            mapfile -d '' matches < <(find cohort-input -type f -name "$filename" -print0)
+            mapfile -d '' matches < <(find cohort-input updater-assets -type f -name "$filename" -print0)
             [[ "${#matches[@]}" -eq 1 ]]
             subject="${matches[0]}"
             bundle="$subject.intoto.jsonl"
@@ -1126,9 +1280,12 @@ jobs:
             import { Glob } from "bun"
             import { parseCurrentBetaFixtureBytes, parseLeanUpgradeReceiptBytes } from "./packages/desktop/scripts/lean-upgrade-receipt.mjs"
             import { PLATFORM_PACKAGE_NAMES, REQUIRED_COHORT_KEYS, canonicalLeanJson, validateLeanCohort, validateLeanWslReceipt, validateLeanWslWaiver } from "./packages/opencode/script/lean-cohort.mjs"
-            const expectedKeys = ["cli-bharatcode", "cli-bharatcode-darwin-arm64", "cli-bharatcode-darwin-x64", "cli-bharatcode-darwin-x64-baseline", "cli-bharatcode-linux-arm64", "cli-bharatcode-linux-arm64-musl", "cli-bharatcode-linux-x64", "cli-bharatcode-linux-x64-baseline", "cli-bharatcode-linux-x64-baseline-musl", "cli-bharatcode-linux-x64-musl", "cli-bharatcode-windows-arm64", "cli-bharatcode-windows-x64", "cli-bharatcode-windows-x64-baseline", "desktop-linux-x64-appimage", "desktop-linux-x64-deb", "desktop-macos-arm64", "desktop-macos-x64", "desktop-windows-x64", "upgrade-rollback-windows-x64", "wsl-gate"]
+            const expectedKeys = ["cli-bharatcode", "cli-bharatcode-darwin-arm64", "cli-bharatcode-darwin-x64", "cli-bharatcode-darwin-x64-baseline", "cli-bharatcode-linux-arm64", "cli-bharatcode-linux-arm64-musl", "cli-bharatcode-linux-x64", "cli-bharatcode-linux-x64-baseline", "cli-bharatcode-linux-x64-baseline-musl", "cli-bharatcode-linux-x64-musl", "cli-bharatcode-windows-arm64", "cli-bharatcode-windows-x64", "cli-bharatcode-windows-x64-baseline", "desktop-linux-x64-appimage", "desktop-linux-x64-deb", "desktop-linux-x64-update-info", "desktop-macos-arm64", "desktop-macos-arm64-blockmap", "desktop-macos-update-info", "desktop-macos-x64", "desktop-macos-x64-blockmap", "desktop-windows-update-info", "desktop-windows-x64", "desktop-windows-x64-blockmap", "upgrade-rollback-windows-x64", "wsl-gate"]
             if (JSON.stringify(expectedKeys) !== JSON.stringify(REQUIRED_COHORT_KEYS)) throw new Error("Workflow cohort key contract drift")
-            const paths = await Array.fromAsync(new Glob("**/*").scan({ cwd: "cohort-input", absolute: true, onlyFiles: true }))
+            const paths = [
+              ...await Array.fromAsync(new Glob("**/*").scan({ cwd: "cohort-input", absolute: true, onlyFiles: true })),
+              ...await Array.fromAsync(new Glob("**/*").scan({ cwd: "updater-assets", absolute: true, onlyFiles: true })),
+            ]
             const one = (name) => {
               const matches = paths.filter((path) => basename(path) === name)
               if (matches.length !== 1) throw new Error(`Expected exactly one ${name}`)
@@ -1143,7 +1300,7 @@ jobs:
               return { key, platform, arch, filename, bytes: (await stat(path)).size, sha256: subjectSha256, artifact_attestation: { filename: basename(bundle), bytes: (await stat(bundle)).size, sha256: await digest(bundle), subject_sha256: subjectSha256, predicate_type: "https://slsa.dev/provenance/v1" }, signing, completed_at }
             }
             const cli = await Promise.all(["bharatcode", ...PLATFORM_PACKAGE_NAMES].map(async (name) => artifact(`cli-${name}`, name === "bharatcode" ? "npm" : name.includes("darwin") ? "macos" : name.includes("windows") ? "windows" : "linux", name === "bharatcode" ? "universal" : name.includes("arm64") ? "arm64" : "x64", "not-applicable", `${name}-${process.env.CLI_VERSION}.tgz`)))
-            const windows = await artifact(expectedKeys[17], "windows", "x64", "unsigned", "bharatcode-desktop-next-beta-win-x64.exe")
+            const windows = await artifact("desktop-windows-x64", "windows", "x64", "unsigned", "bharatcode-desktop-next-beta-win-x64.exe")
             const runtimeManifestPath = one("bharatcode-wsl-runtime-manifest.json")
             const wslGateResult = process.env.WSL_ACCEPTANCE_MODE === "required" ? "PASS" : "OWNER_WAIVED"
             const wslFilename = wslGateResult === "PASS" ? "bharatcode-wsl-scenarios-9-10.json" : "bharatcode-wsl-acceptance-waiver.json"
@@ -1154,10 +1311,10 @@ jobs:
             const currentBetaFixturePath = "packages/desktop/test/fixtures/current-beta-windows-x64.json"
             const currentBeta = parseCurrentBetaFixtureBytes(new Uint8Array(await Bun.file(currentBetaFixturePath).arrayBuffer()))
             const upgradePath = one("bharatcode-upgrade-rollback-windows-x64.json")
-            parseLeanUpgradeReceiptBytes(new Uint8Array(await Bun.file(upgradePath).arrayBuffer()), { source_sha: process.env.SOURCE_SHA, run_id: process.env.GITHUB_RUN_ID, run_attempt: process.env.GITHUB_RUN_ATTEMPT, current_beta: currentBeta, candidate: { key: expectedKeys[17], filename: windows.filename, bytes: windows.bytes, sha256: windows.sha256 } })
-            const artifacts = [...cli, await artifact("desktop-linux-x64-appimage", "linux", "x64", "not-applicable", "bharatcode-desktop-next-beta-linux-x64.AppImage"), await artifact("desktop-linux-x64-deb", "linux", "x64", "not-applicable", "bharatcode-desktop-next-beta-linux-x64.deb"), await artifact("desktop-macos-arm64", "macos", "arm64", "apple-notarized-stapled", "bharatcode-desktop-next-beta-mac-arm64.zip"), await artifact("desktop-macos-x64", "macos", "x64", "apple-notarized-stapled", "bharatcode-desktop-next-beta-mac-x64.zip"), windows, await artifact("upgrade-rollback-windows-x64", "windows", "x64", "acceptance-receipt", "bharatcode-upgrade-rollback-windows-x64.json"), await artifact("wsl-gate", "windows-wsl2", "x64", wslGateResult === "PASS" ? "acceptance-receipt" : "owner-waiver-receipt", wslFilename)].sort((left, right) => left.key.localeCompare(right.key))
+            parseLeanUpgradeReceiptBytes(new Uint8Array(await Bun.file(upgradePath).arrayBuffer()), { source_sha: process.env.SOURCE_SHA, run_id: process.env.GITHUB_RUN_ID, run_attempt: process.env.GITHUB_RUN_ATTEMPT, current_beta: currentBeta, candidate: { key: "desktop-windows-x64", filename: windows.filename, bytes: windows.bytes, sha256: windows.sha256 } })
+            const artifacts = [...cli, await artifact("desktop-linux-x64-appimage", "linux", "x64", "not-applicable", "bharatcode-desktop-next-beta-linux-x64.AppImage"), await artifact("desktop-linux-x64-deb", "linux", "x64", "not-applicable", "bharatcode-desktop-next-beta-linux-x64.deb"), await artifact("desktop-linux-x64-update-info", "linux", "x64", "not-applicable", "beta-linux.yml"), await artifact("desktop-macos-arm64", "macos", "arm64", "apple-notarized-stapled", "bharatcode-desktop-next-beta-mac-arm64.zip"), await artifact("desktop-macos-arm64-blockmap", "macos", "arm64", "not-applicable", "bharatcode-desktop-next-beta-mac-arm64.zip.blockmap"), await artifact("desktop-macos-update-info", "macos", "universal", "not-applicable", "beta-mac.yml"), await artifact("desktop-macos-x64", "macos", "x64", "apple-notarized-stapled", "bharatcode-desktop-next-beta-mac-x64.zip"), await artifact("desktop-macos-x64-blockmap", "macos", "x64", "not-applicable", "bharatcode-desktop-next-beta-mac-x64.zip.blockmap"), await artifact("desktop-windows-update-info", "windows", "x64", "not-applicable", "beta.yml"), windows, await artifact("desktop-windows-x64-blockmap", "windows", "x64", "not-applicable", "bharatcode-desktop-next-beta-win-x64.exe.blockmap"), await artifact("upgrade-rollback-windows-x64", "windows", "x64", "acceptance-receipt", "bharatcode-upgrade-rollback-windows-x64.json"), await artifact("wsl-gate", "windows-wsl2", "x64", wslGateResult === "PASS" ? "acceptance-receipt" : "owner-waiver-receipt", wslFilename)].sort((left, right) => left.key.localeCompare(right.key))
             if (JSON.stringify(artifacts.map((item) => item.key)) !== JSON.stringify(expectedKeys)) throw new Error("Assembled cohort key set drift")
-            const manifest = { schema: "bharatcode-next-beta-cohort-v2", repository: "BharatCode-ai/bharatcode-desktop", source_sha: process.env.SOURCE_SHA, candidate_tag: `next-beta-${process.env.SOURCE_SHA.slice(0, 12)}`, desktop_version: process.env.DESKTOP_VERSION, cli_version: process.env.CLI_VERSION, wsl_runtime_version: process.env.DESKTOP_VERSION, channel: "beta", workflow: process.env.WORKFLOW_PATH, run_id: process.env.GITHUB_RUN_ID, run_attempt: process.env.GITHUB_RUN_ATTEMPT, wsl_gate_result: wslGateResult, wsl_receipt_sha256: artifacts.find((item) => item.key === "wsl-gate").sha256, artifacts, completed_at }
+            const manifest = { schema: "bharatcode-next-beta-cohort-v2", repository: "BharatCode-ai/bharatcode-desktop", source_sha: process.env.SOURCE_SHA, candidate_tag: process.env.RELEASE_TAG, desktop_version: process.env.DESKTOP_VERSION, cli_version: process.env.CLI_VERSION, wsl_runtime_version: process.env.DESKTOP_VERSION, channel: "beta", workflow: process.env.WORKFLOW_PATH, run_id: process.env.GITHUB_RUN_ID, run_attempt: process.env.GITHUB_RUN_ATTEMPT, wsl_gate_result: wslGateResult, wsl_receipt_sha256: artifacts.find((item) => item.key === "wsl-gate").sha256, artifacts, completed_at }
             validateLeanCohort(manifest, { source_sha: process.env.SOURCE_SHA, run_id: process.env.GITHUB_RUN_ID, run_attempt: process.env.GITHUB_RUN_ATTEMPT })
             const bytes = canonicalLeanJson(manifest)
             await Bun.write("bharatcode-next-beta-cohort.json", bytes)
@@ -1185,6 +1342,7 @@ jobs:
             bharatcode-next-beta-cohort.json
             bharatcode-next-beta-cohort.json.sha256
             bharatcode-next-beta-cohort.json.intoto.jsonl
+            updater-assets
           if-no-files-found: error
           overwrite: ${{ false }}
 
@@ -1192,3 +1350,176 @@ jobs:
         env:
           ARTIFACT_DIGEST: ${{ steps.upload_cohort.outputs.artifact-digest }}
         run: '[[ "$ARTIFACT_DIGEST" =~ ^(sha256:)?[0-9a-f]{64}$ ]]'
+
+  publish-release:
+    name: Publish complete immutable Desktop 1.15.24 cohort
+    if: inputs.publish_release == true
+    needs: assemble-cohort
+    runs-on: ubuntu-24.04
+    environment: desktop-beta-release
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout the exact candidate
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.source_sha }}
+
+      - name: Setup repository-pinned Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+
+      - name: Download exact Windows release inputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: cp2-windows-${{ github.run_id }}-${{ github.run_attempt }}
+          path: release-input
+          digest-mismatch: error
+
+      - name: Download exact macOS release inputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: cp2-macos-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: release-input
+          merge-multiple: true
+          digest-mismatch: error
+
+      - name: Download exact Linux release inputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: cp2-linux-${{ github.run_id }}-${{ github.run_attempt }}
+          path: release-input
+          digest-mismatch: error
+
+      - name: Download exact closed cohort
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: cp2-cohort-${{ github.run_id }}-${{ github.run_attempt }}
+          path: release-input
+          digest-mismatch: error
+
+      - name: Revalidate and stage complete public update cohort
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          bun --eval '
+            import { createHash } from "node:crypto"
+            import { copyFile, mkdir, readdir, stat, writeFile } from "node:fs/promises"
+            import { basename, join } from "node:path"
+            import { Glob } from "bun"
+            import { parseLeanCohortBytes } from "./packages/opencode/script/lean-cohort.mjs"
+            const bytes = new Uint8Array(await Bun.file("release-input/bharatcode-next-beta-cohort.json").arrayBuffer())
+            const manifest = parseLeanCohortBytes(bytes, { source_sha: process.env.SOURCE_SHA, run_id: process.env.GITHUB_RUN_ID, run_attempt: process.env.GITHUB_RUN_ATTEMPT })
+            if (manifest.desktop_version !== "1.15.24" || manifest.candidate_tag !== process.env.RELEASE_TAG) throw new Error("Release identity drift")
+            const expected = new Map([
+              ["desktop-windows-x64", ["bharatcode-desktop-next-beta-win-x64.exe", "unsigned"]],
+              ["desktop-windows-update-info", ["beta.yml", "not-applicable"]],
+              ["desktop-windows-x64-blockmap", ["bharatcode-desktop-next-beta-win-x64.exe.blockmap", "not-applicable"]],
+              ["desktop-macos-arm64", ["bharatcode-desktop-next-beta-mac-arm64.zip", "apple-notarized-stapled"]],
+              ["desktop-macos-arm64-blockmap", ["bharatcode-desktop-next-beta-mac-arm64.zip.blockmap", "not-applicable"]],
+              ["desktop-macos-update-info", ["beta-mac.yml", "not-applicable"]],
+              ["desktop-macos-x64", ["bharatcode-desktop-next-beta-mac-x64.zip", "apple-notarized-stapled"]],
+              ["desktop-macos-x64-blockmap", ["bharatcode-desktop-next-beta-mac-x64.zip.blockmap", "not-applicable"]],
+              ["desktop-linux-x64-appimage", ["bharatcode-desktop-next-beta-linux-x64.AppImage", "not-applicable"]],
+              ["desktop-linux-x64-deb", ["bharatcode-desktop-next-beta-linux-x64.deb", "not-applicable"]],
+              ["desktop-linux-x64-update-info", ["beta-linux.yml", "not-applicable"]],
+            ])
+            const paths = await Array.fromAsync(new Glob("**/*").scan({ cwd: "release-input", absolute: true, onlyFiles: true }))
+            const one = (name) => { const matches = paths.filter((path) => basename(path) === name); if (matches.length !== 1) throw new Error(`Expected one ${name}`); return matches[0] }
+            const digest = async (path) => createHash("sha256").update(new Uint8Array(await Bun.file(path).arrayBuffer())).digest("hex")
+            await mkdir("release-assets", { recursive: false })
+            const sums = []
+            for (const [key, [filename, signing]] of expected) {
+              const record = manifest.artifacts.find((item) => item.key === key)
+              if (!record || record.filename !== filename || record.signing !== signing) throw new Error(`Public artifact contract drift: ${key}`)
+              const source = one(filename)
+              if ((await stat(source)).size !== record.bytes || await digest(source) !== record.sha256) throw new Error(`Public artifact bytes drift: ${key}`)
+              const bundle = one(`${filename}.intoto.jsonl`)
+              if ((await stat(bundle)).size !== record.artifact_attestation.bytes || await digest(bundle) !== record.artifact_attestation.sha256) throw new Error(`Public attestation drift: ${key}`)
+              await copyFile(source, join("release-assets", filename))
+              await copyFile(bundle, join("release-assets", `${filename}.intoto.jsonl`))
+              sums.push(`${record.sha256}  ${filename}`)
+            }
+            for (const filename of ["bharatcode-next-beta-cohort.json", "bharatcode-next-beta-cohort.json.sha256", "bharatcode-next-beta-cohort.json.intoto.jsonl"]) await copyFile(one(filename), join("release-assets", filename))
+            await writeFile("release-assets/SHA256SUMS", `${sums.sort().join("\n")}\n`, { mode: 0o600 })
+            const actual = (await readdir("release-assets")).sort()
+            const wanted = [...expected.values()].flatMap(([filename]) => [filename, `${filename}.intoto.jsonl`]).concat(["SHA256SUMS", "bharatcode-next-beta-cohort.json", "bharatcode-next-beta-cohort.json.intoto.jsonl", "bharatcode-next-beta-cohort.json.sha256"]).sort()
+            if (JSON.stringify(actual) !== JSON.stringify(wanted)) throw new Error("Public release asset set drift")
+          '
+          (cd release-input && sha256sum --check bharatcode-next-beta-cohort.json.sha256)
+
+      - name: Refuse overwrite and verify rollback release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_SHA" = "$SOURCE_SHA"
+          previous="$(gh release view "$PREVIOUS_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease,targetCommitish)"
+          PREVIOUS_RELEASE="$previous" bun --eval 'const value=JSON.parse(process.env.PREVIOUS_RELEASE); if(value.isDraft || !value.isPrerelease || value.targetCommitish !== "0ee3879a06275b55a432a5ed4bd63695aae16be1") throw new Error("Rollback release drift")'
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then echo "Release already exists; refusing overwrite." >&2; exit 1; fi
+          if [[ -n "$(git ls-remote origin "refs/tags/$RELEASE_TAG")" ]]; then echo "Tag already exists; refusing mixed provenance." >&2; exit 1; fi
+
+      - name: Create draft and upload without overwrite
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --target "$SOURCE_SHA" --title "BharatCode Desktop 1.15.24 (Beta)" --notes "Immutable multi-platform BharatCode Desktop 1.15.24 beta cohort. Windows x64 is unsigned; macOS arm64/x64 is Developer ID signed, notarized, and stapled; Linux x64 packages are unsigned." --draft --prerelease
+          mapfile -t assets < <(find release-assets -maxdepth 1 -type f -printf '%p\n' | sort)
+          [[ "${#assets[@]}" -eq 26 ]]
+          gh release upload "$RELEASE_TAG" "${assets[@]}" --repo "$GITHUB_REPOSITORY"
+
+      - name: Verify draft asset identities and live URLs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease,targetCommitish,assets > release-state.json
+          bun --eval '
+            import { createHash } from "node:crypto"
+            import { readdir } from "node:fs/promises"
+            const state = await Bun.file("release-state.json").json()
+            if (!state.isDraft || !state.isPrerelease || state.targetCommitish !== process.env.SOURCE_SHA) throw new Error("Draft release identity drift")
+            const names = (await readdir("release-assets")).sort()
+            if (JSON.stringify(state.assets.map((item) => item.name).sort()) !== JSON.stringify(names)) throw new Error("Draft release asset set drift")
+            for (const asset of state.assets) {
+              const bytes = new Uint8Array(await Bun.file(`release-assets/${asset.name}`).arrayBuffer())
+              if (asset.digest !== `sha256:${createHash("sha256").update(bytes).digest("hex")}`) throw new Error(`Draft digest drift: ${asset.name}`)
+              const expected = `https://github.com/${process.env.GITHUB_REPOSITORY}/releases/download/${process.env.RELEASE_TAG}/${asset.name}`
+              if (asset.url !== expected) throw new Error(`Draft URL drift: ${asset.name}`)
+            }
+          '
+
+      - name: Finalize verified prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease=true
+          state="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease,targetCommitish,assets)"
+          RELEASE_STATE="$state" bun --eval 'const value=JSON.parse(process.env.RELEASE_STATE); if(value.isDraft || !value.isPrerelease || value.targetCommitish !== process.env.SOURCE_SHA) throw new Error("Prerelease finalization drift")'
+          RELEASE_STATE="$state" bun --eval 'for (const asset of JSON.parse(process.env.RELEASE_STATE).assets) console.log(asset.url)' > release-urls.txt
+          while IFS= read -r url; do curl --fail --silent --show-error --head --location --proto '=https' --tlsv1.2 "$url" >/dev/null; done < release-urls.txt
+
+      - name: Notify website after finalization
+        if: inputs.notify_website == true
+        env:
+          GH_TOKEN: ${{ secrets.BHARATCODE_WEBSITE_DISPATCH_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$GH_TOKEN"
+          gh api repos/BharatCode-ai/bharatcode/dispatches --method POST --input - <<EOF
+          {
+            "event_type": "desktop_release_published",
+            "client_payload": {
+              "repo": "$GITHUB_REPOSITORY",
+              "tag": "$RELEASE_TAG",
+              "channel": "beta",
+              "release_url": "https://github.com/$GITHUB_REPOSITORY/releases/tag/$RELEASE_TAG"
+            }
+          }
+          EOF

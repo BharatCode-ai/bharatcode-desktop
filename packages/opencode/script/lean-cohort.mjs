@@ -1,4 +1,5 @@
 const SHA256 = /^[0-9a-f]{64}$/u
+const SHA512_BASE64 = /^[A-Za-z0-9+/]{86}==$/u
 const SOURCE_SHA = /^[0-9a-f]{40}$/u
 const POSITIVE_DECIMAL = /^[1-9][0-9]*$/u
 const SEMVER =
@@ -28,9 +29,15 @@ export const REQUIRED_COHORT_KEYS = Object.freeze(
     ...PLATFORM_PACKAGE_NAMES.map((name) => `cli-${name}`),
     "desktop-linux-x64-appimage",
     "desktop-linux-x64-deb",
+    "desktop-linux-x64-update-info",
     "desktop-macos-arm64",
+    "desktop-macos-arm64-blockmap",
+    "desktop-macos-update-info",
     "desktop-macos-x64",
+    "desktop-macos-x64-blockmap",
     "desktop-windows-x64",
+    "desktop-windows-x64-blockmap",
+    "desktop-windows-update-info",
     "upgrade-rollback-windows-x64",
     "wsl-gate",
   ].sort(),
@@ -65,6 +72,62 @@ export function parseLeanCohortBytes(bytes, bindings) {
   return validateLeanCohort(parseCanonicalLeanJsonBytes(bytes, "lean cohort manifest"), bindings)
 }
 
+export function validateLeanUpdaterInfo(value, bindings) {
+  exactKeys(bindings, ["files", "label", "version"], "lean updater bindings")
+  requireValue(typeof bindings.label === "string" && bindings.label.length > 0, "lean updater label is invalid")
+  requirePattern(bindings.version, SEMVER, "expected lean updater version")
+  requireValue(Array.isArray(bindings.files) && bindings.files.length > 0, "expected lean updater files are invalid")
+  exactKeys(value, ["files", "path", "releaseDate", "sha512", "version"], bindings.label)
+  requireValue(value.version === bindings.version, `${bindings.label} version does not match`)
+  requireTimestamp(value.releaseDate, `${bindings.label} release`)
+  requireValue(
+    Array.isArray(value.files) && value.files.length === bindings.files.length,
+    `${bindings.label} file set is incomplete`,
+  )
+
+  const expectedBySource = new Map()
+  const publicUrls = new Set()
+  for (const expected of bindings.files) {
+    exactKeys(expected, ["bytes", "public_url", "sha512", "source_url"], `${bindings.label} expected file`)
+    requireValue(!expectedBySource.has(expected.source_url), `${bindings.label} expected source URL is duplicated`)
+    requireValue(!publicUrls.has(expected.public_url), `${bindings.label} expected public URL is duplicated`)
+    expectedBySource.set(expected.source_url, expected)
+    publicUrls.add(expected.public_url)
+  }
+  const actualBySource = new Map()
+  for (const file of value.files) {
+    exactKeys(file, ["sha512", "size", "url"], `${bindings.label} file`)
+    const expected = expectedBySource.get(file.url)
+    requireValue(expected !== undefined, `${bindings.label} source URL does not match`)
+    requireValue(!actualBySource.has(file.url), `${bindings.label} source URL is duplicated`)
+    requireFilename(expected.source_url, `${bindings.label} source URL`)
+    requireFilename(expected.public_url, `${bindings.label} public URL`)
+    requireValue(
+      Number.isSafeInteger(expected.bytes) && expected.bytes > 0,
+      `${bindings.label} expected size is invalid`,
+    )
+    requirePattern(expected.sha512, SHA512_BASE64, `${bindings.label} expected SHA-512`)
+    requireValue(file.url === expected.source_url, `${bindings.label} source URL does not match`)
+    requireValue(file.size === expected.bytes, `${bindings.label} file size does not match`)
+    requireValue(file.sha512 === expected.sha512, `${bindings.label} file SHA-512 does not match`)
+    actualBySource.set(file.url, file)
+  }
+  requireValue(actualBySource.size === expectedBySource.size, `${bindings.label} file set is incomplete`)
+  const normalizedFiles = bindings.files.map((expected) => {
+    const file = actualBySource.get(expected.source_url)
+    return { url: expected.public_url, sha512: file.sha512, size: file.size }
+  })
+  requireValue(value.path === value.files[0].url, `${bindings.label} legacy path does not match`)
+  requireValue(value.sha512 === value.files[0].sha512, `${bindings.label} legacy SHA-512 does not match`)
+  return {
+    version: value.version,
+    files: normalizedFiles,
+    path: normalizedFiles[0].url,
+    sha512: normalizedFiles[0].sha512,
+    releaseDate: value.releaseDate,
+  }
+}
+
 export function validateLeanCohort(value, bindings) {
   exactKeys(bindings, ["run_attempt", "run_id", "source_sha"], "lean cohort bindings")
   exactKeys(
@@ -92,7 +155,7 @@ export function validateLeanCohort(value, bindings) {
   requireValue(value.repository === "BharatCode-ai/bharatcode-desktop", "lean cohort repository is invalid")
   requirePattern(bindings.source_sha, SOURCE_SHA, "expected lean cohort source")
   requireValue(value.source_sha === bindings.source_sha, "lean cohort source does not match")
-  requireValue(value.candidate_tag === `next-beta-${value.source_sha.slice(0, 12)}`, "lean cohort tag is invalid")
+  requireValue(value.candidate_tag === `desktop-beta-${value.desktop_version}`, "lean cohort tag is invalid")
   requirePattern(value.desktop_version, SEMVER, "lean cohort Desktop version")
   requirePattern(value.cli_version, SEMVER, "lean cohort CLI version")
   requirePattern(value.wsl_runtime_version, SEMVER, "lean cohort WSL runtime version")
@@ -283,6 +346,9 @@ function validateArtifact(value, expectedKey, manifest, filenames, attestationFi
   )
   requireValue(value.signing === expected.signing, `lean cohort ${expectedKey} signing result is invalid`)
   requireFilename(value.filename, `lean cohort ${expectedKey} filename`)
+  if (expected.filename !== undefined) {
+    requireValue(value.filename === expected.filename, `lean cohort ${expectedKey} filename is invalid`)
+  }
   requireValue(!filenames.has(value.filename), "lean cohort artifact filename is duplicated")
   filenames.add(value.filename)
   requireValue(Number.isSafeInteger(value.bytes) && value.bytes > 0, `lean cohort ${expectedKey} byte size is invalid`)
@@ -323,11 +389,44 @@ function validateArtifact(value, expectedKey, manifest, filenames, attestationFi
 
 function expectedArtifactIdentity(key, manifest) {
   if (key === "desktop-windows-x64") return { platform: "windows", arch: "x64", signing: "unsigned" }
+  if (key === "desktop-windows-x64-blockmap") {
+    return {
+      platform: "windows",
+      arch: "x64",
+      signing: "not-applicable",
+      filename: "bharatcode-desktop-next-beta-win-x64.exe.blockmap",
+    }
+  }
+  if (key === "desktop-windows-update-info") {
+    return { platform: "windows", arch: "x64", signing: "not-applicable", filename: "beta.yml" }
+  }
   if (key === "desktop-macos-arm64") {
     return { platform: "macos", arch: "arm64", signing: "apple-notarized-stapled" }
   }
+  if (key === "desktop-macos-arm64-blockmap") {
+    return {
+      platform: "macos",
+      arch: "arm64",
+      signing: "not-applicable",
+      filename: "bharatcode-desktop-next-beta-mac-arm64.zip.blockmap",
+    }
+  }
+  if (key === "desktop-macos-update-info") {
+    return { platform: "macos", arch: "universal", signing: "not-applicable", filename: "beta-mac.yml" }
+  }
   if (key === "desktop-macos-x64") {
     return { platform: "macos", arch: "x64", signing: "apple-notarized-stapled" }
+  }
+  if (key === "desktop-macos-x64-blockmap") {
+    return {
+      platform: "macos",
+      arch: "x64",
+      signing: "not-applicable",
+      filename: "bharatcode-desktop-next-beta-mac-x64.zip.blockmap",
+    }
+  }
+  if (key === "desktop-linux-x64-update-info") {
+    return { platform: "linux", arch: "x64", signing: "not-applicable", filename: "beta-linux.yml" }
   }
   if (key.startsWith("desktop-linux-")) return { platform: "linux", arch: "x64", signing: "not-applicable" }
   if (key === "wsl-gate") {
