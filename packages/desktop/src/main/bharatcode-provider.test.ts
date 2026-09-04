@@ -175,7 +175,12 @@ describe("bundled BharatCode provider", () => {
   })
 
   test("excludes malformed complete-looking records while retaining two valid future models", async () => {
-    const future = { ...catalog[1], id: "bharatcode:future-heavy-coder", display_name: "Future heavy coder" }
+    const future = {
+      ...catalog[1],
+      id: "bharatcode:future-heavy-coder",
+      display_name: "Future heavy coder",
+      metadata: { ...catalog[1].metadata, accessTier: "heavy" },
+    }
     const malformed = [
       { ...catalog[1], id: "bad id with spaces" },
       { ...catalog[1], id: "bharatcode:cafe\u0301" },

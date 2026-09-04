@@ -72,6 +72,25 @@ const futureModels: BharatCodeCatalog.Model[] = [
     maxOutputTokens: 16_000,
   },
   {
+    id: "bharatcode:future-heavy-coder",
+    ownedBy: "bharatcode",
+    modality: "chat",
+    endpoint: "/v1/chat/completions",
+    protocol: "openai_chat_completions",
+    runtime: "vllm",
+    status: "live",
+    displayName: "Future heavy coder",
+    metadata: {
+      input: ["text"],
+      output: ["text"],
+      toolCalling: true,
+      reasoning: true,
+      accessTier: "heavy",
+    },
+    contextWindow: 256_000,
+    maxOutputTokens: 32_000,
+  },
+  {
     id: "bharatcode:future-embedding",
     ownedBy: "bharatcode",
     modality: "embedding",
@@ -138,7 +157,11 @@ testEffect(futureProviderLayer).instance("lists and resolves every eligible live
     const listed = yield* provider.list()
     const models = listed[ProviderID.make("bharatcode")].models
 
-    expect(Object.keys(models).sort()).toEqual(["bharatcode:future-text-coder", "bharatcode:qwen36-35b-awq-200k"])
+    expect(Object.keys(models).sort()).toEqual([
+      "bharatcode:future-heavy-coder",
+      "bharatcode:future-text-coder",
+      "bharatcode:qwen36-35b-awq-200k",
+    ])
     expect(models).not.toHaveProperty("bharatcode:future-embedding")
     const future = yield* provider.getModel(ProviderID.make("bharatcode"), ModelID.make("bharatcode:future-text-coder"))
     expect(String(future.id)).toBe("bharatcode:future-text-coder")
@@ -148,6 +171,8 @@ testEffect(futureProviderLayer).instance("lists and resolves every eligible live
       toolcall: true,
       attachment: false,
     })
+    const heavy = yield* provider.getModel(ProviderID.make("bharatcode"), ModelID.make("bharatcode:future-heavy-coder"))
+    expect(String(heavy.id)).toBe("bharatcode:future-heavy-coder")
   }),
 )
 
