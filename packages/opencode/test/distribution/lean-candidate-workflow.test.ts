@@ -2134,7 +2134,9 @@ describe("lean next-beta candidate workflow", () => {
     const value = await source()
     const workflow = parse(value)
     const publish = workflow.jobs["publish-release"] as (typeof workflow.jobs)[string] & { environment?: string }
-    expect(publish.if).toBe("needs.admit-source.outputs.publish_requested == 'true'")
+    expect(publish.if).toBe(
+      "always() && !cancelled() && needs.admit-source.result == 'success' && needs.assemble-cohort.result == 'success' && needs.admit-source.outputs.publish_requested == 'true'",
+    )
     expect((publish as unknown as { needs: string[] }).needs).toEqual(["admit-source", "assemble-cohort"])
     expect(publish.environment).toBe("desktop-beta-release")
     expect(publish.permissions).toEqual({ contents: "write" })
@@ -2230,7 +2232,16 @@ describe("lean next-beta candidate workflow", () => {
     expect(admission).toContain("notify_requested=true")
     expect(admission).toContain("printf 'publish_requested=%s\\n'")
     expect(admission).toContain("printf 'notify_requested=%s\\n'")
-    expect(publish.if).toBe("needs.admit-source.outputs.publish_requested == 'true'")
+    expect(publish.if).toBe(
+      "always() && !cancelled() && needs.admit-source.result == 'success' && needs.assemble-cohort.result == 'success' && needs.admit-source.outputs.publish_requested == 'true'",
+    )
+    const mayPublish = (cancelled: boolean, admitResult: string, assembleResult: string, publishRequested: string) =>
+      !cancelled && admitResult === "success" && assembleResult === "success" && publishRequested === "true"
+    expect(mayPublish(false, "success", "success", "true")).toBeTrue()
+    expect(mayPublish(true, "success", "success", "true")).toBeFalse()
+    expect(mayPublish(false, "cancelled", "success", "true")).toBeFalse()
+    expect(mayPublish(false, "success", "cancelled", "true")).toBeFalse()
+    expect(mayPublish(false, "success", "success", "false")).toBeFalse()
     expect(notify?.if).toBe("needs.admit-source.outputs.notify_requested == 'true'")
     expect(value).not.toContain("inputs.publish_release")
     expect(value).not.toContain("inputs.notify_website")

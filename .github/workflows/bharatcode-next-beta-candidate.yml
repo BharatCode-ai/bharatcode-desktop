@@ -1482,7 +1482,7 @@ jobs:
 
   publish-release:
     name: Publish complete immutable Desktop 1.15.24 cohort
-    if: needs.admit-source.outputs.publish_requested == 'true'
+    if: always() && !cancelled() && needs.admit-source.result == 'success' && needs.assemble-cohort.result == 'success' && needs.admit-source.outputs.publish_requested == 'true'
     needs: [admit-source, assemble-cohort]
     runs-on: ubuntu-24.04
     environment: desktop-beta-release
