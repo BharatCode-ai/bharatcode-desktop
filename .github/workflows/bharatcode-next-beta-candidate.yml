@@ -45,7 +45,7 @@ permissions:
 
 env:
   ACCEPTED_APPLICATION_SOURCE_SHA: 80c962f4148db531c35abcf4922059d2101c9bcd
-  ACCEPTED_RELEASE_PARENT_SHA: 641741e2b01f918e70fdc37c78c0090c71ff6037
+  ACCEPTED_RELEASE_PARENT_SHA: 2dbfdfa660b006c8031b289cd8cbbe6be8d3778e
   AUTHORIZED_OWNER_ACTOR: shrey16
   BHARATCODE_CHANNEL: beta
   PREVIOUS_RELEASE_TAG: desktop-beta-1.15.24
@@ -99,7 +99,7 @@ jobs:
           [[ "$(git status --porcelain)" == "" ]]
           git merge-base --is-ancestor "$ACCEPTED_APPLICATION_SOURCE_SHA" "$SOURCE_SHA"
           [[ "$(git rev-parse "$SOURCE_SHA^")" == "$ACCEPTED_RELEASE_PARENT_SHA" ]]
-          [[ "$(git diff --name-only "$ACCEPTED_RELEASE_PARENT_SHA" "$SOURCE_SHA")" == $'.github/workflows/bharatcode-next-beta-candidate.yml\npackages/desktop/scripts/lean-upgrade-receipt.mjs\npackages/desktop/test/fixtures/current-beta-windows-x64.json\npackages/opencode/script/lean-cohort.mjs\npackages/opencode/test/distribution/lean-candidate-workflow.test.ts\npackages/opencode/test/distribution/lean-cohort.test.ts' ]]
+          [[ "$(git diff --name-only "$ACCEPTED_RELEASE_PARENT_SHA" "$SOURCE_SHA")" == $'.github/workflows/bharatcode-next-beta-candidate.yml\npackages/opencode/test/distribution/lean-candidate-workflow.test.ts' ]]
           [[ "$UPGRADE_ACCEPTANCE_MODE" == "required" || "$UPGRADE_ACCEPTANCE_MODE" == "owner-waived-hotfix-1.15.25" ]]
           [[ "$WSL_ACCEPTANCE_MODE" == "required" || "$WSL_ACCEPTANCE_MODE" == "owner-waived-hotfix-1.15.25" ]]
           [[ "$PUBLICATION_ACTION" == "hold" || "$PUBLICATION_ACTION" == "publish" ]]
@@ -1620,6 +1620,8 @@ jobs:
         run: |
           set -euo pipefail
           test "$GITHUB_SHA" = "$SOURCE_SHA"
+          gh api "repos/$GITHUB_REPOSITORY/immutable-releases" -H "X-GitHub-Api-Version: 2026-03-10" > immutable-releases.json
+          bun --eval 'const value=await Bun.file("immutable-releases.json").json(); if(value.enabled !== true) throw new Error("GitHub release immutability is not enabled")'
           previous="$(gh release view "$PREVIOUS_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease,targetCommitish)"
           PREVIOUS_RELEASE="$previous" bun --eval 'const value=JSON.parse(process.env.PREVIOUS_RELEASE); if(value.isDraft || !value.isPrerelease || value.targetCommitish !== "853de6ccc11de7d68d803126942dbebf72e32c8c") throw new Error("Rollback release drift")'
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then echo "Release already exists; refusing overwrite." >&2; exit 1; fi
@@ -1662,22 +1664,22 @@ jobs:
         run: |
           set -euo pipefail
           gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease=true
-          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease,targetCommitish,assets > release-final-state.json
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > release-final-state.json
           bun --eval '
             import { createHash } from "node:crypto"
             import { readdir } from "node:fs/promises"
             const state = await Bun.file("release-final-state.json").json()
-            if (state.isDraft || !state.isPrerelease || state.targetCommitish !== process.env.SOURCE_SHA) throw new Error("Prerelease finalization drift")
+            if (state.draft || !state.prerelease || state.immutable !== true || state.target_commitish !== process.env.SOURCE_SHA) throw new Error("Prerelease finalization or immutability drift")
             const names = (await readdir("release-assets")).sort()
             if (JSON.stringify(state.assets.map((item) => item.name).sort()) !== JSON.stringify(names)) throw new Error("Final release asset set drift")
             for (const asset of state.assets) {
               const bytes = new Uint8Array(await Bun.file(`release-assets/${asset.name}`).arrayBuffer())
               if (asset.digest !== `sha256:${createHash("sha256").update(bytes).digest("hex")}`) throw new Error(`Final release digest drift: ${asset.name}`)
               const expected = `https://github.com/${process.env.GITHUB_REPOSITORY}/releases/download/${process.env.RELEASE_TAG}/${asset.name}`
-              if (asset.url !== expected) throw new Error(`Final release URL drift: ${asset.name}`)
+              if (asset.browser_download_url !== expected) throw new Error(`Final release URL drift: ${asset.name}`)
             }
           '
-          bun --eval 'for (const asset of (await Bun.file("release-final-state.json").json()).assets) console.log(asset.url)' > release-urls.txt
+          bun --eval 'for (const asset of (await Bun.file("release-final-state.json").json()).assets) console.log(asset.browser_download_url)' > release-urls.txt
           while IFS= read -r url; do curl --fail --silent --show-error --head --location --proto '=https' --tlsv1.2 "$url" >/dev/null; done < release-urls.txt
 
       - name: Notify website after finalization

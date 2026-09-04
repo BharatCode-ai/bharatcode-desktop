@@ -34,7 +34,7 @@ const reviewedSecurityStepSha256 = {
   windowsUnsigned: "a3c024ac9c6087fca041b9d2aeeab56f59e5086557e1dbb56169846d701f5c6d",
 } as const
 const acceptedApplicationSourceSha = "80c962f4148db531c35abcf4922059d2101c9bcd"
-const acceptedReleaseParentSha = "641741e2b01f918e70fdc37c78c0090c71ff6037"
+const acceptedReleaseParentSha = "2dbfdfa660b006c8031b289cd8cbbe6be8d3778e"
 const wslRunnerLabel = "bharatcode-acceptance-${{ github.run_id }}-${{ github.run_attempt }}"
 const frozenWslPaths = [
   "packages/desktop/electron-builder.config.ts",
@@ -194,11 +194,7 @@ const internalWslInputs = [
 ]
 const releaseControlDeltaPaths = [
   ".github/workflows/bharatcode-next-beta-candidate.yml",
-  "packages/desktop/scripts/lean-upgrade-receipt.mjs",
-  "packages/desktop/test/fixtures/current-beta-windows-x64.json",
-  "packages/opencode/script/lean-cohort.mjs",
   "packages/opencode/test/distribution/lean-candidate-workflow.test.ts",
-  "packages/opencode/test/distribution/lean-cohort.test.ts",
 ] as const
 
 async function source() {
@@ -2237,6 +2233,8 @@ describe("lean next-beta candidate workflow", () => {
     expect(refuseRun).toContain('value.targetCommitish !== "853de6ccc11de7d68d803126942dbebf72e32c8c"')
     expect(refuseRun).toContain("Release already exists; refusing overwrite.")
     expect(refuseRun).toContain("Tag already exists; refusing mixed provenance.")
+    expect(refuseRun).toContain("repos/$GITHUB_REPOSITORY/immutable-releases")
+    expect(refuseRun).toContain("GitHub release immutability is not enabled")
     const createRun = steps[create]?.run ?? ""
     expect(createRun).toContain('gh release create "$RELEASE_TAG"')
     expect(createRun).toContain("--draft --prerelease")
@@ -2246,6 +2244,7 @@ describe("lean next-beta candidate workflow", () => {
     expect(finalizeRun).toContain("Final release asset set drift")
     expect(finalizeRun).toContain("Final release digest drift")
     expect(finalizeRun).toContain("Final release URL drift")
+    expect(finalizeRun).toContain("state.immutable !== true")
     expect(steps[notify]?.if).toBe("needs.admit-source.outputs.notify_requested == 'true'")
     expect(steps[notify]?.env).toEqual({ GH_TOKEN: "${{ secrets.BHARATCODE_WEBSITE_DISPATCH_TOKEN }}" })
     expect(steps[notify]?.run).toContain('"event_type": "desktop_release_published"')
