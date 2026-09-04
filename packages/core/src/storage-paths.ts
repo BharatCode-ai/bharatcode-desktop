@@ -58,6 +58,13 @@ export function resolve(input: Input) {
     cache: roots.cache,
     config: roots.config,
     state: roots.state,
+    // Recovery snapshots and journals must be disjoint from the destination
+    // data/config roots. macOS keeps ordinary app state below data, so use a
+    // branded sibling solely for the recovery transaction there.
+    recovery:
+      input.platform === "darwin"
+        ? paths.join(input.home, "Library", "Application Support", `${name}-recovery`)
+        : roots.state,
     tmp: paths.join(input.temp, name),
     bin: paths.join(roots.cache, "bin"),
     log: roots.log,

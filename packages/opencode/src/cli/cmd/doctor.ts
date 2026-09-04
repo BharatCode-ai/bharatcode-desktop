@@ -140,7 +140,7 @@ export function createDefaultRecoveryController() {
     destination: {
       data: Global.Path.data,
       config: Global.Path.config,
-      state: Global.Path.state,
+      state: Global.Path.recovery,
       database: Global.Path.database,
       storage: Global.Path.storage,
     },

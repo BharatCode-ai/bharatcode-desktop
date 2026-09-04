@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite"
 import { describe, expect, test } from "bun:test"
 import { mkdir, readFile, symlink, writeFile } from "node:fs/promises"
 import path from "node:path"
+import { StoragePaths } from "@opencode-ai/core/storage-paths"
 
 import { fingerprintMigrationSource, type MigrationDestination } from "@/migration/capture"
 import { activateMigration, prepareMigration, startFresh, validateFreshDestination } from "@/migration/cutover"
@@ -27,6 +28,71 @@ describe("migration cutover", () => {
     if (result.type !== "choose-source") throw new Error("expected source choice")
     expect(result.sources.map((item) => item.id)).toEqual([first.id, second.id])
     expect(result.sources.every((item) => /^[0-9a-f]{64}$/.test(item.contentFingerprint))).toBe(true)
+  })
+
+  test("uses the disjoint macOS recovery root and quarantines prior nested app state once", async () => {
+    await using tmp = await tmpdir()
+    const paths = StoragePaths.resolve({
+      channel: "beta",
+      platform: "darwin",
+      home: tmp.path,
+      temp: path.join(tmp.path, "tmp"),
+      env: {},
+    })
+    const destination: MigrationDestination = {
+      data: paths.data,
+      config: paths.config,
+      state: paths.recovery,
+      database: paths.database,
+      storage: paths.storage,
+    }
+    await mkdir(paths.state, { recursive: true })
+    await writeFile(path.join(paths.state, "session.json"), '{"remembered":"ses_safe"}')
+
+    const result = await startFresh({ destination, reason: "no-source", confirmed: true })
+
+    expect(result.state).toBe("fresh")
+    expect(result.quarantine).toBeDefined()
+    expect(await Bun.file(path.join(result.quarantine!, "data", "State", "session.json")).text()).toBe(
+      '{"remembered":"ses_safe"}',
+    )
+    expect(await Bun.file(path.join(paths.recovery, "lean-migration-v1.json")).exists()).toBe(true)
+    expect(await Bun.file(path.join(paths.state, "session.json")).exists()).toBe(false)
+    expect(await validateFreshDestination(destination)).toBe(true)
+  })
+
+  test("prepares and activates a selected source with the canonical macOS layout", async () => {
+    await using tmp = await tmpdir()
+    const paths = StoragePaths.resolve({
+      channel: "beta",
+      platform: "darwin",
+      home: tmp.path,
+      temp: path.join(tmp.path, "tmp"),
+      env: {},
+    })
+    const destination: MigrationDestination = {
+      data: paths.data,
+      config: paths.config,
+      state: paths.recovery,
+      database: paths.database,
+      storage: paths.storage,
+    }
+    const candidate = await source(tmp.path, "mac-existing")
+    const contentFingerprint = await fingerprintMigrationSource(candidate)
+
+    const prepared = await prepareMigration({
+      sources: [candidate],
+      choice: { id: candidate.id, contentFingerprint },
+      destination,
+    })
+    if (prepared.type !== "prepared") throw new Error("expected prepared macOS migration")
+    expect(await activateMigration({ operationID: prepared.operationID, destination })).toEqual({
+      state: "complete",
+      sourceID: candidate.id,
+    })
+    expect(await Bun.file(path.join(paths.config, "settings.json")).text()).not.toContain("opencode.ai")
+    expect(await Bun.file(path.join(paths.recovery, "lean-migration-v1.json")).exists()).toBe(true)
+    expect(await validateFreshDestination(destination)).toBe(true)
   })
 
   test("rejects a stale choice and never mixes newly changed source bytes", async () => {

@@ -30,6 +30,7 @@ function completeGlobal(root: string): Global.Interface {
     cache,
     config: path.join(base, "config"),
     state: path.join(base, "state"),
+    recovery: path.join(base, "state"),
     tmp: path.join(base, "tmp"),
     bin: path.join(cache, "bin"),
     log: path.join(base, "log"),

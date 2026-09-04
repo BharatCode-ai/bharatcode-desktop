@@ -43,6 +43,7 @@ export interface Interface {
   readonly cache: string
   readonly config: string
   readonly state: string
+  readonly recovery: string
   readonly tmp: string
   readonly bin: string
   readonly log: string
@@ -60,6 +61,7 @@ export function make(input: Partial<Interface> = {}): Interface {
     cache: Path.cache,
     config: Flag.BHARATCODE_CONFIG_DIR ?? Path.config,
     state: Path.state,
+    recovery: Path.recovery,
     tmp: Path.tmp,
     bin: Path.bin,
     log: Path.log,
