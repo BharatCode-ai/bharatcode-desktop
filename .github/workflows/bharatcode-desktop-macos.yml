@@ -48,12 +48,88 @@ on:
         required: true
         default: false
         type: boolean
+      diagnostic_only:
+        description: Run only the immutable 1.15.24 packaged recovery diagnostic.
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: write
 
 jobs:
+  diagnose-packaged-recovery:
+    if: ${{ inputs.diagnostic_only == true }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            asset: bharatcode-desktop-next-beta-mac-arm64.zip
+          - runner: macos-15-intel
+            asset: bharatcode-desktop-next-beta-mac-x64.zip
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    steps:
+      - name: Probe Darwin namespace durability and exact packaged recovery actions
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ASSET: ${{ matrix.asset }}
+        run: |
+          set -euo pipefail
+          root="$(mktemp -d "$RUNNER_TEMP/bharatcode-macos-recovery.XXXXXX")"
+          trap 'rm -rf "$root"' EXIT
+
+          mkdir "$root/fsync-parent"
+          node - "$root/fsync-parent" <<'NODE'
+          const fs = require("node:fs")
+          const path = require("node:path")
+          const root = process.argv[2]
+          const temp = path.join(root, "temp")
+          const final = path.join(root, "final")
+          fs.writeFileSync(temp, "durable")
+          const file = fs.openSync(temp, "r")
+          try { fs.fsyncSync(file) } finally { fs.closeSync(file) }
+          fs.renameSync(temp, final)
+          const directory = fs.openSync(root, "r")
+          try {
+            fs.fsyncSync(directory)
+            process.stdout.write("darwin-directory-fsync=success\n")
+          } catch (error) {
+            process.stdout.write(`darwin-directory-fsync=${error.code ?? "unknown"}\n`)
+          } finally {
+            fs.closeSync(directory)
+          }
+          NODE
+
+          gh release download desktop-beta-1.15.24 \
+            --repo BharatCode-ai/bharatcode-desktop \
+            --pattern "$RELEASE_ASSET" \
+            --dir "$root/release"
+          ditto -x -k "$root/release/$RELEASE_ASSET" "$root/unpacked"
+          cli="$root/unpacked/BharatCode Beta.app/Contents/Resources/bharatcode-opencode-cli"
+          test -x "$cli"
+          codesign --verify --strict --verbose=2 "$cli"
+
+          home="$root/home"
+          mkdir -p "$home"
+          export BHARATCODE_CHANNEL=beta
+          export OPENCODE_TEST_HOME="$home"
+          export HOME="$home"
+          "$cli" recovery status --json
+          set +e
+          "$cli" recovery start-fresh --confirm --json >"$root/start-fresh.out" 2>"$root/start-fresh.err"
+          status=$?
+          set -e
+          printf 'packaged-start-fresh-exit=%s\n' "$status"
+          cat "$root/start-fresh.out"
+          sed -E 's#(/[^ ]+)+#<path>#g' "$root/start-fresh.err" | tail -20
+          "$cli" recovery status --json
+
   resolve-release:
+    if: ${{ inputs.diagnostic_only != true }}
     name: Resolve release metadata
     runs-on: ubuntu-latest
     outputs:
