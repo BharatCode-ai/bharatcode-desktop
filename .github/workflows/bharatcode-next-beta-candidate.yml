@@ -45,7 +45,7 @@ permissions:
 
 env:
   ACCEPTED_APPLICATION_SOURCE_SHA: 80c962f4148db531c35abcf4922059d2101c9bcd
-  ACCEPTED_RELEASE_PARENT_SHA: 7a3302264fa3a6db7a5649369b91ddce2a567bfa
+  ACCEPTED_RELEASE_PARENT_SHA: 341fe9ff21d03f61795b7e9045c3c0574f211376
   BHARATCODE_CHANNEL: beta
   PREVIOUS_RELEASE_TAG: desktop-beta-1.15.23
   RELEASE_TAG: desktop-beta-1.15.24
@@ -97,7 +97,7 @@ jobs:
           [[ "$(git status --porcelain)" == "" ]]
           git merge-base --is-ancestor "$ACCEPTED_APPLICATION_SOURCE_SHA" "$SOURCE_SHA"
           [[ "$(git rev-parse "$SOURCE_SHA^")" == "$ACCEPTED_RELEASE_PARENT_SHA" ]]
-          [[ "$(git diff --name-only "$ACCEPTED_RELEASE_PARENT_SHA" "$SOURCE_SHA")" == $'.github/workflows/bharatcode-next-beta-candidate.yml\npackages/opencode/test/distribution/lean-candidate-workflow.test.ts\npackages/opencode/test/distribution/preliminary-unsigned-wsl-workflow.test.ts' ]]
+          [[ "$(git diff --name-only "$ACCEPTED_RELEASE_PARENT_SHA" "$SOURCE_SHA")" == $'.github/workflows/bharatcode-next-beta-candidate.yml\npackages/opencode/test/distribution/lean-candidate-workflow.test.ts' ]]
           [[ "$UPGRADE_ACCEPTANCE_MODE" == "required" || "$UPGRADE_ACCEPTANCE_MODE" == "owner-waived-hotfix-1.15.24" ]]
           [[ "$WSL_ACCEPTANCE_MODE" == "required" || "$WSL_ACCEPTANCE_MODE" == "owner-waived-hotfix-1.15.24" ]]
           [[ "$PUBLICATION_ACTION" == "hold" || "$PUBLICATION_ACTION" == "publish" ]]

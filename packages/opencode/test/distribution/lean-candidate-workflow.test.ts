@@ -34,7 +34,7 @@ const reviewedSecurityStepSha256 = {
   windowsUnsigned: "a3c024ac9c6087fca041b9d2aeeab56f59e5086557e1dbb56169846d701f5c6d",
 } as const
 const acceptedApplicationSourceSha = "80c962f4148db531c35abcf4922059d2101c9bcd"
-const acceptedReleaseParentSha = "7a3302264fa3a6db7a5649369b91ddce2a567bfa"
+const acceptedReleaseParentSha = "341fe9ff21d03f61795b7e9045c3c0574f211376"
 const wslRunnerLabel = "bharatcode-acceptance-${{ github.run_id }}-${{ github.run_attempt }}"
 const frozenWslPaths = [
   "packages/desktop/electron-builder.config.ts",
@@ -195,7 +195,6 @@ const internalWslInputs = [
 const releaseControlDeltaPaths = [
   ".github/workflows/bharatcode-next-beta-candidate.yml",
   "packages/opencode/test/distribution/lean-candidate-workflow.test.ts",
-  "packages/opencode/test/distribution/preliminary-unsigned-wsl-workflow.test.ts",
 ] as const
 
 async function source() {
