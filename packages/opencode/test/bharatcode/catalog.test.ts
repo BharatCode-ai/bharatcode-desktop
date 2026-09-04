@@ -148,7 +148,7 @@ describe("BharatCode authenticated catalog", () => {
               display_name: "Valid Chat",
               context_window: 128_000,
               max_output_tokens: 32_000,
-              metadata: { output: ["text"] },
+              metadata: { input: ["text"], output: ["text"], toolCalling: false, reasoning: false },
             },
           ],
         }),
@@ -165,11 +165,54 @@ describe("BharatCode authenticated catalog", () => {
     expect(diagnostics).toEqual([
       {
         reason: "invalid-record",
-        fields: ["owned_by", "modality", "endpoint", "display_name", "metadata"],
+        fields: ["id", "owned_by", "modality", "endpoint", "display_name", "metadata"],
       },
     ])
     expect(JSON.stringify(diagnostics)).not.toContain("must-not-leak")
     expect(JSON.stringify(diagnostics)).not.toContain("private.catalog.token")
+  })
+
+  test("excludes malformed complete-looking coding records without erasing valid siblings", async () => {
+    const valid = {
+      id: "bharatcode:future-heavy-coder",
+      owned_by: "bharatcode",
+      modality: "chat",
+      endpoint: "/v1/chat/completions",
+      protocol: "openai_chat_completions",
+      runtime: "vllm",
+      status: "live",
+      display_name: "Future heavy coder",
+      context_window: 256_000,
+      max_output_tokens: 32_000,
+      metadata: { input: ["text"], output: ["text"], toolCalling: false, reasoning: true },
+    }
+    const malformed = [
+      { ...valid, id: "bad id with spaces" },
+      { ...valid, id: "bharatcode:cafe\u0301" },
+      { ...valid, id: " bharatcode:untrimmed" },
+      { ...valid, id: "bharatcode:mixed-input", metadata: { ...valid.metadata, input: ["text", 42] } },
+      { ...valid, id: "bharatcode:missing-tool", metadata: { input: ["text"], output: ["text"], reasoning: true } },
+      {
+        ...valid,
+        id: "bharatcode:nonboolean-reasoning",
+        metadata: { ...valid.metadata, reasoning: "yes" },
+      },
+    ]
+
+    const models = await run(
+      BharatCodeCatalog.use.list(),
+      accountLayer({
+        accountID: () => "account-a",
+        response: async () => response({ object: "list", data: [valid, ...malformed] }),
+      }),
+    )
+
+    expect(models.map((model) => model.id)).toEqual([valid.id])
+    expect(BharatCodeCatalog.toV2Model(models[0])).toMatchObject({
+      id: valid.id,
+      capabilities: { tools: false },
+      limit: { context: 256_000, output: 32_000 },
+    })
   })
 
   test("fails the whole catalog only when the top-level response is malformed", async () => {
@@ -181,7 +224,7 @@ describe("BharatCode authenticated catalog", () => {
     ).rejects.toMatchObject({ _tag: "BharatCodeCatalogError", reason: "contract" })
   })
 
-  test("fails the whole catalog when any valid model ID is duplicated", async () => {
+  test("fails the whole catalog only when an eligible valid model ID is duplicated", async () => {
     const layer = accountLayer({
       response: async () =>
         response({
@@ -197,7 +240,7 @@ describe("BharatCode authenticated catalog", () => {
               display_name: "Duplicate",
               context_window: 128_000,
               max_output_tokens: 32_000,
-              metadata: { input: ["text"], output: ["text"] },
+              metadata: { input: ["text"], output: ["text"], toolCalling: false, reasoning: false },
             },
             {
               id: "duplicate",
@@ -205,11 +248,11 @@ describe("BharatCode authenticated catalog", () => {
               modality: "chat",
               endpoint: "/v1/chat/completions",
               protocol: "openai_chat_completions",
-              status: "planned",
-              display_name: "Duplicate planned",
+              status: "live",
+              display_name: "Duplicate eligible",
               context_window: 128_000,
               max_output_tokens: 32_000,
-              metadata: { input: ["text"], output: ["text"] },
+              metadata: { input: ["text"], output: ["text"], toolCalling: false, reasoning: false },
             },
           ],
         }),
@@ -219,6 +262,34 @@ describe("BharatCode authenticated catalog", () => {
       _tag: "BharatCodeCatalogError",
       reason: "contract",
     })
+  })
+
+  test("does not treat a malformed duplicate as catalog ambiguity", async () => {
+    const valid = {
+      id: "bharatcode:valid-sibling",
+      owned_by: "bharatcode",
+      modality: "chat",
+      endpoint: "/v1/chat/completions",
+      protocol: "openai_chat_completions",
+      status: "live",
+      display_name: "Valid sibling",
+      context_window: 128_000,
+      max_output_tokens: 32_000,
+      metadata: { input: ["text"], output: ["text"], toolCalling: true, reasoning: false },
+    }
+    const models = await run(
+      BharatCodeCatalog.use.list(),
+      accountLayer({
+        accountID: () => "account-a",
+        response: async () =>
+          response({
+            object: "list",
+            data: [valid, { ...valid, metadata: { input: ["text", 42], output: ["text"] } }],
+          }),
+      }),
+    )
+
+    expect(models.map((model) => model.id)).toEqual([valid.id])
   })
 
   test("defines shared fail-closed coding and dictation eligibility", () => {
@@ -239,6 +310,8 @@ describe("BharatCode authenticated catalog", () => {
       eligible: true,
       input: ["text", "image"],
       output: ["text"],
+      toolCalling: true,
+      reasoning: true,
     })
     expect(BharatCodeCatalog.codingEligibility({ ...chat, maxOutputTokens: 256_000 })).toEqual({
       eligible: false,
@@ -248,6 +321,8 @@ describe("BharatCode authenticated catalog", () => {
       eligible: true,
       input: ["text", "image"],
       output: ["text"],
+      toolCalling: true,
+      reasoning: true,
     })
 
     const futureChat = {
@@ -263,6 +338,8 @@ describe("BharatCode authenticated catalog", () => {
       eligible: true,
       input: ["text"],
       output: ["text"],
+      toolCalling: true,
+      reasoning: false,
     })
     expect(BharatCodeCatalog.toV2Model(futureChat)).toMatchObject({
       id: "bharatcode:future-text-coder",
@@ -289,6 +366,8 @@ describe("BharatCode authenticated catalog", () => {
       eligible: true,
       input: ["audio"],
       output: ["text"],
+      toolCalling: false,
+      reasoning: false,
     })
     expect(BharatCodeCatalog.codingEligibility(dictation)).toMatchObject({
       eligible: false,

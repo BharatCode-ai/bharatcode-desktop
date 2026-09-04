@@ -76,8 +76,22 @@ describe("bundled BharatCode provider", () => {
       "bharatcode:future-text-coder",
     ])
     expect(config.provider?.bharatcode.models[CODING_MODEL_ID]).toMatchObject({
+      reasoning: true,
+      temperature: false,
+      tool_call: true,
+      attachment: true,
       limit: { context: 200_000, output: 32_000 },
     })
+    expect(config.provider?.bharatcode.models["bharatcode:future-text-coder"]).toMatchObject({
+      reasoning: false,
+      temperature: false,
+      tool_call: true,
+      attachment: false,
+    })
+    expect(config.agent?.build).not.toHaveProperty("temperature")
+    expect(config.agent?.plan).not.toHaveProperty("temperature")
+    expect(config.agent?.title).not.toHaveProperty("temperature")
+    expect(config.agent?.compaction).not.toHaveProperty("temperature")
   })
 
   test.each(["model", "small_model"] as const)(
@@ -137,6 +151,73 @@ describe("bundled BharatCode provider", () => {
     await plugin.config(config)
 
     expect(config).toMatchObject({ model: future, small_model: future })
+  })
+
+  test("excludes malformed duplicate records without erasing a valid sibling", async () => {
+    const malformedDuplicate = {
+      ...catalog[1],
+      metadata: { input: ["text", 42], output: ["text"], toolCalling: true, reasoning: false },
+    }
+    const plugin = await BharatCodePlugin(
+      null,
+      options({
+        fetchImpl: async () => Response.json({ object: "list", data: [catalog[0], catalog[1], malformedDuplicate] }),
+      }),
+    )
+    const config = {}
+
+    await plugin.config(config)
+
+    expect(Object.keys(config.provider?.bharatcode.models ?? {})).toEqual([
+      CODING_MODEL_ID,
+      "bharatcode:future-text-coder",
+    ])
+  })
+
+  test("excludes malformed complete-looking records while retaining two valid future models", async () => {
+    const future = { ...catalog[1], id: "bharatcode:future-heavy-coder", display_name: "Future heavy coder" }
+    const malformed = [
+      { ...catalog[1], id: "bad id with spaces" },
+      { ...catalog[1], id: "bharatcode:cafe\u0301" },
+      { ...catalog[1], id: " bharatcode:untrimmed" },
+      { ...catalog[1], id: "bharatcode:mixed-output", metadata: { ...catalog[1].metadata, output: ["text", 42] } },
+      {
+        ...catalog[1],
+        id: "bharatcode:missing-reasoning",
+        metadata: { input: ["text"], output: ["text"], toolCalling: true },
+      },
+      {
+        ...catalog[1],
+        id: "bharatcode:nonboolean-tool",
+        metadata: { ...catalog[1].metadata, toolCalling: "yes" },
+      },
+    ]
+    const plugin = await BharatCodePlugin(
+      null,
+      options({
+        fetchImpl: async () => Response.json({ object: "list", data: [catalog[0], catalog[1], future, ...malformed] }),
+      }),
+    )
+    const config = {} as {
+      provider?: Record<string, { models: Record<string, unknown> }>
+    }
+
+    await plugin.config(config)
+
+    expect(Object.keys(config.provider?.bharatcode.models ?? {})).toEqual([
+      CODING_MODEL_ID,
+      "bharatcode:future-text-coder",
+      "bharatcode:future-heavy-coder",
+    ])
+  })
+
+  test("rejects duplicate eligible model IDs as catalog ambiguity", async () => {
+    const plugin = await BharatCodePlugin(
+      null,
+      options({ fetchImpl: async () => Response.json({ object: "list", data: [catalog[0], { ...catalog[0] }] }) }),
+    )
+
+    await expect(plugin.config({})).rejects.toThrow("catalog is unavailable")
   })
 
   test("preserves prior handling for unrelated provider config", async () => {

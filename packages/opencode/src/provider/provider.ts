@@ -1169,10 +1169,10 @@ export function fromBharatCodeCatalogModel(model: BharatCodeCatalog.Model): Mode
     cost: { input: 0, output: 0, cache: { read: 0, write: 0 } },
     limit: { context: model.contextWindow!, output: model.maxOutputTokens! },
     capabilities: {
-      temperature: model.metadata.temperature === true,
-      reasoning: model.metadata.reasoning === true,
+      temperature: false,
+      reasoning: eligibility.reasoning,
       attachment: input.includes("image"),
-      toolcall: model.metadata.toolCalling === true,
+      toolcall: eligibility.toolCalling,
       input: {
         text: input.includes("text"),
         audio: input.includes("audio"),

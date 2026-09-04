@@ -29,6 +29,11 @@ function positiveInteger(value) {
   return Number.isSafeInteger(value) && value > 0 ? value : undefined
 }
 
+function modelID(value) {
+  if (typeof value !== "string" || value !== value.trim() || value !== value.normalize("NFC")) return
+  return /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/.test(value) ? value : undefined
+}
+
 function catalogModel(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return
   if (!value.metadata || typeof value.metadata !== "object" || Array.isArray(value.metadata)) return
@@ -36,21 +41,23 @@ function catalogModel(value) {
   const output = stringArray(value.metadata?.output)
   const context = positiveInteger(value.context_window)
   const limit = positiveInteger(value.max_output_tokens)
-  if (typeof value.id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/.test(value.id)) return
+  const id = modelID(value.id)
+  if (!id) return
   if (typeof value.display_name !== "string" || !value.display_name) return
   if (value.status !== "live" || value.owned_by !== PROVIDER_ID) return
   if (value.modality !== "chat" && value.modality !== "vision_chat") return
   if (value.protocol !== "openai_chat_completions" || value.endpoint !== "/v1/chat/completions") return
   if (!context || !limit || limit > context || !input?.includes("text") || !output?.includes("text")) return
   if (value.modality === "vision_chat" && !input.includes("image")) return
+  if (typeof value.metadata.toolCalling !== "boolean" || typeof value.metadata.reasoning !== "boolean") return
 
   return {
-    id: value.id,
+    id,
     config: {
       name: value.display_name,
-      reasoning: value.metadata?.reasoning === true,
-      temperature: true,
-      tool_call: value.metadata?.toolCalling === true,
+      reasoning: value.metadata.reasoning,
+      temperature: false,
+      tool_call: value.metadata.toolCalling,
       attachment: input.includes("image"),
       modalities: { input, output },
       limit: { context, output: limit },
@@ -76,18 +83,17 @@ async function catalogModels(providerOptions) {
   const seen = new Set()
   const models = {}
   for (const record of body.data) {
-    if (record && typeof record === "object" && typeof record.id === "string") {
-      if (seen.has(record.id)) throw new Error(CATALOG_UNAVAILABLE_MESSAGE)
-      seen.add(record.id)
-    }
     const model = catalogModel(record)
-    if (model) models[model.id] = model.config
+    if (!model) continue
+    if (seen.has(model.id)) throw new Error(CATALOG_UNAVAILABLE_MESSAGE)
+    seen.add(model.id)
+    models[model.id] = model.config
   }
   if (!Object.keys(models).length) throw new Error(CATALOG_UNAVAILABLE_MESSAGE)
   return models
 }
 
-function modelID(value) {
+function configuredModelID(value) {
   if (typeof value !== "string") return
   if (value.startsWith(`${PROVIDER_ID}/`)) return value.slice(PROVIDER_ID.length + 1)
   if (value.startsWith(`${PROVIDER_ID}:`)) return value
@@ -95,7 +101,7 @@ function modelID(value) {
 
 function configuredModel(value, models, fallbackID) {
   if (value === undefined) return `${PROVIDER_ID}/${fallbackID}`
-  const id = modelID(value)
+  const id = configuredModelID(value)
   if (id && Object.hasOwn(models, id)) return `${PROVIDER_ID}/${id}`
   throw new Error(MODEL_UNAVAILABLE_MESSAGE)
 }
@@ -447,9 +453,9 @@ export const BharatCodePlugin = async (_ctx, options = {}) => {
       const models = await catalogModels(providerOptions)
       const ids = Object.keys(models)
       const fallbackID = ids[0]
-      const selectedModel = configuredModel(options.model ?? modelID(config.model), models, fallbackID)
+      const selectedModel = configuredModel(options.model ?? configuredModelID(config.model), models, fallbackID)
       const selectedSmallModel = configuredModel(
-        options.small_model ?? modelID(config.small_model) ?? selectedModel,
+        options.small_model ?? configuredModelID(config.small_model) ?? selectedModel,
         models,
         fallbackID,
       )
@@ -466,7 +472,6 @@ export const BharatCodePlugin = async (_ctx, options = {}) => {
         config.agent[name] = {
           ...(config.agent[name] || {}),
           model: selectedModel,
-          temperature: options.temperature ?? 0.6,
           top_p: options.topP ?? 0.95,
           steps: options.steps ?? 16,
         }
@@ -476,7 +481,6 @@ export const BharatCodePlugin = async (_ctx, options = {}) => {
         config.agent[name] = {
           ...(config.agent[name] || {}),
           model: selectedSmallModel,
-          temperature: options.temperature ?? 0.6,
           top_p: options.topP ?? 0.95,
           steps: options.smallSteps ?? 3,
         }

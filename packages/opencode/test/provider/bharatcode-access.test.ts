@@ -142,6 +142,12 @@ testEffect(futureProviderLayer).instance("lists and resolves every eligible live
     expect(models).not.toHaveProperty("bharatcode:future-embedding")
     const future = yield* provider.getModel(ProviderID.make("bharatcode"), ModelID.make("bharatcode:future-text-coder"))
     expect(String(future.id)).toBe("bharatcode:future-text-coder")
+    expect(future.capabilities).toMatchObject({
+      temperature: false,
+      reasoning: false,
+      toolcall: true,
+      attachment: false,
+    })
   }),
 )
 
