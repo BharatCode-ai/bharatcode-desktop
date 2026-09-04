@@ -1,5 +1,3 @@
-import { BharatCodeModel } from "@/bharatcode/model"
-
 export type Attempt = {
   readonly url: string
   readonly method: string
@@ -46,7 +44,7 @@ export function createBharatCodeApiFixture() {
         object: "list",
         data: [
           {
-            id: BharatCodeModel.CODING_MODEL_ID,
+            id: "bharatcode:qwen36-35b-awq-200k",
             object: "model",
             created: 0,
             owned_by: "bharatcode",

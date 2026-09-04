@@ -88,9 +88,9 @@ function modelProvider(value: unknown) {
 
 function modelViolation(value: unknown, source: ViolationSource) {
   if (value === undefined) return
-  if (value === BharatCodeModel.CODING_MODEL) return
   const providerID = modelProvider(value)
   if (!providerID) return
+  if (providerID === PROVIDER_ID) return
   return violation(providerID, source)
 }
 

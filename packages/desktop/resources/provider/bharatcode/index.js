@@ -6,8 +6,6 @@ import os from "node:os"
 import path from "node:path"
 
 const PROVIDER_ID = "bharatcode"
-const MODEL_ID = "bharatcode:qwen36-35b-awq-200k"
-const MODEL = `${PROVIDER_ID}/${MODEL_ID}`
 const DEFAULT_BASE_URL = "https://bharatcode.ai/api/model/v1"
 const SUPABASE_URL = process.env.BHARATCODE_SUPABASE_URL || "https://evgvlcaxfpwupaiwzqqm.supabase.co"
 const NATIVE_CLIENT_ID = process.env.BHARATCODE_NATIVE_CLIENT_ID || "4cad332a-232f-4ef2-9363-12fea4420635"
@@ -15,32 +13,97 @@ const REDIRECT_URI = process.env.BHARATCODE_REDIRECT_URI || "http://127.0.0.1:27
 const OAUTH_SCOPE = process.env.BHARATCODE_OAUTH_SCOPE || "openid email profile"
 const TOKEN_REFRESH_SKEW_SECONDS = 300
 
-const MODEL_CAPABILITIES = {
-  reasoning: true,
-  temperature: true,
-  tool_call: true,
-  attachment: true,
-  modalities: {
-    input: ["text", "image"],
-    output: ["text"],
-  },
-}
+const ACCESS_REQUIRED_MESSAGE =
+  "BharatCode App is only available to Pro subscribers. If you're a student, please sign in with your student email id instead or reach out at help@bharatcode.ai to verify your student status. BharatCode Chat is free for all users, visit chat.bharatcode.ai."
+const CATALOG_UNAVAILABLE_MESSAGE = "BharatCode model catalog is unavailable."
+const MODEL_UNAVAILABLE_MESSAGE = "Configured BharatCode model is not available in the authenticated catalog."
 
 let interactiveLoginPromise
 
-function configuredModel(value) {
-  const model = value === undefined ? MODEL : value
-  if (model === MODEL) return model
-  throw new Error(`BharatCode supports only ${MODEL}. Retired model IDs are not translated.`)
+function stringArray(value) {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) return
+  return [...new Set(value)]
 }
 
-function validateExistingConfigModels(config) {
-  for (const field of ["model", "small_model"]) {
-    const model = config?.[field]
-    if (typeof model !== "string") continue
-    if (model === MODEL || model === MODEL_ID) continue
-    if (model.startsWith(`${PROVIDER_ID}/`) || model.startsWith(`${PROVIDER_ID}:`)) configuredModel(model)
+function positiveInteger(value) {
+  return Number.isSafeInteger(value) && value > 0 ? value : undefined
+}
+
+function modelID(value) {
+  if (typeof value !== "string" || value !== value.trim() || value !== value.normalize("NFC")) return
+  return /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/.test(value) ? value : undefined
+}
+
+function catalogModel(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return
+  if (!value.metadata || typeof value.metadata !== "object" || Array.isArray(value.metadata)) return
+  const input = stringArray(value.metadata?.input)
+  const output = stringArray(value.metadata?.output)
+  const context = positiveInteger(value.context_window)
+  const limit = positiveInteger(value.max_output_tokens)
+  const id = modelID(value.id)
+  if (!id) return
+  if (typeof value.display_name !== "string" || !value.display_name) return
+  if (value.status !== "live" || value.owned_by !== PROVIDER_ID) return
+  if (value.modality !== "chat" && value.modality !== "vision_chat") return
+  if (value.protocol !== "openai_chat_completions" || value.endpoint !== "/v1/chat/completions") return
+  if (!context || !limit || limit > context || !input?.includes("text") || !output?.includes("text")) return
+  if (value.modality === "vision_chat" && !input.includes("image")) return
+  if (typeof value.metadata.toolCalling !== "boolean" || typeof value.metadata.reasoning !== "boolean") return
+
+  return {
+    id,
+    config: {
+      name: value.display_name,
+      reasoning: value.metadata.reasoning,
+      temperature: false,
+      tool_call: value.metadata.toolCalling,
+      attachment: input.includes("image"),
+      modalities: { input, output },
+      limit: { context, output: limit },
+    },
   }
+}
+
+function errorCode(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return
+  const nested = value.error && typeof value.error === "object" && !Array.isArray(value.error) ? value.error : undefined
+  return value.error_code || value.code || nested?.error_code || nested?.code || nested?.type
+}
+
+async function catalogModels(providerOptions) {
+  const response = await providerOptions.fetch(`${providerOptions.baseURL.replace(/\/$/, "")}/models`)
+  const body = await response.json().catch(() => undefined)
+  if (!response.ok) {
+    if (response.status === 402 && errorCode(body) === "subscription_required") throw new Error(ACCESS_REQUIRED_MESSAGE)
+    throw new Error(CATALOG_UNAVAILABLE_MESSAGE)
+  }
+  if (!body || body.object !== "list" || !Array.isArray(body.data)) throw new Error(CATALOG_UNAVAILABLE_MESSAGE)
+
+  const seen = new Set()
+  const models = {}
+  for (const record of body.data) {
+    const model = catalogModel(record)
+    if (!model) continue
+    if (seen.has(model.id)) throw new Error(CATALOG_UNAVAILABLE_MESSAGE)
+    seen.add(model.id)
+    models[model.id] = model.config
+  }
+  if (!Object.keys(models).length) throw new Error(CATALOG_UNAVAILABLE_MESSAGE)
+  return models
+}
+
+function configuredModelID(value) {
+  if (typeof value !== "string") return
+  if (value.startsWith(`${PROVIDER_ID}/`)) return value.slice(PROVIDER_ID.length + 1)
+  if (value.startsWith(`${PROVIDER_ID}:`)) return value
+}
+
+function configuredModel(value, models, fallbackID) {
+  if (value === undefined) return `${PROVIDER_ID}/${fallbackID}`
+  const id = configuredModelID(value)
+  if (id && Object.hasOwn(models, id)) return `${PROVIDER_ID}/${id}`
+  throw new Error(MODEL_UNAVAILABLE_MESSAGE)
 }
 
 function homeDir(options = {}) {
@@ -377,8 +440,6 @@ function setBearerHeader(output, token) {
 }
 
 export const BharatCodePlugin = async (_ctx, options = {}) => {
-  const selectedModel = configuredModel(options.model)
-  const selectedSmallModel = configuredModel(options.small_model ?? selectedModel)
   const providerOptions = {
     baseURL: options.baseURL || DEFAULT_BASE_URL,
     timeout: options.timeout ?? 1800000,
@@ -389,7 +450,15 @@ export const BharatCodePlugin = async (_ctx, options = {}) => {
 
   return {
     config: async (config) => {
-      validateExistingConfigModels(config)
+      const models = await catalogModels(providerOptions)
+      const ids = Object.keys(models)
+      const fallbackID = ids[0]
+      const selectedModel = configuredModel(options.model ?? configuredModelID(config.model), models, fallbackID)
+      const selectedSmallModel = configuredModel(
+        options.small_model ?? configuredModelID(config.small_model) ?? selectedModel,
+        models,
+        fallbackID,
+      )
       config.model = selectedModel
       config.small_model = selectedSmallModel
 
@@ -403,7 +472,6 @@ export const BharatCodePlugin = async (_ctx, options = {}) => {
         config.agent[name] = {
           ...(config.agent[name] || {}),
           model: selectedModel,
-          temperature: options.temperature ?? 0.6,
           top_p: options.topP ?? 0.95,
           steps: options.steps ?? 16,
         }
@@ -413,7 +481,6 @@ export const BharatCodePlugin = async (_ctx, options = {}) => {
         config.agent[name] = {
           ...(config.agent[name] || {}),
           model: selectedSmallModel,
-          temperature: options.temperature ?? 0.6,
           top_p: options.topP ?? 0.95,
           steps: options.smallSteps ?? 3,
         }
@@ -424,16 +491,7 @@ export const BharatCodePlugin = async (_ctx, options = {}) => {
         npm: "@ai-sdk/openai-compatible",
         name: "BharatCode",
         options: providerOptions,
-        models: {
-          [MODEL_ID]: {
-            name: "BharatCode Qwen3.6 35B-A3B AWQ 200K Vision Thinking",
-            ...MODEL_CAPABILITIES,
-            limit: {
-              context: options.context ?? 200000,
-              output: options.output ?? 32000,
-            },
-          },
-        },
+        models,
       }
     },
     "chat.headers": async (_input, output) => {

@@ -28,18 +28,18 @@ export type Model = {
 
 export type Diagnostic = {
   recordID?: string
-  reason:
-    | "invalid-record"
-    | "not-live"
-    | "not-coding-model"
-    | "unsupported-coding-model"
-    | "invalid-coding-contract"
-    | "invalid-dictation-contract"
+  reason: "invalid-record" | "not-live" | "not-coding-model" | "invalid-coding-contract" | "invalid-dictation-contract"
   fields: readonly string[]
 }
 
 export type Eligibility =
-  | { eligible: true; input: readonly string[]; output: readonly string[] }
+  | {
+      eligible: true
+      input: readonly string[]
+      output: readonly string[]
+      toolCalling: boolean
+      reasoning: boolean
+    }
   | { eligible: false; diagnostic: Diagnostic }
 
 export class CatalogError extends Schema.TaggedErrorClass<CatalogError>()("BharatCodeCatalogError", {
@@ -73,8 +73,32 @@ function stringField(value: unknown) {
   return typeof value === "string" && value.length ? value : undefined
 }
 
+function serviceErrorCode(value: Record<string, unknown>) {
+  const nested = value.error && typeof value.error === "object" && !Array.isArray(value.error) ? value.error : undefined
+  if (!nested) return stringField(value.error_code) ?? stringField(value.code)
+  const error = nested as Record<string, unknown>
+  return (
+    stringField(value.error_code) ??
+    stringField(value.code) ??
+    stringField(error.error_code) ??
+    stringField(error.code) ??
+    stringField(error.type)
+  )
+}
+
+export function modelUnavailableReason(error: unknown) {
+  if (!(error instanceof BharatCodeAccount.ServiceError)) return
+  if (!BharatCodeModel.isAccessRequired("bharatcode", error.status, error.errorCode)) return
+  return BharatCodeModel.ACCESS_REQUIRED_MESSAGE
+}
+
 function positiveInteger(value: unknown) {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined
+}
+
+function strictModelID(value: unknown) {
+  if (typeof value !== "string" || value !== value.trim() || value !== value.normalize("NFC")) return undefined
+  return /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/.test(value) ? value : undefined
 }
 
 function safeRecordID(value: unknown) {
@@ -97,7 +121,7 @@ function parseModel(value: unknown): { model?: Model; diagnostic?: Diagnostic } 
     return { diagnostic: { reason: "invalid-record", fields: ["record"] } }
   }
   const input = value as Record<string, unknown>
-  const id = stringField(input.id)
+  const id = strictModelID(input.id)
   const ownedBy = stringField(input.owned_by)
   const modality = stringField(input.modality)
   const endpoint = stringField(input.endpoint)
@@ -123,29 +147,36 @@ function parseModel(value: unknown): { model?: Model; diagnostic?: Diagnostic } 
       },
     }
   }
-  return {
-    model: {
-      id: id!,
-      ownedBy: ownedBy!,
-      modality: modality!,
-      endpoint: endpoint!,
-      protocol: stringField(input.protocol),
-      runtime: stringField(input.runtime),
-      status,
-      displayName: displayName!,
-      created: typeof input.created === "number" && Number.isSafeInteger(input.created) ? input.created : undefined,
-      metadata: metadata as Record<string, unknown>,
-      contextWindow: positiveInteger(input.context_window),
-      maxOutputTokens: positiveInteger(input.max_output_tokens),
-      maxInputMb: positiveInteger(input.max_input_mb),
-    },
+  const model: Model = {
+    id: id!,
+    ownedBy: ownedBy!,
+    modality: modality!,
+    endpoint: endpoint!,
+    protocol: stringField(input.protocol),
+    runtime: stringField(input.runtime),
+    status,
+    displayName: displayName!,
+    created: typeof input.created === "number" && Number.isSafeInteger(input.created) ? input.created : undefined,
+    metadata: metadata as Record<string, unknown>,
+    contextWindow: positiveInteger(input.context_window),
+    maxOutputTokens: positiveInteger(input.max_output_tokens),
+    maxInputMb: positiveInteger(input.max_input_mb),
   }
+  if (model.modality === "chat" || model.modality === "vision_chat") {
+    const eligibility = codingEligibility(model)
+    if (!eligibility.eligible) return { diagnostic: eligibility.diagnostic }
+  }
+  if (model.modality === "audio_transcription") {
+    const eligibility = dictationEligibility(model)
+    if (!eligibility.eligible) return { diagnostic: eligibility.diagnostic }
+  }
+  return { model }
 }
 
 function modalities(model: Model, key: "input" | "output") {
   const value = model.metadata[key]
-  if (!Array.isArray(value)) return []
-  return value.filter((item): item is string => typeof item === "string")
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) return
+  return value as readonly string[]
 }
 
 function exclusion(model: Model, reason: Diagnostic["reason"], fields: string[]): Eligibility {
@@ -156,26 +187,37 @@ export function codingEligibility(model: Model): Eligibility {
   if (model.modality !== "chat" && model.modality !== "vision_chat") {
     return exclusion(model, "not-coding-model", ["modality"])
   }
-  if (model.id !== BharatCodeModel.CODING_MODEL_ID) {
-    return exclusion(model, "unsupported-coding-model", ["id"])
-  }
   if (model.protocol !== "openai_chat_completions") {
     return exclusion(model, "invalid-coding-contract", ["protocol"])
   }
   const input = modalities(model, "input")
   const output = modalities(model, "output")
+  const toolCalling = model.metadata.toolCalling
+  const reasoning = model.metadata.reasoning
   const fields = [
+    ...(!strictModelID(model.id) ? ["id"] : []),
     ...(model.ownedBy !== "bharatcode" ? ["owned_by"] : []),
-    ...(model.modality !== "vision_chat" ? ["modality"] : []),
     ...(model.endpoint !== "/v1/chat/completions" ? ["endpoint"] : []),
-    ...(model.contextWindow !== 200_000 ? ["context_window"] : []),
-    ...(model.maxOutputTokens !== 32_000 ? ["max_output_tokens"] : []),
-    ...(!input.includes("text") || !input.includes("image") ? ["metadata.input"] : []),
-    ...(!output.includes("text") ? ["metadata.output"] : []),
-    ...(model.metadata.toolCalling !== true ? ["metadata.toolCalling"] : []),
-    ...(model.metadata.reasoning !== true ? ["metadata.reasoning"] : []),
+    ...(!model.contextWindow ? ["context_window"] : []),
+    ...(!model.maxOutputTokens || (model.contextWindow && model.maxOutputTokens > model.contextWindow)
+      ? ["max_output_tokens"]
+      : []),
+    ...(!input || !input.includes("text") || (model.modality === "vision_chat" && !input.includes("image"))
+      ? ["metadata.input"]
+      : []),
+    ...(!output || !output.includes("text") ? ["metadata.output"] : []),
+    ...(typeof toolCalling !== "boolean" ? ["metadata.toolCalling"] : []),
+    ...(typeof reasoning !== "boolean" ? ["metadata.reasoning"] : []),
   ]
-  return fields.length ? exclusion(model, "invalid-coding-contract", fields) : { eligible: true, input, output }
+  return fields.length
+    ? exclusion(model, "invalid-coding-contract", fields)
+    : {
+        eligible: true,
+        input: input!,
+        output: output!,
+        toolCalling: toolCalling as boolean,
+        reasoning: reasoning as boolean,
+      }
 }
 
 export function dictationEligibility(model: Model): Eligibility {
@@ -188,10 +230,12 @@ export function dictationEligibility(model: Model): Eligibility {
     ...(model.protocol !== "openai_audio_transcriptions" ? ["protocol"] : []),
     ...(model.endpoint !== "/v1/audio/transcriptions" ? ["endpoint"] : []),
     ...(!model.maxInputMb ? ["max_input_mb"] : []),
-    ...(!input.includes("audio") ? ["metadata.input"] : []),
-    ...(!output.includes("text") ? ["metadata.output"] : []),
+    ...(!input || !input.includes("audio") ? ["metadata.input"] : []),
+    ...(!output || !output.includes("text") ? ["metadata.output"] : []),
   ]
-  return fields.length ? exclusion(model, "invalid-dictation-contract", fields) : { eligible: true, input, output }
+  return fields.length
+    ? exclusion(model, "invalid-dictation-contract", fields)
+    : { eligible: true, input: input!, output: output!, toolCalling: false, reasoning: false }
 }
 
 const v2ProviderID = ProviderV2.ID.make("bharatcode")
@@ -221,7 +265,7 @@ export function toV2Model(model: Model) {
     name: model.displayName,
     endpoint: v2Endpoint,
     capabilities: {
-      tools: model.metadata.toolCalling === true,
+      tools: eligibility.toolCalling,
       input: media(eligibility.input),
       output: media(eligibility.output),
     },
@@ -271,7 +315,7 @@ export const layerWith = (options: LayerOptions = {}) =>
           return yield* new BharatCodeAccount.ServiceError({
             operation: "model catalog",
             status: response.status,
-            errorCode: stringField(value.error_code),
+            errorCode: serviceErrorCode(value),
             retriable: response.status === 429 || response.status >= 500,
             message: "BharatCode model catalog is currently unavailable.",
           })
@@ -290,22 +334,15 @@ export const layerWith = (options: LayerOptions = {}) =>
         if (root.object !== "list" || !Array.isArray(data)) {
           return yield* new CatalogError({ reason: "contract", message: "BharatCode model catalog had no model list." })
         }
-        const ids = data.flatMap((item) => {
-          if (!item || typeof item !== "object" || Array.isArray(item)) return []
-          const id = (item as Record<string, unknown>).id
-          if (typeof id !== "string") return []
-          if (id !== id.trim() || id !== id.normalize("NFC")) return []
-          return /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/.test(id) ? [id] : []
-        })
-        if (new Set(ids).size !== ids.length) {
-          return yield* new CatalogError({ reason: "contract", message: "BharatCode model catalog had duplicate IDs." })
-        }
-
         const result: Model[] = []
         for (const item of data) {
           const parsed = parseModel(item)
           if (parsed.diagnostic) diagnostic(parsed.diagnostic)
           if (parsed.model) result.push(parsed.model)
+        }
+        const ids = result.map((model) => model.id)
+        if (new Set(ids).size !== ids.length) {
+          return yield* new CatalogError({ reason: "contract", message: "BharatCode model catalog had duplicate IDs." })
         }
         return result as readonly Model[]
       })

@@ -4,6 +4,7 @@ import { ProductPolicy } from "@/product/policy"
 import { BharatCodeCatalog } from "@/bharatcode/catalog"
 import { BharatCodeModel } from "@/bharatcode/model"
 import { Provider } from "@/provider/provider"
+import { ModelID, ProviderID } from "@/provider/schema"
 
 const CODING_MODEL_ID = "bharatcode:qwen36-35b-awq-200k"
 const CODING_MODEL = `bharatcode/${CODING_MODEL_ID}`
@@ -17,6 +18,12 @@ describe("BharatCode shipped provider policy", () => {
         small_model: CODING_MODEL,
         agent: { build: { model: CODING_MODEL } },
         command: { review: { model: CODING_MODEL } },
+      }),
+    ).toBeUndefined()
+    expect(
+      ProductPolicy.findConfigViolation({
+        model: "bharatcode/bharatcode:future-text-coder",
+        small_model: "bharatcode/bharatcode:future-small-coder",
       }),
     ).toBeUndefined()
   })
@@ -33,8 +40,6 @@ describe("BharatCode shipped provider policy", () => {
     [{ agent: { build: { model: "google/gemini" } } }, "agent_model"],
     [{ mode: { plan: { model: "openrouter/model" } } }, "agent_model"],
     [{ command: { review: { model: "mistral/model" } } }, "command_model"],
-    [{ model: "bharatcode/bharatcode:qwen36-35b-q6-256k-vision" }, "default_model"],
-    [{ small_model: "bharatcode/bharatcode:qwen36-35b-q8-256k" }, "small_model"],
   ])("rejects unsupported config %#", (config, source) => {
     expect(ProductPolicy.findConfigViolation(config)).toMatchObject({ source })
     expect(ProductPolicy.findConfigViolation(config)).not.toHaveProperty("providerID")
@@ -66,18 +71,22 @@ describe("BharatCode shipped provider policy", () => {
     expect(error.message).not.toContain("openai")
   })
 
-  test("names the sole supported model without translating retired IDs", () => {
-    const error = ProductPolicy.findConfigViolation({
-      model: "bharatcode/bharatcode:qwen36-35b-q6-256k-vision",
+  test("delegates BharatCode model membership to the authenticated catalog", () => {
+    expect(BharatCodeModel.recoveryMessage()).toContain("authenticated catalog")
+    expect(BharatCodeModel.recoveryMessage()).not.toContain(CODING_MODEL_ID)
+  })
+
+  test("renders a catalog access denial instead of inventing a missing model", () => {
+    const message =
+      "BharatCode App is only available to Pro subscribers. If you're a student, please sign in with your student email id instead or reach out at help@bharatcode.ai to verify your student status. BharatCode Chat is free for all users, visit chat.bharatcode.ai."
+    const error = new Provider.ModelNotFoundError({
+      providerID: ProviderID.make("bharatcode"),
+      modelID: ModelID.make(CODING_MODEL_ID),
+      reason: message,
     })
 
-    expect(error?.message).toContain(CODING_MODEL)
-    expect(error?.message).toContain("not translated")
-    expect(BharatCodeModel.rejection("bharatcode:qwen36-35b-q8-256k")).toEqual({
-      suggestions: [CODING_MODEL_ID],
-      reason: BharatCodeModel.recoveryMessage(),
-    })
-    expect(BharatCodeModel.rejection(CODING_MODEL_ID)).toBeUndefined()
+    expect(Provider.modelNotFoundMessage(error)).toBe(message)
+    expect(Provider.modelNotFoundMessage(error)).not.toContain("Model not found")
   })
 
   test("maps only eligible live BharatCode records into the coding runtime", () => {
@@ -101,7 +110,16 @@ describe("BharatCode shipped provider policy", () => {
       limit: { context: 200_000, output: 32_000 },
     })
     expect(Provider.fromBharatCodeCatalogModel({ ...base, protocol: "openai_responses" })).toBeUndefined()
-    expect(Provider.fromBharatCodeCatalogModel({ ...base, id: "bharatcode:qwen36-35b-q6-256k-vision" })).toBeUndefined()
+    expect(
+      Provider.fromBharatCodeCatalogModel({
+        ...base,
+        id: "bharatcode:future-text-coder",
+        modality: "chat",
+        metadata: { input: ["text"], output: ["text"], toolCalling: true, reasoning: false },
+        contextWindow: 128_000,
+        maxOutputTokens: 16_000,
+      }),
+    ).toMatchObject({ id: "bharatcode:future-text-coder", limit: { context: 128_000, output: 16_000 } })
   })
 
   test("keeps shipped command and v2 query sources free of generic public fallbacks", async () => {
