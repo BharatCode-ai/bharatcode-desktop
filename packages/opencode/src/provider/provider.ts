@@ -995,6 +995,13 @@ export class ModelNotFoundError extends Schema.TaggedErrorClass<ModelNotFoundErr
   }
 }
 
+export function modelNotFoundMessage(error: ModelNotFoundError) {
+  const reason = error.reason?.trim()
+  if (reason) return reason
+  const hint = error.suggestions?.length ? ` Did you mean: ${error.suggestions.join(", ")}?` : ""
+  return `Model not found: ${error.providerID}/${error.modelID}.${hint}`
+}
+
 function policyDeniedModel() {
   return new ModelNotFoundError({
     providerID: ProviderID.make("unsupported"),
@@ -1047,6 +1054,7 @@ interface State {
   models: Map<string, LanguageModelV3>
   providers: Record<ProviderID, Info>
   catalog: Record<ProviderID, Info>
+  catalogFailureReason?: string
   sdk: Map<string, BundledSDK>
   modelLoaders: Record<string, CustomModelLoader>
   varsLoaders: Record<string, CustomVarsLoader>
@@ -1276,7 +1284,8 @@ export const layer = Layer.effect(
         const cfg = yield* config.get()
         yield* policy.assertConfig(cfg).pipe(Effect.orDie)
         if (policy.isShipped) {
-          const records = yield* bharatCodeCatalog.list().pipe(
+          const catalogResult = yield* bharatCodeCatalog.list().pipe(
+            Effect.map((records) => ({ records, failureReason: undefined as string | undefined })),
             Effect.catch((error) =>
               Effect.sync(() => {
                 log.warn("BharatCode model catalog unavailable", {
@@ -1285,12 +1294,15 @@ export const layer = Layer.effect(
                       ? String(error._tag)
                       : "BharatCodeCatalogUnavailable",
                 })
-                return [] as readonly BharatCodeCatalog.Model[]
+                return {
+                  records: [] as readonly BharatCodeCatalog.Model[],
+                  failureReason: BharatCodeCatalog.modelUnavailableReason(error),
+                }
               }),
             ),
           )
           const models = Object.fromEntries(
-            records.flatMap((record) => {
+            catalogResult.records.flatMap((record) => {
               const model = fromBharatCodeCatalogModel(record)
               return model ? [[model.id, model] as const] : []
             }),
@@ -1313,6 +1325,7 @@ export const layer = Layer.effect(
             models: new Map<string, LanguageModelV3>(),
             providers,
             catalog: providers,
+            catalogFailureReason: catalogResult.failureReason,
             sdk: new Map<string, BundledSDK>(),
             modelLoaders: {},
             varsLoaders: {},
@@ -1834,7 +1847,12 @@ export const layer = Layer.effect(
           : fuzzysort
               .go(providerID, Object.keys({ ...s.catalog, ...s.providers }), { limit: 3, threshold: -10000 })
               .map((m) => m.target)
-        return yield* new ModelNotFoundError({ providerID, modelID, suggestions })
+        return yield* new ModelNotFoundError({
+          providerID,
+          modelID,
+          suggestions,
+          reason: providerID === "bharatcode" ? s.catalogFailureReason : undefined,
+        })
       }
 
       const info = provider.models[modelID]
@@ -1843,7 +1861,12 @@ export const layer = Layer.effect(
         const suggestions = current.length
           ? current
           : modelSuggestions(s.catalog[providerID], modelID, runtimeFlags.enableExperimentalModels)
-        return yield* new ModelNotFoundError({ providerID, modelID, suggestions })
+        return yield* new ModelNotFoundError({
+          providerID,
+          modelID,
+          suggestions,
+          reason: providerID === "bharatcode" ? s.catalogFailureReason : undefined,
+        })
       }
       return info
     })

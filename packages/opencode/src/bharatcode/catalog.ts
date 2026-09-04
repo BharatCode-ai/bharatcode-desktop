@@ -73,6 +73,25 @@ function stringField(value: unknown) {
   return typeof value === "string" && value.length ? value : undefined
 }
 
+function serviceErrorCode(value: Record<string, unknown>) {
+  const nested = value.error && typeof value.error === "object" && !Array.isArray(value.error) ? value.error : undefined
+  if (!nested) return stringField(value.error_code) ?? stringField(value.code)
+  const error = nested as Record<string, unknown>
+  return (
+    stringField(value.error_code) ??
+    stringField(value.code) ??
+    stringField(error.error_code) ??
+    stringField(error.code) ??
+    stringField(error.type)
+  )
+}
+
+export function modelUnavailableReason(error: unknown) {
+  if (!(error instanceof BharatCodeAccount.ServiceError)) return
+  if (!BharatCodeModel.isAccessRequired("bharatcode", error.status, error.errorCode)) return
+  return BharatCodeModel.ACCESS_REQUIRED_MESSAGE
+}
+
 function positiveInteger(value: unknown) {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined
 }
@@ -271,7 +290,7 @@ export const layerWith = (options: LayerOptions = {}) =>
           return yield* new BharatCodeAccount.ServiceError({
             operation: "model catalog",
             status: response.status,
-            errorCode: stringField(value.error_code),
+            errorCode: serviceErrorCode(value),
             retriable: response.status === 429 || response.status >= 500,
             message: "BharatCode model catalog is currently unavailable.",
           })

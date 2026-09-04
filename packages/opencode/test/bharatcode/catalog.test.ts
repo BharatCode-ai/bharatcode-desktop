@@ -95,6 +95,39 @@ describe("BharatCode authenticated catalog", () => {
     ).rejects.toMatchObject({ _tag: "BharatCodeServiceError", status: 503, retriable: true })
   })
 
+  test("preserves the subscription-required denial from a protected catalog", async () => {
+    const failure = await run(
+      BharatCodeCatalog.use.list(),
+      accountLayer({
+        accountID: () => "account-a",
+        response: async () =>
+          response(
+            {
+              error: {
+                message: "seeded server text must not define the client contract",
+                type: "subscription_required",
+                code: "subscription_required",
+              },
+            },
+            402,
+          ),
+      }),
+    ).then(
+      () => undefined,
+      (error) => error,
+    )
+
+    expect(failure).toMatchObject({
+      _tag: "BharatCodeServiceError",
+      status: 402,
+      errorCode: "subscription_required",
+      retriable: false,
+    })
+    expect(BharatCodeCatalog.modelUnavailableReason(failure)).toBe(
+      "BharatCode App is only available to Pro subscribers. If you're a student, please sign in with your student email id instead or reach out at help@bharatcode.ai to verify your student status. BharatCode Chat is free for all users, visit chat.bharatcode.ai.",
+    )
+  })
+
   test("excludes an invalid individual record without erasing valid records", async () => {
     const diagnostics: BharatCodeCatalog.Diagnostic[] = []
     const account = accountLayer({

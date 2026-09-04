@@ -1,6 +1,7 @@
 import { APICallError } from "ai"
 import { STATUS_CODES } from "http"
 import { iife } from "@/util/iife"
+import { BharatCodeModel } from "@/bharatcode/model"
 import type { ProviderID } from "./schema"
 
 // Adapted from overflow detection patterns in:
@@ -179,8 +180,17 @@ export type ParsedAPICallError =
     }
 
 export function parseAPICallError(input: { providerID: ProviderID; error: APICallError }): ParsedAPICallError {
-  const m = message(input.providerID, input.error)
   const body = json(input.error.responseBody)
+  const nested = body?.error && typeof body.error === "object" && !Array.isArray(body.error) ? body.error : undefined
+  const errorCode =
+    nested && "code" in nested && typeof nested.code === "string"
+      ? nested.code
+      : nested && "type" in nested && typeof nested.type === "string"
+        ? nested.type
+        : undefined
+  const m = BharatCodeModel.isAccessRequired(input.providerID, input.error.statusCode, errorCode)
+    ? BharatCodeModel.ACCESS_REQUIRED_MESSAGE
+    : message(input.providerID, input.error)
   if (isOverflow(m) || input.error.statusCode === 413 || body?.error?.code === "context_length_exceeded") {
     return {
       type: "context_overflow",

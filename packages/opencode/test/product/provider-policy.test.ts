@@ -4,6 +4,7 @@ import { ProductPolicy } from "@/product/policy"
 import { BharatCodeCatalog } from "@/bharatcode/catalog"
 import { BharatCodeModel } from "@/bharatcode/model"
 import { Provider } from "@/provider/provider"
+import { ModelID, ProviderID } from "@/provider/schema"
 
 const CODING_MODEL_ID = "bharatcode:qwen36-35b-awq-200k"
 const CODING_MODEL = `bharatcode/${CODING_MODEL_ID}`
@@ -78,6 +79,19 @@ describe("BharatCode shipped provider policy", () => {
       reason: BharatCodeModel.recoveryMessage(),
     })
     expect(BharatCodeModel.rejection(CODING_MODEL_ID)).toBeUndefined()
+  })
+
+  test("renders a catalog access denial instead of inventing a missing model", () => {
+    const message =
+      "BharatCode App is only available to Pro subscribers. If you're a student, please sign in with your student email id instead or reach out at help@bharatcode.ai to verify your student status. BharatCode Chat is free for all users, visit chat.bharatcode.ai."
+    const error = new Provider.ModelNotFoundError({
+      providerID: ProviderID.make("bharatcode"),
+      modelID: ModelID.make(CODING_MODEL_ID),
+      reason: message,
+    })
+
+    expect(Provider.modelNotFoundMessage(error)).toBe(message)
+    expect(Provider.modelNotFoundMessage(error)).not.toContain("Model not found")
   })
 
   test("maps only eligible live BharatCode records into the coding runtime", () => {
