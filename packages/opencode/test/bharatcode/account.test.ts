@@ -128,6 +128,25 @@ describe("BharatCode native account", () => {
     },
   )
 
+  test("clears a terminal refresh failure reported through the standard code field", async () => {
+    let calls = 0
+    const { promise, store } = run(BharatCodeAccount.use.accessToken(), {
+      initial: oauth(),
+      fetch: async () => {
+        calls++
+        return json(400, { code: "refresh_token_not_found", message: "private upstream detail" })
+      },
+    })
+
+    await expect(promise).rejects.toMatchObject({
+      _tag: "BharatCodeSignInRequired",
+      errorCode: "refresh_token_not_found",
+      message: "Your BharatCode session is no longer valid. Sign in again.",
+    })
+    expect(store.read()).toBeUndefined()
+    expect(calls).toBe(1)
+  })
+
   test.each([429, 503])("preserves credentials on retriable refresh HTTP %s", async (status) => {
     const current = oauth()
     const { promise, store } = run(BharatCodeAccount.use.accessToken(), {

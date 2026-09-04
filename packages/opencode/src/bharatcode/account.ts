@@ -98,6 +98,7 @@ type TokenResponse = {
 }
 
 type FailureBody = {
+  code?: unknown
   error_code?: unknown
   error?: unknown
   error_description?: unknown
@@ -248,17 +249,20 @@ export const layerWith = (options: LayerOptions = {}) =>
       })
 
       const httpFailure = (operation: string, response: Response, value: FailureBody) => {
-        const errorCode = stringField(value.error_code) ?? stringField(response.headers.get("x-sb-error-code"))
-        if (response.status === 400 && errorCode && TERMINAL_REFRESH_CODES.has(errorCode)) {
+        const declaredCode = stringField(value.error_code) ?? stringField(response.headers.get("x-sb-error-code"))
+        const terminalCode = [declaredCode, stringField(value.code)].find(
+          (code): code is string => !!code && TERMINAL_REFRESH_CODES.has(code),
+        )
+        if (response.status === 400 && terminalCode) {
           return new SignInRequired({
-            errorCode,
+            errorCode: terminalCode,
             message: "Your BharatCode session is no longer valid. Sign in again.",
           })
         }
         return new ServiceError({
           operation,
           status: response.status,
-          errorCode,
+          errorCode: declaredCode,
           retriable: response.status === 429 || response.status >= 500,
           message: `BharatCode ${operation} failed (${response.status}).`,
         })
