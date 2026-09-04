@@ -244,18 +244,35 @@ describe("BharatCode authenticated catalog", () => {
       eligible: false,
       diagnostic: { recordID: CODING_MODEL_ID, reason: "invalid-coding-contract", fields: ["max_output_tokens"] },
     })
-    expect(BharatCodeCatalog.codingEligibility({ ...chat, modality: "chat" })).toMatchObject({
-      eligible: false,
-      diagnostic: { reason: "invalid-coding-contract", fields: ["modality"] },
+    expect(BharatCodeCatalog.codingEligibility({ ...chat, modality: "chat" })).toEqual({
+      eligible: true,
+      input: ["text", "image"],
+      output: ["text"],
     })
 
-    for (const id of ["bharatcode:qwen36-35b-q6-256k-vision", "bharatcode:qwen36-35b-q8-256k"]) {
-      expect(BharatCodeCatalog.codingEligibility({ ...chat, id })).toEqual({
-        eligible: false,
-        diagnostic: { recordID: id, reason: "unsupported-coding-model", fields: ["id"] },
-      })
-      expect(BharatCodeCatalog.toV2Model({ ...chat, id })).toBeUndefined()
+    const futureChat = {
+      ...chat,
+      id: "bharatcode:future-text-coder",
+      modality: "chat",
+      displayName: "Future text coder",
+      metadata: { input: ["text"], output: ["text"], toolCalling: true, reasoning: false },
+      contextWindow: 128_000,
+      maxOutputTokens: 16_000,
     }
+    expect(BharatCodeCatalog.codingEligibility(futureChat)).toEqual({
+      eligible: true,
+      input: ["text"],
+      output: ["text"],
+    })
+    expect(BharatCodeCatalog.toV2Model(futureChat)).toMatchObject({
+      id: "bharatcode:future-text-coder",
+      limit: { context: 128_000, output: 16_000 },
+    })
+
+    expect(BharatCodeCatalog.codingEligibility({ ...futureChat, maxOutputTokens: 256_000 })).toMatchObject({
+      eligible: false,
+      diagnostic: { reason: "invalid-coding-contract", fields: ["max_output_tokens"] },
+    })
 
     const dictation: BharatCodeCatalog.Model = {
       ...chat,

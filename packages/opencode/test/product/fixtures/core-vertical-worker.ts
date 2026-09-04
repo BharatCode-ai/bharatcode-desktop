@@ -44,7 +44,6 @@ const [
   { Effect, Exit },
   { Global },
   { BharatCodeAccount },
-  { BharatCodeModel },
   { ShareNext },
   { Server },
   { createOpencodeClient },
@@ -53,7 +52,6 @@ const [
   import("effect"),
   import("@opencode-ai/core/global"),
   import("@/bharatcode/account"),
-  import("@/bharatcode/model"),
   import("@/share/share-next"),
   import("@/server/server"),
   import("@opencode-ai/sdk/v2"),
@@ -168,7 +166,7 @@ try {
   const prompt = data(
     await sdk.desktop.session.prompt({
       sessionID: session.id,
-      model: { providerID: "bharatcode", modelID: BharatCodeModel.CODING_MODEL_ID },
+      model: { providerID: "bharatcode", modelID: "bharatcode:qwen36-35b-awq-200k" },
       agent: "build",
       parts: [{ type: "text", text: "Replace before with after in answer.txt." }],
     }),

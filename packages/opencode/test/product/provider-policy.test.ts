@@ -20,6 +20,12 @@ describe("BharatCode shipped provider policy", () => {
         command: { review: { model: CODING_MODEL } },
       }),
     ).toBeUndefined()
+    expect(
+      ProductPolicy.findConfigViolation({
+        model: "bharatcode/bharatcode:future-text-coder",
+        small_model: "bharatcode/bharatcode:future-small-coder",
+      }),
+    ).toBeUndefined()
   })
 
   test.each([
@@ -34,8 +40,6 @@ describe("BharatCode shipped provider policy", () => {
     [{ agent: { build: { model: "google/gemini" } } }, "agent_model"],
     [{ mode: { plan: { model: "openrouter/model" } } }, "agent_model"],
     [{ command: { review: { model: "mistral/model" } } }, "command_model"],
-    [{ model: "bharatcode/bharatcode:qwen36-35b-q6-256k-vision" }, "default_model"],
-    [{ small_model: "bharatcode/bharatcode:qwen36-35b-q8-256k" }, "small_model"],
   ])("rejects unsupported config %#", (config, source) => {
     expect(ProductPolicy.findConfigViolation(config)).toMatchObject({ source })
     expect(ProductPolicy.findConfigViolation(config)).not.toHaveProperty("providerID")
@@ -67,18 +71,9 @@ describe("BharatCode shipped provider policy", () => {
     expect(error.message).not.toContain("openai")
   })
 
-  test("names the sole supported model without translating retired IDs", () => {
-    const error = ProductPolicy.findConfigViolation({
-      model: "bharatcode/bharatcode:qwen36-35b-q6-256k-vision",
-    })
-
-    expect(error?.message).toContain(CODING_MODEL)
-    expect(error?.message).toContain("not translated")
-    expect(BharatCodeModel.rejection("bharatcode:qwen36-35b-q8-256k")).toEqual({
-      suggestions: [CODING_MODEL_ID],
-      reason: BharatCodeModel.recoveryMessage(),
-    })
-    expect(BharatCodeModel.rejection(CODING_MODEL_ID)).toBeUndefined()
+  test("delegates BharatCode model membership to the authenticated catalog", () => {
+    expect(BharatCodeModel.recoveryMessage()).toContain("authenticated catalog")
+    expect(BharatCodeModel.recoveryMessage()).not.toContain(CODING_MODEL_ID)
   })
 
   test("renders a catalog access denial instead of inventing a missing model", () => {
@@ -115,7 +110,16 @@ describe("BharatCode shipped provider policy", () => {
       limit: { context: 200_000, output: 32_000 },
     })
     expect(Provider.fromBharatCodeCatalogModel({ ...base, protocol: "openai_responses" })).toBeUndefined()
-    expect(Provider.fromBharatCodeCatalogModel({ ...base, id: "bharatcode:qwen36-35b-q6-256k-vision" })).toBeUndefined()
+    expect(
+      Provider.fromBharatCodeCatalogModel({
+        ...base,
+        id: "bharatcode:future-text-coder",
+        modality: "chat",
+        metadata: { input: ["text"], output: ["text"], toolCalling: true, reasoning: false },
+        contextWindow: 128_000,
+        maxOutputTokens: 16_000,
+      }),
+    ).toMatchObject({ id: "bharatcode:future-text-coder", limit: { context: 128_000, output: 16_000 } })
   })
 
   test("keeps shipped command and v2 query sources free of generic public fallbacks", async () => {

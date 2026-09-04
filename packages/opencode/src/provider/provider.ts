@@ -31,7 +31,6 @@ import { RuntimeFlags } from "@/effect/runtime-flags"
 import { ProductPolicy } from "@/product/policy"
 import { BharatCodeAccount } from "@/bharatcode/account"
 import { BharatCodeCatalog } from "@/bharatcode/catalog"
-import { BharatCodeModel } from "@/bharatcode/model"
 
 const log = Log.create({ service: "provider" })
 
@@ -1828,15 +1827,6 @@ export const layer = Layer.effect(
 
     const getModel = Effect.fn("Provider.getModel")(function* (providerID: ProviderID, modelID: ModelID) {
       if (!policy.allowsProvider(providerID)) return yield* policyDeniedModel()
-      const unsupported =
-        policy.isShipped && providerID === "bharatcode" ? BharatCodeModel.rejection(modelID) : undefined
-      if (unsupported) {
-        return yield* new ModelNotFoundError({
-          providerID,
-          modelID,
-          ...unsupported,
-        })
-      }
       if (policy.isShipped) yield* InstanceState.invalidate(state)
       const s = yield* InstanceState.get(state)
       const provider = s.providers[providerID]

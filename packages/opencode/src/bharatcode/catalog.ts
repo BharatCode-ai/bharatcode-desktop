@@ -28,13 +28,7 @@ export type Model = {
 
 export type Diagnostic = {
   recordID?: string
-  reason:
-    | "invalid-record"
-    | "not-live"
-    | "not-coding-model"
-    | "unsupported-coding-model"
-    | "invalid-coding-contract"
-    | "invalid-dictation-contract"
+  reason: "invalid-record" | "not-live" | "not-coding-model" | "invalid-coding-contract" | "invalid-dictation-contract"
   fields: readonly string[]
 }
 
@@ -175,9 +169,6 @@ export function codingEligibility(model: Model): Eligibility {
   if (model.modality !== "chat" && model.modality !== "vision_chat") {
     return exclusion(model, "not-coding-model", ["modality"])
   }
-  if (model.id !== BharatCodeModel.CODING_MODEL_ID) {
-    return exclusion(model, "unsupported-coding-model", ["id"])
-  }
   if (model.protocol !== "openai_chat_completions") {
     return exclusion(model, "invalid-coding-contract", ["protocol"])
   }
@@ -185,14 +176,15 @@ export function codingEligibility(model: Model): Eligibility {
   const output = modalities(model, "output")
   const fields = [
     ...(model.ownedBy !== "bharatcode" ? ["owned_by"] : []),
-    ...(model.modality !== "vision_chat" ? ["modality"] : []),
     ...(model.endpoint !== "/v1/chat/completions" ? ["endpoint"] : []),
-    ...(model.contextWindow !== 200_000 ? ["context_window"] : []),
-    ...(model.maxOutputTokens !== 32_000 ? ["max_output_tokens"] : []),
-    ...(!input.includes("text") || !input.includes("image") ? ["metadata.input"] : []),
+    ...(!model.contextWindow ? ["context_window"] : []),
+    ...(!model.maxOutputTokens || (model.contextWindow && model.maxOutputTokens > model.contextWindow)
+      ? ["max_output_tokens"]
+      : []),
+    ...(!input.includes("text") || (model.modality === "vision_chat" && !input.includes("image"))
+      ? ["metadata.input"]
+      : []),
     ...(!output.includes("text") ? ["metadata.output"] : []),
-    ...(model.metadata.toolCalling !== true ? ["metadata.toolCalling"] : []),
-    ...(model.metadata.reasoning !== true ? ["metadata.reasoning"] : []),
   ]
   return fields.length ? exclusion(model, "invalid-coding-contract", fields) : { eligible: true, input, output }
 }
