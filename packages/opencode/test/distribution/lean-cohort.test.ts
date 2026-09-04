@@ -50,7 +50,7 @@ function artifact(key: string, index: number, wslGateResult = "PASS", upgradeGat
     platform: platform(key),
     arch: arch(key),
     filename: key.startsWith("cli-")
-      ? `${key}-1.15.10.tgz`
+      ? `${key}-1.15.25.tgz`
       : ({
           "desktop-linux-x64-update-info": "beta-linux.yml",
           "desktop-macos-arm64-blockmap": "bharatcode-desktop-next-beta-mac-arm64.zip.blockmap",
@@ -89,10 +89,10 @@ function manifest(wslGateResult = "PASS", upgradeGateResult = "PASS") {
     schema: "bharatcode-next-beta-cohort-v3",
     repository: "BharatCode-ai/bharatcode-desktop",
     source_sha: sourceSha,
-    candidate_tag: "desktop-beta-1.15.24",
-    desktop_version: "1.15.24",
-    cli_version: "1.15.10",
-    wsl_runtime_version: "1.15.24",
+    candidate_tag: "desktop-beta-1.15.25",
+    desktop_version: "1.15.25",
+    cli_version: "1.15.25",
+    wsl_runtime_version: "1.15.25",
     channel: "beta",
     workflow: ".github/workflows/bharatcode-next-beta-candidate.yml",
     run_id: bindings.run_id,
@@ -253,7 +253,7 @@ describe("lean next-beta cohort contract", () => {
   test("normalizes exact electron-builder updater metadata to immutable public package names", () => {
     const sha512 = Buffer.alloc(64, 97).toString("base64")
     const value = {
-      version: "1.15.24",
+      version: "1.15.25",
       files: [{ url: "bharatcode-desktop-windows-x64.exe", sha512, size: 1234 }],
       path: "bharatcode-desktop-windows-x64.exe",
       sha512,
@@ -261,7 +261,7 @@ describe("lean next-beta cohort contract", () => {
     }
     const normalized = validateLeanUpdaterInfo(value, {
       label: "Windows beta updater",
-      version: "1.15.24",
+      version: "1.15.25",
       files: [
         {
           source_url: "bharatcode-desktop-windows-x64.exe",
@@ -286,7 +286,7 @@ describe("lean next-beta cohort contract", () => {
       expect(() =>
         validateLeanUpdaterInfo(hostile, {
           label: "Windows beta updater",
-          version: "1.15.24",
+          version: "1.15.25",
           files: [
             {
               source_url: "bharatcode-desktop-windows-x64.exe",
@@ -305,7 +305,7 @@ describe("lean next-beta cohort contract", () => {
     const debSha512 = Buffer.alloc(64, 98).toString("base64")
     const updaterBindings = {
       label: "Linux beta updater",
-      version: "1.15.24",
+      version: "1.15.25",
       files: [
         {
           source_url: "bharatcode-desktop-linux-x86_64.AppImage",
@@ -329,7 +329,7 @@ describe("lean next-beta cohort contract", () => {
     }
     const deb = { url: updaterBindings.files[1].source_url, sha512: debSha512, size: 200 }
     const metadata = (files: Array<typeof appimage | typeof deb>) => ({
-      version: "1.15.24",
+      version: "1.15.25",
       files,
       path: files[0].url,
       sha512: files[0].sha512,
@@ -357,7 +357,7 @@ describe("lean next-beta cohort contract", () => {
     }
     const updaterBindings = {
       label: "Linux beta updater",
-      version: "1.15.24",
+      version: "1.15.25",
       files: [
         {
           source_url: "bharatcode-desktop-linux-x86_64.AppImage",
@@ -375,7 +375,7 @@ describe("lean next-beta cohort contract", () => {
     }
 
     expect(validateLeanUpdaterInfo(value, updaterBindings)).toEqual({
-      version: "1.15.24",
+      version: "1.15.25",
       files: [
         {
           url: "bharatcode-desktop-next-beta-linux-x64.AppImage",
@@ -422,7 +422,7 @@ describe("lean next-beta cohort contract", () => {
       () => ({ ...manifest(), upgrade_receipt_sha256: "f".repeat(64) }),
       () => ({ ...manifest(), upgrade_gate_result: "OWNER_WAIVED" }),
       () => ({ ...manifest(), wsl_runtime_version: "1.15.20" }),
-      () => ({ ...manifest(), cli_version: "1.15.10-01" }),
+      () => ({ ...manifest(), cli_version: "1.15.25-01" }),
       () => {
         const value = manifest()
         value.artifacts[0].completed_at = "2026-07-20T10:00:00.001Z"
@@ -462,12 +462,12 @@ describe("lean next-beta cohort contract", () => {
     }
   })
 
-  test("accepts only the exact owner-authorized 1.15.24 upgrade waiver record", () => {
+  test("accepts only the exact owner-authorized 1.15.25 upgrade waiver record", () => {
     const desktopSha256 = "d".repeat(64)
     const receipt = {
       schema: "bharatcode-windows-upgrade-rollback-waiver-v1",
       result: "OWNER_WAIVED",
-      reason: "WINDOWS_UPGRADE_ROLLBACK_ACCEPTANCE_WAIVED_BY_OWNER_FOR_1_15_24",
+      reason: "WINDOWS_UPGRADE_ROLLBACK_ACCEPTANCE_WAIVED_BY_OWNER_FOR_1_15_25",
       obligation: "POST_RELEASE_MANUAL_UPGRADE_ROLLBACK_TEST_REQUIRED",
       accepted_application_source_sha: "80c962f4148db531c35abcf4922059d2101c9bcd",
       source_sha: sourceSha,
