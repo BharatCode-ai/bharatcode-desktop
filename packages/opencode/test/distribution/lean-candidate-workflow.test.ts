@@ -2143,7 +2143,7 @@ describe("lean next-beta candidate workflow", () => {
     const stage = steps.findIndex((step) => step.name === "Revalidate and stage complete public update cohort")
     const refuse = steps.findIndex((step) => step.name === "Refuse overwrite and verify rollback release")
     const create = steps.findIndex((step) => step.name === "Create draft and upload without overwrite")
-    const verify = steps.findIndex((step) => step.name === "Verify draft asset identities and live URLs")
+    const verify = steps.findIndex((step) => step.name === "Verify draft asset identities")
     const finalize = steps.findIndex((step) => step.name === "Finalize verified prerelease")
     const notify = steps.findIndex((step) => step.name === "Notify website after finalization")
     expect([stage, refuse, create, verify, finalize, notify].every((index) => index >= 0)).toBeTrue()
@@ -2176,6 +2176,14 @@ describe("lean next-beta candidate workflow", () => {
     expect(createRun).toContain("--draft --prerelease")
     expect(createRun).toContain('[[ "${#assets[@]}" -eq 26 ]]')
     expect(createRun).not.toContain("--clobber")
+    const verifyRun = steps[verify]?.run ?? ""
+    expect(verifyRun).toContain("untagged-[A-Za-z0-9]+")
+    expect(verifyRun).toContain("Draft URL identity drift")
+    const finalizeRun = steps[finalize]?.run ?? ""
+    expect(finalizeRun).toContain("Published URL drift")
+    expect(finalizeRun).toContain(
+      "https://github.com/${process.env.GITHUB_REPOSITORY}/releases/download/${process.env.RELEASE_TAG}/${asset.name}",
+    )
     expect(steps[notify]?.if).toBe("needs.admit-source.outputs.notify_requested == 'true'")
     expect(steps[notify]?.env).toEqual({ GH_TOKEN: "${{ secrets.BHARATCODE_WEBSITE_DISPATCH_TOKEN }}" })
     expect(steps[notify]?.run).toContain('"event_type": "desktop_release_published"')
