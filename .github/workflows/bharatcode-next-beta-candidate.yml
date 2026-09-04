@@ -1602,7 +1602,7 @@ jobs:
           [[ "${#assets[@]}" -eq 26 ]]
           gh release upload "$RELEASE_TAG" "${assets[@]}" --repo "$GITHUB_REPOSITORY"
 
-      - name: Verify draft asset identities and live URLs
+      - name: Verify draft asset identities
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -1615,11 +1615,16 @@ jobs:
             if (!state.isDraft || !state.isPrerelease || state.targetCommitish !== process.env.SOURCE_SHA) throw new Error("Draft release identity drift")
             const names = (await readdir("release-assets")).sort()
             if (JSON.stringify(state.assets.map((item) => item.name).sort()) !== JSON.stringify(names)) throw new Error("Draft release asset set drift")
+            let draftSlug
             for (const asset of state.assets) {
               const bytes = new Uint8Array(await Bun.file(`release-assets/${asset.name}`).arrayBuffer())
               if (asset.digest !== `sha256:${createHash("sha256").update(bytes).digest("hex")}`) throw new Error(`Draft digest drift: ${asset.name}`)
-              const expected = `https://github.com/${process.env.GITHUB_REPOSITORY}/releases/download/${process.env.RELEASE_TAG}/${asset.name}`
-              if (asset.url !== expected) throw new Error(`Draft URL drift: ${asset.name}`)
+              const url = new URL(asset.url)
+              const segments = url.pathname.split("/")
+              const slug = segments[5]
+              if (url.origin !== "https://github.com" || url.username || url.password || url.search || url.hash || segments[1] !== process.env.GITHUB_REPOSITORY.split("/")[0] || segments[2] !== process.env.GITHUB_REPOSITORY.split("/")[1] || segments[3] !== "releases" || segments[4] !== "download" || !/^untagged-[A-Za-z0-9]+$/.test(slug) || segments.length !== 7 || decodeURIComponent(segments[6]) !== asset.name) throw new Error(`Draft URL identity drift: ${asset.name}`)
+              draftSlug ??= slug
+              if (slug !== draftSlug) throw new Error(`Draft URL release drift: ${asset.name}`)
             }
           '
 
@@ -1631,7 +1636,14 @@ jobs:
           gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease=true
           state="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease,targetCommitish,assets)"
           RELEASE_STATE="$state" bun --eval 'const value=JSON.parse(process.env.RELEASE_STATE); if(value.isDraft || !value.isPrerelease || value.targetCommitish !== process.env.SOURCE_SHA) throw new Error("Prerelease finalization drift")'
-          RELEASE_STATE="$state" bun --eval 'for (const asset of JSON.parse(process.env.RELEASE_STATE).assets) console.log(asset.url)' > release-urls.txt
+          RELEASE_STATE="$state" bun --eval '
+            const value = JSON.parse(process.env.RELEASE_STATE)
+            for (const asset of value.assets) {
+              const expected = `https://github.com/${process.env.GITHUB_REPOSITORY}/releases/download/${process.env.RELEASE_TAG}/${asset.name}`
+              if (asset.url !== expected) throw new Error(`Published URL drift: ${asset.name}`)
+              console.log(asset.url)
+            }
+          ' > release-urls.txt
           while IFS= read -r url; do curl --fail --silent --show-error --head --location --proto '=https' --tlsv1.2 "$url" >/dev/null; done < release-urls.txt
 
       - name: Notify website after finalization
