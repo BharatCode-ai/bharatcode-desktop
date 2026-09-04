@@ -34,7 +34,7 @@ const reviewedSecurityStepSha256 = {
   windowsUnsigned: "a3c024ac9c6087fca041b9d2aeeab56f59e5086557e1dbb56169846d701f5c6d",
 } as const
 const acceptedApplicationSourceSha = "80c962f4148db531c35abcf4922059d2101c9bcd"
-const acceptedReleaseParentSha = "341fe9ff21d03f61795b7e9045c3c0574f211376"
+const acceptedReleaseParentSha = "641741e2b01f918e70fdc37c78c0090c71ff6037"
 const wslRunnerLabel = "bharatcode-acceptance-${{ github.run_id }}-${{ github.run_attempt }}"
 const frozenWslPaths = [
   "packages/desktop/electron-builder.config.ts",
@@ -562,7 +562,7 @@ function runWorkflowCohortFixture(run: string, releaseStage?: string, updaterPre
       canonicalLeanJson({
         schema: "bharatcode-windows-upgrade-rollback-waiver-v1",
         result: "OWNER_WAIVED",
-        reason: "WINDOWS_UPGRADE_ROLLBACK_ACCEPTANCE_WAIVED_BY_OWNER_FOR_1_15_24",
+        reason: "WINDOWS_UPGRADE_ROLLBACK_ACCEPTANCE_WAIVED_BY_OWNER_FOR_1_15_25",
         obligation: "POST_RELEASE_MANUAL_UPGRADE_ROLLBACK_TEST_REQUIRED",
         accepted_application_source_sha: "80c962f4148db531c35abcf4922059d2101c9bcd",
         source_sha: sourceSha,
@@ -603,9 +603,9 @@ function runWorkflowCohortFixture(run: string, releaseStage?: string, updaterPre
         GITHUB_RUN_ID: runId,
         SOURCE_SHA: sourceSha,
         WORKFLOW_PATH: ".github/workflows/bharatcode-next-beta-candidate.yml",
-        RELEASE_TAG: "desktop-beta-1.15.24",
-        WSL_ACCEPTANCE_MODE: "owner-waived-hotfix-1.15.24",
-        UPGRADE_ACCEPTANCE_MODE: "owner-waived-hotfix-1.15.24",
+        RELEASE_TAG: "desktop-beta-1.15.25",
+        WSL_ACCEPTANCE_MODE: "owner-waived-hotfix-1.15.25",
+        UPGRADE_ACCEPTANCE_MODE: "owner-waived-hotfix-1.15.25",
       },
       stdout: "pipe",
       stderr: "pipe",
@@ -626,7 +626,7 @@ function runWorkflowCohortFixture(run: string, releaseStage?: string, updaterPre
           ...process.env,
           GITHUB_RUN_ATTEMPT: runAttempt,
           GITHUB_RUN_ID: runId,
-          RELEASE_TAG: "desktop-beta-1.15.24",
+          RELEASE_TAG: "desktop-beta-1.15.25",
           SOURCE_SHA: sourceSha,
         },
         stdout: "pipe",
@@ -676,7 +676,18 @@ async function runWorkflowMetaPackageFixture(script: string) {
       mkdirSync(dirname(binary), { recursive: true })
       writeFileSync(
         resolve(packageRoot, "package.json"),
-        JSON.stringify({ name, version, preferUnplugged: true, os: [os], cpu: [arch], files: ["bin"] }),
+        JSON.stringify({
+          name,
+          version,
+          repository: {
+            type: "git",
+            url: "git+https://github.com/BharatCode-ai/bharatcode-cli.git",
+          },
+          preferUnplugged: true,
+          os: [os],
+          cpu: [arch],
+          files: ["bin"],
+        }),
       )
       writeFileSync(binary, minimalNativeBytes(os, arch))
       chmodSync(binary, 0o755)
@@ -742,6 +753,10 @@ async function runWorkflowMetaPackageFixture(script: string) {
       const expected = {
         name: "bharatcode",
         version,
+        repository: {
+          type: "git",
+          url: "git+https://github.com/BharatCode-ai/bharatcode-cli.git",
+        },
         type: "module",
         bin: { bharatcode: "bin/bharatcode.mjs" },
         files: ["bin", "script/distribution.mjs"],
@@ -1233,7 +1248,8 @@ function metaPackageBuildViolations(run: string) {
     "sourceBytes.length !== targetBytes.length || digest(sourceBytes) !== digest(targetBytes)",
     'type: "module"',
     'files: ["bin", "script/distribution.mjs"]',
-    'JSON.stringify(Object.keys(writtenManifest).sort()) !== JSON.stringify(["bin", "cpu", "files", "name", "optionalDependencies", "os", "type", "version"])',
+    'JSON.stringify(Object.keys(writtenManifest).sort()) !== JSON.stringify(["bin", "cpu", "files", "name", "optionalDependencies", "os", "repository", "type", "version"])',
+    'repository: { type: "git", url: "git+https://github.com/BharatCode-ai/bharatcode-cli.git" }',
     "JSON.stringify(writtenManifest) !== JSON.stringify(metaManifest)",
     'const expectedEntries = ["package/bin/bharatcode.mjs", "package/package.json", "package/script/distribution.mjs"]',
     "sourceBytes.length !== extracted.stdout.length || digest(sourceBytes) !== digest(extracted.stdout)",
@@ -1391,7 +1407,7 @@ function windowsUnsignedPolicyViolations(value: string) {
 }
 
 describe("lean next-beta candidate workflow", () => {
-  test("is manual-only and binds one exact 1.15.24 source plus a fresh WSL decision", async () => {
+  test("is manual-only and binds one exact 1.15.25 source plus a fresh WSL decision", async () => {
     const value = await source()
     const workflow = parse(value)
     expect(Object.keys(workflow.on)).toEqual(["workflow_dispatch"])
@@ -1403,19 +1419,19 @@ describe("lean next-beta candidate workflow", () => {
       "website_action",
     ])
     expect(workflow.on.workflow_dispatch.inputs.wsl_acceptance_mode).toEqual({
-      description: "Require formal WSL2 automation, or record a fresh owner-authorized 1.15.24 waiver",
+      description: "Require formal WSL2 automation, or record a fresh owner-authorized 1.15.25 waiver",
       required: true,
       default: "required",
       type: "choice",
-      options: ["required", "owner-waived-hotfix-1.15.24"],
+      options: ["required", "owner-waived-hotfix-1.15.25"],
     })
     expect(workflow.on.workflow_dispatch.inputs.upgrade_acceptance_mode).toEqual({
       description:
-        "Require packaged Windows upgrade/rollback automation, or record the owner-authorized 1.15.24 waiver",
+        "Require packaged Windows upgrade/rollback automation, or record the owner-authorized 1.15.25 waiver",
       required: true,
       default: "required",
       type: "choice",
-      options: ["required", "owner-waived-hotfix-1.15.24"],
+      options: ["required", "owner-waived-hotfix-1.15.25"],
     })
     expect(workflow.on.workflow_dispatch.inputs.publication_action).toEqual({
       description: "Finalize the complete immutable cohort as a public prerelease",
@@ -1432,11 +1448,11 @@ describe("lean next-beta candidate workflow", () => {
       options: ["hold", "notify"],
     })
     expect(value).toContain("^[0-9a-f]{40}$")
-    expect(value).toContain("github.ref == 'refs/heads/codex/desktop-1.15.24-release-control'")
+    expect(value).toContain("github.ref == 'refs/heads/codex/desktop-1.15.25-release-control'")
     expect(value).toContain("github.sha")
     expect(value).toContain("inputs.source_sha")
     expect(value).toContain("ref: ${{ inputs.source_sha }}")
-    expect(value).toContain("RELEASE_TAG: desktop-beta-1.15.24")
+    expect(value).toContain("RELEASE_TAG: desktop-beta-1.15.25")
     const admission = runStep(value, "admit-source", "Admit immutable source and source-derived versions")
     expect(value).toContain(acceptedApplicationSourceSha)
     expect(value).toContain(`ACCEPTED_RELEASE_PARENT_SHA: ${acceptedReleaseParentSha}`)
@@ -1869,6 +1885,10 @@ describe("lean next-beta candidate workflow", () => {
     }
     expect(value).toContain("macos-14")
     expect(value).toContain("macos-15-intel")
+    expect(value).toContain("(cd packages/core && bun test test/storage-paths.test.ts)")
+    expect(value).toContain(
+      "(cd packages/opencode && bun test test/migration/cutover.test.ts test/bharatcode/account.test.ts)",
+    )
     expect(value).toContain("windows-2025")
     expect(value).toContain("ubuntu-24.04")
   })
@@ -1903,7 +1923,7 @@ describe("lean next-beta candidate workflow", () => {
     const value = await source()
     const workflow = parse(value)
     const job = workflow.jobs["record-wsl-waiver"]
-    expect(job.if).toBe("inputs.wsl_acceptance_mode == 'owner-waived-hotfix-1.15.24'")
+    expect(job.if).toBe("inputs.wsl_acceptance_mode == 'owner-waived-hotfix-1.15.25'")
     expect(workflow.jobs["accept-wsl"].if).toBe("inputs.wsl_acceptance_mode == 'required'")
     const run = runStep(value, "record-wsl-waiver", "Record exact owner-authorized WSL automation waiver")
     expect(run).toContain('result: "OWNER_WAIVED"')
@@ -1929,7 +1949,7 @@ describe("lean next-beta candidate workflow", () => {
     const value = await source()
     const workflow = parse(value)
     expect(workflow.jobs["record-upgrade-waiver"].if).toBe(
-      "inputs.upgrade_acceptance_mode == 'owner-waived-hotfix-1.15.24'",
+      "inputs.upgrade_acceptance_mode == 'owner-waived-hotfix-1.15.25'",
     )
     expect(workflow.jobs["upgrade-rollback-windows-x64"].if).toBe("inputs.upgrade_acceptance_mode == 'required'")
     const cohortCondition = workflow.jobs["assemble-cohort"].if ?? ""
@@ -1937,11 +1957,11 @@ describe("lean next-beta candidate workflow", () => {
       "inputs.upgrade_acceptance_mode == 'required' && needs.upgrade-rollback-windows-x64.result == 'success' && needs.record-upgrade-waiver.result == 'skipped'",
     )
     expect(cohortCondition).toContain(
-      "inputs.upgrade_acceptance_mode == 'owner-waived-hotfix-1.15.24' && needs.upgrade-rollback-windows-x64.result == 'skipped' && needs.record-upgrade-waiver.result == 'success'",
+      "inputs.upgrade_acceptance_mode == 'owner-waived-hotfix-1.15.25' && needs.upgrade-rollback-windows-x64.result == 'skipped' && needs.record-upgrade-waiver.result == 'success'",
     )
     const run = runStep(value, "record-upgrade-waiver", "Record exact owner-authorized Windows upgrade waiver")
     expect(run).toContain('result: "OWNER_WAIVED"')
-    expect(run).toContain('reason: "WINDOWS_UPGRADE_ROLLBACK_ACCEPTANCE_WAIVED_BY_OWNER_FOR_1_15_24"')
+    expect(run).toContain('reason: "WINDOWS_UPGRADE_ROLLBACK_ACCEPTANCE_WAIVED_BY_OWNER_FOR_1_15_25"')
     expect(run).toContain('obligation: "POST_RELEASE_MANUAL_UPGRADE_ROLLBACK_TEST_REQUIRED"')
     expect(run).toContain('source_sha: "70a1a462dbbfcb2d2fc6485592520ae2342b7e07"')
     expect(run).toContain("run_id: 33804419459")
@@ -2168,13 +2188,14 @@ describe("lean next-beta candidate workflow", () => {
     ])
       expect(stageRun).toContain(identity)
     const refuseRun = steps[refuse]?.run ?? ""
-    expect(value).toContain("PREVIOUS_RELEASE_TAG: desktop-beta-1.15.23")
+    expect(value).toContain("PREVIOUS_RELEASE_TAG: desktop-beta-1.15.24")
+    expect(refuseRun).toContain('value.targetCommitish !== "853de6ccc11de7d68d803126942dbebf72e32c8c"')
     expect(refuseRun).toContain("Release already exists; refusing overwrite.")
     expect(refuseRun).toContain("Tag already exists; refusing mixed provenance.")
     const createRun = steps[create]?.run ?? ""
     expect(createRun).toContain('gh release create "$RELEASE_TAG"')
     expect(createRun).toContain("--draft --prerelease")
-    expect(createRun).toContain('[[ "${#assets[@]}" -eq 26 ]]')
+    expect(createRun).toContain('[[ "${#assets[@]}" -eq 52 ]]')
     expect(createRun).not.toContain("--clobber")
     expect(steps[notify]?.if).toBe("needs.admit-source.outputs.notify_requested == 'true'")
     expect(steps[notify]?.env).toEqual({ GH_TOKEN: "${{ secrets.BHARATCODE_WEBSITE_DISPATCH_TOKEN }}" })
@@ -2197,11 +2218,17 @@ describe("lean next-beta candidate workflow", () => {
     expect(fixture.exitCode).toBe(0)
     expect(fixture.releaseStageError).toBe("")
     expect(fixture.releaseStageExitCode).toBe(0)
-    expect(fixture.releaseAssets).toHaveLength(26)
+    expect(fixture.releaseAssets).toHaveLength(52)
     expect(fixture.releaseAssets).toContain("SHA256SUMS")
     expect(fixture.releaseAssets).toContain("beta.yml")
     expect(fixture.releaseAssets).toContain("beta-mac.yml")
     expect(fixture.releaseAssets).toContain("beta-linux.yml")
+    expect(fixture.releaseAssets).toContain(`bharatcode-${fixture.manifest.cli_version}.tgz`)
+    expect(fixture.releaseAssets).toContain(`bharatcode-${fixture.manifest.cli_version}.tgz.intoto.jsonl`)
+    for (const name of PLATFORM_PACKAGE_NAMES) {
+      expect(fixture.releaseAssets).toContain(`${name}-${fixture.manifest.cli_version}.tgz`)
+      expect(fixture.releaseAssets).toContain(`${name}-${fixture.manifest.cli_version}.tgz.intoto.jsonl`)
+    }
   })
 
   test("admits closed publication choices once before mutation authority", async () => {
