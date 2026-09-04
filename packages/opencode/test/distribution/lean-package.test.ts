@@ -63,6 +63,11 @@ describe("lean BharatCode npm package", () => {
       .map((item) => join(packageRoot, "dist", item))
       .find((item) => existsSync(join(item, "bin", process.platform === "win32" ? "bharatcode.exe" : "bharatcode")))
     if (!platformDirectory) throw new Error("build produced no host BharatCode platform package")
+    const platformManifest = await Bun.file(join(platformDirectory, "package.json")).json()
+    expect(platformManifest.repository).toEqual({
+      type: "git",
+      url: "git+https://github.com/BharatCode-ai/bharatcode-cli.git",
+    })
     const platformTarball = await pack(platformDirectory, root)
 
     const meta = join(root, "meta")
