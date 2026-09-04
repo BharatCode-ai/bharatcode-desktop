@@ -68,16 +68,16 @@ describe("lean packaged upgrade/rollback receipt contract", () => {
     expect(value).toEqual({
       schema: "bharatcode-current-beta-fixture-v1",
       repository: "BharatCode-ai/bharatcode-desktop",
-      release_id: "380659644",
-      tag: "desktop-beta-1.15.23",
-      source_sha: "0ee3879a06275b55a432a5ed4bd63695aae16be1",
+      release_id: "382704708",
+      tag: "desktop-beta-1.15.25",
+      source_sha: "b44709aa0e94d66beb3d1d396ba782be2d69a076",
       assets: [
         {
           key: "desktop-windows-x64",
-          asset_id: "539821041",
+          asset_id: "544300994",
           filename: "bharatcode-desktop-next-beta-win-x64.exe",
-          bytes: 221165682,
-          sha256: "daa08b6ea61c94df6d248ac97cf4a4dee85e72e3b553ea35f16e699d4b4ca818",
+          bytes: 221158384,
+          sha256: "fce6c450b859c71f6649e1fa37ff9d935ed5d6ae8458bbfe5d66caea7e8dfb30",
         },
       ],
     })
