@@ -6,6 +6,7 @@ const SEMVER =
   /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u
 const SAFE_FILENAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/u
 const GITHUB_ACTOR = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u
+const AUTHORIZED_OWNER_ACTOR = "shrey16"
 const ACCEPTED_MANUAL_APPLICATION_SOURCE_SHA = "80c962f4148db531c35abcf4922059d2101c9bcd"
 const ACCEPTED_FAILED_UPGRADE_SOURCE_SHA = "70a1a462dbbfcb2d2fc6485592520ae2342b7e07"
 const ACCEPTED_FAILED_UPGRADE_RUN_ID = 33804419459
@@ -358,6 +359,7 @@ export function validateLeanWslWaiver(value, bindings) {
   )
   exactKeys(value.github, ["actor", "run_attempt", "run_id"], "lean WSL waiver GitHub identity")
   requirePattern(value.github.actor, GITHUB_ACTOR, "lean WSL waiver GitHub actor")
+  requireValue(value.github.actor === AUTHORIZED_OWNER_ACTOR, "lean WSL waiver dispatcher is not authorized")
   requirePattern(bindings.run_id, POSITIVE_DECIMAL, "expected lean WSL waiver run ID")
   requirePattern(bindings.run_attempt, POSITIVE_DECIMAL, "expected lean WSL waiver run attempt")
   requireValue(
@@ -426,6 +428,7 @@ export function validateLeanUpgradeWaiver(value, bindings) {
   )
   exactKeys(value.github, ["actor", "run_attempt", "run_id"], "lean upgrade waiver GitHub identity")
   requirePattern(value.github.actor, GITHUB_ACTOR, "lean upgrade waiver GitHub actor")
+  requireValue(value.github.actor === AUTHORIZED_OWNER_ACTOR, "lean upgrade waiver dispatcher is not authorized")
   requirePattern(bindings.run_id, POSITIVE_DECIMAL, "expected lean upgrade waiver run ID")
   requirePattern(bindings.run_attempt, POSITIVE_DECIMAL, "expected lean upgrade waiver run attempt")
   requireValue(

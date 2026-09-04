@@ -46,6 +46,7 @@ permissions:
 env:
   ACCEPTED_APPLICATION_SOURCE_SHA: 80c962f4148db531c35abcf4922059d2101c9bcd
   ACCEPTED_RELEASE_PARENT_SHA: 641741e2b01f918e70fdc37c78c0090c71ff6037
+  AUTHORIZED_OWNER_ACTOR: shrey16
   BHARATCODE_CHANNEL: beta
   PREVIOUS_RELEASE_TAG: desktop-beta-1.15.24
   RELEASE_TAG: desktop-beta-1.15.25
@@ -82,6 +83,7 @@ jobs:
         id: identity
         shell: bash
         env:
+          DISPATCH_ACTOR: ${{ github.actor }}
           EVENT_SHA: ${{ github.sha }}
           PUBLICATION_ACTION: ${{ inputs.publication_action }}
           SOURCE_SHA: ${{ inputs.source_sha }}
@@ -97,7 +99,7 @@ jobs:
           [[ "$(git status --porcelain)" == "" ]]
           git merge-base --is-ancestor "$ACCEPTED_APPLICATION_SOURCE_SHA" "$SOURCE_SHA"
           [[ "$(git rev-parse "$SOURCE_SHA^")" == "$ACCEPTED_RELEASE_PARENT_SHA" ]]
-          [[ "$(git diff --name-only "$ACCEPTED_RELEASE_PARENT_SHA" "$SOURCE_SHA")" == $'.github/workflows/bharatcode-next-beta-candidate.yml\npackages/opencode/test/distribution/lean-candidate-workflow.test.ts' ]]
+          [[ "$(git diff --name-only "$ACCEPTED_RELEASE_PARENT_SHA" "$SOURCE_SHA")" == $'.github/workflows/bharatcode-next-beta-candidate.yml\npackages/desktop/scripts/lean-upgrade-receipt.mjs\npackages/desktop/test/fixtures/current-beta-windows-x64.json\npackages/opencode/script/lean-cohort.mjs\npackages/opencode/test/distribution/lean-candidate-workflow.test.ts\npackages/opencode/test/distribution/lean-cohort.test.ts' ]]
           [[ "$UPGRADE_ACCEPTANCE_MODE" == "required" || "$UPGRADE_ACCEPTANCE_MODE" == "owner-waived-hotfix-1.15.25" ]]
           [[ "$WSL_ACCEPTANCE_MODE" == "required" || "$WSL_ACCEPTANCE_MODE" == "owner-waived-hotfix-1.15.25" ]]
           [[ "$PUBLICATION_ACTION" == "hold" || "$PUBLICATION_ACTION" == "publish" ]]
@@ -123,6 +125,7 @@ jobs:
           [[ "$cli_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
           [[ "$desktop_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
           if [[ "$WSL_ACCEPTANCE_MODE" == "owner-waived-hotfix-1.15.25" || "$UPGRADE_ACCEPTANCE_MODE" == "owner-waived-hotfix-1.15.25" ]]; then
+            [[ "$DISPATCH_ACTOR" == "$AUTHORIZED_OWNER_ACTOR" ]]
             [[ "$desktop_version" == "1.15.25" ]]
           fi
           {
@@ -504,14 +507,6 @@ jobs:
       contents: read
       id-token: write
       attestations: write
-    env:
-      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-      APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-      CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-      CSC_LINK: ${{ secrets.CSC_LINK }}
-      EXPECTED_APPLE_DEVELOPER_ID_SUBJECT: ${{ vars.BHARATCODE_EXPECTED_APPLE_DEVELOPER_ID_SUBJECT }}
     steps:
       - name: Checkout the exact candidate
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -524,14 +519,27 @@ jobs:
         with:
           bun-version-file: package.json
 
-      - name: Materialize protected Apple API key
+      - name: Install, test, typecheck, and build without signing credentials
         shell: bash
         run: |
           set -euo pipefail
           for key in CSC_LINK CSC_KEY_PASSWORD APPLE_API_KEY APPLE_API_KEY_ID APPLE_API_ISSUER APPLE_TEAM_ID; do
-            [[ -n "${!key:-}" ]]
+            [[ -z "${!key:-}" ]]
           done
-          key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
+          bun install --frozen-lockfile --linker hoisted
+          (cd packages/core && bun test test/storage-paths.test.ts)
+          (cd packages/opencode && bun test test/migration/cutover.test.ts test/bharatcode/account.test.ts)
+          bun run --cwd packages/desktop typecheck
+          bun run --cwd packages/desktop build
+
+      - name: Materialize protected Apple API key
+        shell: bash
+        env:
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+        run: |
+          set -euo pipefail
+          [[ -n "$APPLE_API_KEY" ]]
+          key_path="$RUNNER_TEMP/bharatcode-notary-key.p8"
           APPLE_KEY_PATH="$key_path" bun --eval '
             const raw = process.env.APPLE_API_KEY.trim()
             const decoded = Buffer.from(raw, "base64")
@@ -539,23 +547,28 @@ jobs:
             await Bun.write(process.env.APPLE_KEY_PATH, value.toString().endsWith("\n") ? value : Buffer.concat([value, Buffer.from("\n")]))
           '
           chmod 600 "$key_path"
-          printf 'APPLE_API_KEY=%s\n' "$key_path" >> "$GITHUB_ENV"
 
       - name: Build signed, notarized, stapled macOS package
         shell: bash
+        env:
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ runner.temp }}/bharatcode-notary-key.p8
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          EXPECTED_APPLE_DEVELOPER_ID_SUBJECT: ${{ vars.BHARATCODE_EXPECTED_APPLE_DEVELOPER_ID_SUBJECT }}
         run: |
           set -euo pipefail
+          for key in CSC_LINK CSC_KEY_PASSWORD APPLE_API_KEY APPLE_API_KEY_ID APPLE_API_ISSUER APPLE_TEAM_ID; do
+            [[ -n "${!key:-}" ]]
+          done
           bun --eval '
             const value = process.env.EXPECTED_APPLE_DEVELOPER_ID_SUBJECT
             const team = process.env.APPLE_TEAM_ID
             if (typeof value !== "string" || value.trim() !== value || value.includes("\n") || value.includes("\r") || !/^[A-Za-z0-9][A-Za-z0-9 .-]{0,127}$/.test(value)) throw new Error("protected Apple identity subject is missing or malformed")
             if (typeof team !== "string" || !/^[A-Z0-9]{10}$/.test(team)) throw new Error("protected Apple team identity is missing or malformed")
           '
-          bun install --frozen-lockfile --linker hoisted
-          (cd packages/core && bun test test/storage-paths.test.ts)
-          (cd packages/opencode && bun test test/migration/cutover.test.ts test/bharatcode/account.test.ts)
-          bun run --cwd packages/desktop typecheck
-          bun run --cwd packages/desktop build
           (cd packages/desktop && bunx electron-builder --mac zip --${{ matrix.arch }} --config electron-builder.config.ts --publish never)
           app_path="$(find packages/desktop/dist -maxdepth 3 -type d -name '*.app' -print -quit)"
           [[ -n "$app_path" ]]
@@ -584,6 +597,11 @@ jobs:
           cp "$zip_path" "bharatcode-desktop-next-beta-mac-${{ matrix.arch }}.zip"
           cp "$blockmap_path" "bharatcode-desktop-next-beta-mac-${{ matrix.arch }}.zip.producer.blockmap"
           cp "$metadata_path" "beta-mac-${{ matrix.arch }}.producer.yml"
+
+      - name: Remove protected Apple API key
+        if: always()
+        shell: bash
+        run: rm -f "$RUNNER_TEMP/bharatcode-notary-key.p8"
 
       - name: Attest macOS package
         id: attest_macos
@@ -909,6 +927,7 @@ jobs:
       - name: Record exact owner-authorized WSL automation waiver
         env:
           ACCEPTED_APPLICATION_SOURCE_SHA: ${{ env.ACCEPTED_APPLICATION_SOURCE_SHA }}
+          AUTHORIZED_OWNER_ACTOR: ${{ env.AUTHORIZED_OWNER_ACTOR }}
           GITHUB_ACTOR_VALUE: ${{ github.actor }}
           SOURCE_SHA: ${{ inputs.source_sha }}
         run: |
@@ -918,6 +937,7 @@ jobs:
             const digest = async (path) => createHash("sha256").update(new Uint8Array(await Bun.file(path).arrayBuffer())).digest("hex")
             const desktopSha256 = await digest("candidate-input/bharatcode-desktop-next-beta-win-x64.exe")
             const runtimeManifestSha256 = await digest("candidate-input/bharatcode-wsl-runtime-manifest.json")
+            if (process.env.GITHUB_ACTOR_VALUE !== process.env.AUTHORIZED_OWNER_ACTOR) throw new Error("owner waiver dispatcher is not authorized")
             const receipt = {
               schema: "bharatcode-wsl-acceptance-waiver-v1",
               result: "OWNER_WAIVED",
@@ -1086,6 +1106,7 @@ jobs:
       - name: Record exact owner-authorized Windows upgrade waiver
         env:
           ACCEPTED_APPLICATION_SOURCE_SHA: ${{ env.ACCEPTED_APPLICATION_SOURCE_SHA }}
+          AUTHORIZED_OWNER_ACTOR: ${{ env.AUTHORIZED_OWNER_ACTOR }}
           GITHUB_ACTOR_VALUE: ${{ github.actor }}
           SOURCE_SHA: ${{ inputs.source_sha }}
         run: |
@@ -1093,6 +1114,7 @@ jobs:
             import { createHash } from "node:crypto"
             import { canonicalLeanJson, validateLeanUpgradeWaiver } from "./packages/opencode/script/lean-cohort.mjs"
             const desktopSha256 = createHash("sha256").update(new Uint8Array(await Bun.file("candidate-input/bharatcode-desktop-next-beta-win-x64.exe").arrayBuffer())).digest("hex")
+            if (process.env.GITHUB_ACTOR_VALUE !== process.env.AUTHORIZED_OWNER_ACTOR) throw new Error("owner waiver dispatcher is not authorized")
             const receipt = {
               schema: "bharatcode-windows-upgrade-rollback-waiver-v1",
               result: "OWNER_WAIVED",
@@ -1640,9 +1662,22 @@ jobs:
         run: |
           set -euo pipefail
           gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease=true
-          state="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease,targetCommitish,assets)"
-          RELEASE_STATE="$state" bun --eval 'const value=JSON.parse(process.env.RELEASE_STATE); if(value.isDraft || !value.isPrerelease || value.targetCommitish !== process.env.SOURCE_SHA) throw new Error("Prerelease finalization drift")'
-          RELEASE_STATE="$state" bun --eval 'for (const asset of JSON.parse(process.env.RELEASE_STATE).assets) console.log(asset.url)' > release-urls.txt
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease,targetCommitish,assets > release-final-state.json
+          bun --eval '
+            import { createHash } from "node:crypto"
+            import { readdir } from "node:fs/promises"
+            const state = await Bun.file("release-final-state.json").json()
+            if (state.isDraft || !state.isPrerelease || state.targetCommitish !== process.env.SOURCE_SHA) throw new Error("Prerelease finalization drift")
+            const names = (await readdir("release-assets")).sort()
+            if (JSON.stringify(state.assets.map((item) => item.name).sort()) !== JSON.stringify(names)) throw new Error("Final release asset set drift")
+            for (const asset of state.assets) {
+              const bytes = new Uint8Array(await Bun.file(`release-assets/${asset.name}`).arrayBuffer())
+              if (asset.digest !== `sha256:${createHash("sha256").update(bytes).digest("hex")}`) throw new Error(`Final release digest drift: ${asset.name}`)
+              const expected = `https://github.com/${process.env.GITHUB_REPOSITORY}/releases/download/${process.env.RELEASE_TAG}/${asset.name}`
+              if (asset.url !== expected) throw new Error(`Final release URL drift: ${asset.name}`)
+            }
+          '
+          bun --eval 'for (const asset of (await Bun.file("release-final-state.json").json()).assets) console.log(asset.url)' > release-urls.txt
           while IFS= read -r url; do curl --fail --silent --show-error --head --location --proto '=https' --tlsv1.2 "$url" >/dev/null; done < release-urls.txt
 
       - name: Notify website after finalization

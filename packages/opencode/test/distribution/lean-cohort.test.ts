@@ -444,7 +444,7 @@ describe("lean next-beta cohort contract", () => {
       source_sha: sourceSha,
       desktop_sha256: desktopSha256,
       runtime_manifest_sha256: runtimeManifestSha256,
-      github: { actor: "release-owner", run_id: 123456789, run_attempt: 1 },
+      github: { actor: "shrey16", run_id: 123456789, run_attempt: 1 },
       completed_at: completedAt,
     }
     const expected = { ...bindings, desktop_sha256: desktopSha256, runtime_manifest_sha256: runtimeManifestSha256 }
@@ -455,11 +455,14 @@ describe("lean next-beta cohort contract", () => {
       { ...receipt, accepted_application_source_sha: sourceSha },
       { ...receipt, source_sha: "0".repeat(40) },
       { ...receipt, desktop_sha256: "0".repeat(64) },
-      { ...receipt, github: { actor: "release-owner", run_id: 123456788, run_attempt: 1 } },
+      { ...receipt, github: { actor: "shrey16", run_id: 123456788, run_attempt: 1 } },
       { ...receipt, extra: true },
     ]) {
       expect(() => validateLeanWslWaiver(hostile, expected)).toThrow()
     }
+    expect(() =>
+      validateLeanWslWaiver({ ...receipt, github: { ...receipt.github, actor: "other-owner" } }, expected),
+    ).toThrow("dispatcher is not authorized")
   })
 
   test("accepts only the exact owner-authorized 1.15.25 upgrade waiver record", () => {
@@ -478,7 +481,7 @@ describe("lean next-beta cohort contract", () => {
         run_attempt: 1,
         stage: "CANDIDATE_RECOVERY",
       },
-      github: { actor: "release-owner", run_id: 123456789, run_attempt: 1 },
+      github: { actor: "shrey16", run_id: 123456789, run_attempt: 1 },
       completed_at: completedAt,
     }
     const expected = { ...bindings, desktop_sha256: desktopSha256 }
@@ -491,11 +494,14 @@ describe("lean next-beta cohort contract", () => {
       { ...receipt, desktop_sha256: "0".repeat(64) },
       { ...receipt, failed_evidence: { ...receipt.failed_evidence, run_id: 1 } },
       { ...receipt, failed_evidence: { ...receipt.failed_evidence, stage: "PROCESS_EXIT" } },
-      { ...receipt, github: { actor: "release-owner", run_id: 123456788, run_attempt: 1 } },
+      { ...receipt, github: { actor: "shrey16", run_id: 123456788, run_attempt: 1 } },
       { ...receipt, extra: true },
     ]) {
       expect(() => validateLeanUpgradeWaiver(hostile, expected)).toThrow()
     }
+    expect(() =>
+      validateLeanUpgradeWaiver({ ...receipt, github: { ...receipt.github, actor: "other-owner" } }, expected),
+    ).toThrow("dispatcher is not authorized")
   })
 
   test("accepts only a complete same-source, same-run packaged WSL host receipt", async () => {

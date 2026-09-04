@@ -194,7 +194,11 @@ const internalWslInputs = [
 ]
 const releaseControlDeltaPaths = [
   ".github/workflows/bharatcode-next-beta-candidate.yml",
+  "packages/desktop/scripts/lean-upgrade-receipt.mjs",
+  "packages/desktop/test/fixtures/current-beta-windows-x64.json",
+  "packages/opencode/script/lean-cohort.mjs",
   "packages/opencode/test/distribution/lean-candidate-workflow.test.ts",
+  "packages/opencode/test/distribution/lean-cohort.test.ts",
 ] as const
 
 async function source() {
@@ -397,7 +401,7 @@ function runWorkflowDigestFixture(run: string) {
   }
 }
 
-function runWorkflowWaiverFixture(run: string) {
+function runWorkflowWaiverFixture(run: string, actor = "shrey16") {
   const script = bunEvalScripts(run).find((value) => value.includes("validateLeanWslWaiver"))
   if (!script) throw new Error("workflow owner-waiver implementation is missing")
   const root = mkdtempSync(resolve(process.env.TMPDIR ?? tmpdir(), "lean-workflow-waiver-"))
@@ -411,7 +415,8 @@ function runWorkflowWaiverFixture(run: string) {
       env: {
         ...process.env,
         ACCEPTED_APPLICATION_SOURCE_SHA: "80c962f4148db531c35abcf4922059d2101c9bcd",
-        GITHUB_ACTOR_VALUE: "release-fixture",
+        AUTHORIZED_OWNER_ACTOR: "shrey16",
+        GITHUB_ACTOR_VALUE: actor,
         GITHUB_RUN_ATTEMPT: "2",
         GITHUB_RUN_ID: "123456789",
         SOURCE_SHA: "a".repeat(40),
@@ -429,7 +434,7 @@ function runWorkflowWaiverFixture(run: string) {
   }
 }
 
-function runWorkflowUpgradeWaiverFixture(run: string) {
+function runWorkflowUpgradeWaiverFixture(run: string, actor = "shrey16") {
   const script = bunEvalScripts(run).find((value) => value.includes("validateLeanUpgradeWaiver"))
   if (!script) throw new Error("workflow upgrade-waiver implementation is missing")
   const root = mkdtempSync(resolve(process.env.TMPDIR ?? tmpdir(), "lean-workflow-upgrade-waiver-"))
@@ -442,7 +447,8 @@ function runWorkflowUpgradeWaiverFixture(run: string) {
       env: {
         ...process.env,
         ACCEPTED_APPLICATION_SOURCE_SHA: "80c962f4148db531c35abcf4922059d2101c9bcd",
-        GITHUB_ACTOR_VALUE: "release-fixture",
+        AUTHORIZED_OWNER_ACTOR: "shrey16",
+        GITHUB_ACTOR_VALUE: actor,
         GITHUB_RUN_ATTEMPT: "2",
         GITHUB_RUN_ID: "123456789",
         SOURCE_SHA: "a".repeat(40),
@@ -573,7 +579,7 @@ function runWorkflowCohortFixture(run: string, releaseStage?: string, updaterPre
           run_attempt: 1,
           stage: "CANDIDATE_RECOVERY",
         },
-        github: { actor: "release-fixture", run_id: Number(runId), run_attempt: Number(runAttempt) },
+        github: { actor: "shrey16", run_id: Number(runId), run_attempt: Number(runAttempt) },
         completed_at: "2026-09-01T10:00:00.000Z",
       }),
     )
@@ -589,7 +595,7 @@ function runWorkflowCohortFixture(run: string, releaseStage?: string, updaterPre
         source_sha: sourceSha,
         desktop_sha256: candidate.sha256,
         runtime_manifest_sha256: digest(runtimeManifestPath),
-        github: { actor: "release-fixture", run_id: Number(runId), run_attempt: Number(runAttempt) },
+        github: { actor: "shrey16", run_id: Number(runId), run_attempt: Number(runAttempt) },
         completed_at: "2026-09-01T10:00:00.000Z",
       }),
     )
@@ -1801,6 +1807,41 @@ describe("lean next-beta candidate workflow", () => {
     )
   })
 
+  test("keeps Apple credentials out of checkout, install, tests, and build", async () => {
+    const value = await source()
+    const workflow = parse(value)
+    const job = workflow.jobs["package-macos"]
+    const steps = job.steps ?? []
+    const secretNames = [
+      "APPLE_API_ISSUER",
+      "APPLE_API_KEY",
+      "APPLE_API_KEY_ID",
+      "APPLE_TEAM_ID",
+      "CSC_KEY_PASSWORD",
+      "CSC_LINK",
+    ]
+    for (const key of secretNames) expect(job.env?.[key]).toBeUndefined()
+    const signingIndex = steps.findIndex((step) => step.name === "Build signed, notarized, stapled macOS package")
+    expect(signingIndex).toBeGreaterThan(0)
+    const signing = steps[signingIndex]
+    const preSigning = steps.slice(0, signingIndex)
+    for (const step of preSigning) {
+      if (step.name === "Materialize protected Apple API key") continue
+      for (const key of secretNames) expect(step.env?.[key]).toBeUndefined()
+    }
+    const install = steps.find(
+      (step) => step.name === "Install, test, typecheck, and build without signing credentials",
+    )
+    expect(install?.run).toContain('[[ -z "${!key:-}" ]]')
+    expect(signing?.run).not.toContain("bun install")
+    expect(signing?.run).not.toContain("bun test")
+    expect(signing?.run).not.toContain("typecheck")
+    expect(signing?.run).not.toContain("bun run --cwd packages/desktop build")
+    const cleanup = steps.find((step) => step.name === "Remove protected Apple API key")
+    expect(cleanup?.if).toBe("always()")
+    expect(cleanup?.run).toContain('rm -f "$RUNNER_TEMP/bharatcode-notary-key.p8"')
+  })
+
   test("enforces the explicit unsigned Windows policy without signing authority", async () => {
     const value = await source()
     expect(windowsUnsignedPolicyViolations(value)).toEqual([])
@@ -1898,8 +1939,8 @@ describe("lean next-beta candidate workflow", () => {
     const fixture = parseCurrentBetaFixtureBytes(
       new Uint8Array(await Bun.file(resolve(import.meta.dir, `../../../../${currentBetaFixture}`)).arrayBuffer()),
     )
-    expect(fixture.tag).toBe("desktop-beta-1.15.23")
-    expect(fixture.source_sha).toBe("0ee3879a06275b55a432a5ed4bd63695aae16be1")
+    expect(fixture.tag).toBe("desktop-beta-1.15.24")
+    expect(fixture.source_sha).toBe("853de6ccc11de7d68d803126942dbebf72e32c8c")
     expect(fixture.assets[0].filename).toBe("bharatcode-desktop-next-beta-win-x64.exe")
     expect(value).toContain(`--fixture ${currentBetaFixture}`)
     expect(value).not.toContain("packages/desktop/test/fixtures/lean-current-beta.json")
@@ -1943,6 +1984,8 @@ describe("lean next-beta candidate workflow", () => {
     expect(waiver.exitCode).toBe(0)
     expect(waiver.receipt?.result).toBe("OWNER_WAIVED")
     expect(waiver.receipt?.source_sha).toBe("a".repeat(40))
+    expect(waiver.receipt?.github.actor).toBe("shrey16")
+    expect(runWorkflowWaiverFixture(run, "unreviewed-dispatcher").exitCode).not.toBe(0)
   })
 
   test("records the one-release upgrade waiver without claiming upgrade acceptance passed", async () => {
@@ -1973,6 +2016,8 @@ describe("lean next-beta candidate workflow", () => {
     expect(waiver.receipt?.result).toBe("OWNER_WAIVED")
     expect(waiver.receipt?.failed_evidence.stage).toBe("CANDIDATE_RECOVERY")
     expect(waiver.receipt?.source_sha).toBe("a".repeat(40))
+    expect(waiver.receipt?.github.actor).toBe("shrey16")
+    expect(runWorkflowUpgradeWaiverFixture(run, "unreviewed-dispatcher").exitCode).not.toBe(0)
   })
 
   test("attests exactly every cohort subject while excluding closed internal WSL inputs", async () => {
@@ -2197,6 +2242,10 @@ describe("lean next-beta candidate workflow", () => {
     expect(createRun).toContain("--draft --prerelease")
     expect(createRun).toContain('[[ "${#assets[@]}" -eq 52 ]]')
     expect(createRun).not.toContain("--clobber")
+    const finalizeRun = steps[finalize]?.run ?? ""
+    expect(finalizeRun).toContain("Final release asset set drift")
+    expect(finalizeRun).toContain("Final release digest drift")
+    expect(finalizeRun).toContain("Final release URL drift")
     expect(steps[notify]?.if).toBe("needs.admit-source.outputs.notify_requested == 'true'")
     expect(steps[notify]?.env).toEqual({ GH_TOKEN: "${{ secrets.BHARATCODE_WEBSITE_DISPATCH_TOKEN }}" })
     expect(steps[notify]?.run).toContain('"event_type": "desktop_release_published"')
