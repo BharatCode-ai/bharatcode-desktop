@@ -399,7 +399,7 @@ export function validateLeanUpgradeWaiver(value, bindings) {
   )
   requireValue(value.result === "OWNER_WAIVED", "lean upgrade waiver result is invalid")
   requireValue(
-    value.reason === "WINDOWS_UPGRADE_ROLLBACK_ACCEPTANCE_WAIVED_BY_OWNER_FOR_1_15_25",
+    value.reason === "WINDOWS_UPGRADE_ROLLBACK_ACCEPTANCE_WAIVED_BY_OWNER_FOR_1_15_26",
     "lean upgrade waiver reason is invalid",
   )
   requireValue(
