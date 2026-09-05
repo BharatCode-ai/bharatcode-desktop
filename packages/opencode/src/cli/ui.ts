@@ -1,6 +1,7 @@
 import { EOL } from "os"
 import { Schema } from "effect"
 import { logo as glyphs } from "./logo"
+import { formatAccessDenial } from "./access-denial"
 
 const wordmark = ["BharatCode"]
 
@@ -117,7 +118,12 @@ export function error(message: string) {
   if (message.startsWith("Error: ")) {
     message = message.slice("Error: ".length)
   }
-  println(Style.TEXT_DANGER_BOLD + "Error: " + Style.TEXT_NORMAL + message)
+  println(
+    Style.TEXT_DANGER_BOLD +
+      "Error: " +
+      Style.TEXT_NORMAL +
+      formatAccessDenial(message, !!process.stderr.isTTY && process.env.TERM !== "dumb"),
+  )
 }
 
 export function markdown(text: string): string {

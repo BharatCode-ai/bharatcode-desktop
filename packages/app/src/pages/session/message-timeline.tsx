@@ -1,4 +1,5 @@
 import { createEffect, createMemo, createSignal, For, Index, on, onCleanup, Show, mapArray, type JSX } from "solid-js"
+import { AccessDenial } from "@opencode-ai/ui/access-denial"
 import { createStore, produce } from "solid-js/store"
 import { Dynamic } from "solid-js/web"
 import { useNavigate } from "@solidjs/router"
@@ -1132,7 +1133,7 @@ export function MessageTimeline(props: {
           <TimelineRowFrame row={row}>
             <div data-slot="session-turn-message-container" class="w-full px-4 md:px-5">
               <Card variant="error" class="error-card">
-                {row.text}
+                <AccessDenial message={row.text} />
               </Card>
             </div>
           </TimelineRowFrame>

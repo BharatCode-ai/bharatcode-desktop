@@ -1,3 +1,4 @@
+import { AccessDenial } from "./access-denial"
 import {
   AssistantMessage,
   type SnapshotFileDiff,
@@ -527,7 +528,7 @@ export function SessionTurn(
               </Show>
               <Show when={error()}>
                 <Card variant="error" class="error-card">
-                  {errorText()}
+                  <AccessDenial message={errorText()} />
                 </Card>
               </Show>
             </div>
