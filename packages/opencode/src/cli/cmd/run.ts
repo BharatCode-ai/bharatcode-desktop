@@ -27,6 +27,7 @@ import { RuntimeFlags } from "@/effect/runtime-flags"
 import { InstanceRef } from "@/effect/instance-ref"
 import { FormatError, FormatUnknownError } from "../error"
 import { INTERACTIVE_INPUT_ERROR, resolveInteractiveStdin } from "./run/runtime.stdin"
+import { settleNonInteractiveTurn } from "./run/noninteractive-turn"
 
 const runtimeTask = import("./run/runtime")
 type ModelInput = Parameters<OpencodeClient["session"]["prompt"]>[0]["model"]
@@ -86,6 +87,10 @@ function block(info: Inline, output?: string) {
 
 function formatRunError(error: unknown) {
   return FormatError(error) ?? FormatUnknownError(error)
+}
+
+function formatRunFailure(error: unknown) {
+  return error instanceof Error && error.message ? error.message : formatRunError(error)
 }
 
 async function tool(part: ToolPart) {
@@ -615,9 +620,19 @@ export const RunCommand = effectCmd({
         }
         const sessionID = sess.id
 
+        let stdout = Promise.resolve()
+        function writeStdout(value: string) {
+          stdout = stdout.then(
+            () =>
+              new Promise<void>((resolve, reject) => {
+                process.stdout.write(value, (error) => (error ? reject(error) : resolve()))
+              }),
+          )
+        }
+
         function emit(type: string, data: Record<string, unknown>) {
           if (args.format === "json") {
-            process.stdout.write(
+            writeStdout(
               JSON.stringify({
                 type,
                 timestamp: Date.now(),
@@ -638,6 +653,7 @@ export const RunCommand = effectCmd({
           const toggles = new Map<string, boolean>()
           let error: string | undefined
 
+          let idle = false
           for await (const event of events.stream) {
             if (
               event.type === "message.updated" &&
@@ -690,7 +706,7 @@ export const RunCommand = effectCmd({
                 const text = part.text.trim()
                 if (!text) continue
                 if (!process.stdout.isTTY) {
-                  process.stdout.write(text + EOL)
+                  writeStdout(text + EOL)
                   continue
                 }
                 UI.empty()
@@ -709,7 +725,7 @@ export const RunCommand = effectCmd({
                   UI.empty()
                   continue
                 }
-                process.stdout.write(line + EOL)
+                writeStdout(line + EOL)
               }
             }
 
@@ -730,6 +746,7 @@ export const RunCommand = effectCmd({
               event.properties.sessionID === sessionID &&
               event.properties.status.type === "idle"
             ) {
+              idle = true
               break
             }
 
@@ -755,6 +772,7 @@ export const RunCommand = effectCmd({
               }
             }
           }
+          if (!idle) throw new Error("BharatCode event stream closed before the session became idle.")
           return error
         }
         const cwd = args.attach ? (directory ?? sess.directory ?? (await current(sdk))) : (directory ?? root)
@@ -766,39 +784,49 @@ export const RunCommand = effectCmd({
         await share(client, sessionID)
 
         if (!args.interactive) {
-          const events = await client.event.subscribe()
-          loop(client, events).catch((e) => {
-            console.error(e)
-            process.exit(1)
-          })
-
-          if (args.command) {
-            const result = await client.session.command({
-              sessionID,
-              agent,
-              model: args.model,
-              command: args.command,
-              arguments: message,
-              variant: args.variant,
+          const controller = new AbortController()
+          const events = await client.event.subscribe(undefined, { signal: controller.signal })
+          try {
+            const result = await settleNonInteractiveTurn({
+              submit: () =>
+                args.command
+                  ? client.session.command(
+                      {
+                        sessionID,
+                        agent,
+                        model: args.model,
+                        command: args.command,
+                        arguments: message,
+                        variant: args.variant,
+                      },
+                      { signal: controller.signal },
+                    )
+                  : client.session.prompt(
+                      {
+                        sessionID,
+                        agent,
+                        model: pick(args.model),
+                        variant: args.variant,
+                        parts: [...files, { type: "text", text: message }],
+                      },
+                      { signal: controller.signal },
+                    ),
+              terminal: loop(client, events),
+              cancel: () => controller.abort(),
+              onPromptError: (error) => {
+                if (!emit("error", { error })) UI.error(formatRunError(error))
+              },
+              drain: () => stdout,
+              timeoutMs: 30 * 60 * 1_000,
             })
-            if (result.error) {
-              if (!emit("error", { error: result.error })) UI.error(formatRunError(result.error))
-              process.exitCode = 1
+            if ("promptError" in result || result.terminal) process.exitCode = 1
+          } catch (error) {
+            const message = formatRunFailure(error)
+            if (!emit("error", { error: { name: "RunError", data: { message } } })) {
+              UI.error(message)
             }
-            return
-          }
-
-          const model = pick(args.model)
-          const result = await client.session.prompt({
-            sessionID,
-            agent,
-            model,
-            variant: args.variant,
-            parts: [...files, { type: "text", text: message }],
-          })
-          if (result.error) {
-            if (!emit("error", { error: result.error })) UI.error(formatRunError(result.error))
             process.exitCode = 1
+            await stdout
           }
           return
         }

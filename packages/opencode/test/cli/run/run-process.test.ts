@@ -1,13 +1,31 @@
 // Subprocess integration tests for `opencode run` (non-interactive mode).
 // These exercise the real CLI binary against a TestLLMServer running in the
 // same process. See `test/lib/cli-process.ts` for the harness — each test uses
-// `opencode.run(message, opts?)` to spawn `bun src/index.ts run ...` with
-// `OPENCODE_CONFIG_CONTENT` providing the test provider config inline.
+// `opencode.run(message, opts?)` to spawn `bun src/index.ts run --attach ...`
+// against its isolated protocol fixture.
 import { describe, expect } from "bun:test"
 import { Effect } from "effect"
 import { cliIt } from "../../lib/cli-process"
+import { raw } from "../../lib/llm-server"
 
 describe("opencode run (non-interactive subprocess)", () => {
+  cliIt.concurrent(
+    "delivers the complete subscription denial in structured output and exits nonzero",
+    ({ llm, opencode }) =>
+      Effect.gen(function* () {
+        const message =
+          "BharatCode App is only available to Pro subscribers. If you're a student, please sign in with your student email id instead or reach out at help@bharatcode.ai to verify your student status. BharatCode Chat is free for all users, visit chat.bharatcode.ai."
+        yield* llm.fail(message)
+        const result = yield* opencode.run("Reply only OK. Do not use tools.", { format: "json" })
+        expect(result.exitCode).not.toBe(0)
+        const events = opencode.parseJsonEvents(result.stdout)
+        expect(events.some((event) => event.type === "error" && JSON.stringify(event.error).includes(message))).toBe(
+          true,
+        )
+        expect(events.some((event) => event.type === "text")).toBe(false)
+      }),
+    60_000,
+  )
   // Happy path: prompt completes, output reaches stdout, process exits 0.
   // If this fails, all the others likely will too — debug here first.
   cliIt.concurrent(
@@ -22,6 +40,18 @@ describe("opencode run (non-interactive subprocess)", () => {
     60_000,
   )
 
+  cliIt.concurrent(
+    "waits for delayed assistant output before exiting",
+    ({ llm, opencode }) =>
+      Effect.gen(function* () {
+        yield* llm.hold("delayed plain output", Bun.sleep(250))
+        const result = yield* opencode.run("wait for the delayed response")
+        opencode.expectExit(result, 0)
+        expect(result.stdout).toContain("delayed plain output")
+      }),
+    60_000,
+  )
+
   // Regression for #27371: an unknown model used to hang the process forever
   // waiting on a session.status === idle event that never arrived. The fix
   // makes the SDK call surface an error promptly so the process exits nonzero.
@@ -32,7 +62,7 @@ describe("opencode run (non-interactive subprocess)", () => {
     ({ opencode }) =>
       Effect.gen(function* () {
         const result = yield* opencode.run("say hi", {
-          model: "test/nonexistent-model",
+          model: "bharatcode/nonexistent-model",
           timeoutMs: 15_000,
         })
         expect(result.exitCode).not.toBe(0)
@@ -41,19 +71,26 @@ describe("opencode run (non-interactive subprocess)", () => {
     30_000,
   )
 
-  // Locks in the current behavior: when the LLM stream errors mid-response
-  // (the prompt was accepted, then the upstream provider failed), opencode
-  // emits a session.error event and the process exits 0 today.
-  //
-  // This is debatable — a future cleanup might flip it to exit 1. If you're
-  // changing this expectation, do it deliberately and say so in the PR.
   cliIt.concurrent(
-    "mid-stream LLM error still exits 0 today (contract lock-in)",
+    "exits nonzero when the accepted prompt fails mid-stream",
     ({ llm, opencode }) =>
       Effect.gen(function* () {
         yield* llm.fail("upstream provider exploded mid-stream")
         const result = yield* opencode.run("trigger midstream error", { timeoutMs: 30_000 })
-        expect(result.exitCode).toBe(0)
+        expect(result.exitCode).not.toBe(0)
+        expect(result.stderr).toContain("upstream provider exploded mid-stream")
+      }),
+    60_000,
+  )
+
+  cliIt.concurrent(
+    "exits nonzero when the accepted prompt stream closes before idle",
+    ({ llm, opencode }) =>
+      Effect.gen(function* () {
+        yield* llm.push(raw({ reset: true }))
+        const result = yield* opencode.run("close the stream before idle", { timeoutMs: 30_000 })
+        expect(result.exitCode).not.toBe(0)
+        expect(result.stderr).toContain("event stream closed before the session became idle")
       }),
     60_000,
   )
@@ -78,6 +115,31 @@ describe("opencode run (non-interactive subprocess)", () => {
         // At least one `text` event should appear with the LLM's response.
         const text = events.find((e) => e.type === "text")
         expect(text).toBeDefined()
+      }),
+    60_000,
+  )
+
+  cliIt.concurrent(
+    "--format json waits for delayed terminal events",
+    ({ llm, opencode }) =>
+      Effect.gen(function* () {
+        yield* llm.hold("delayed structured output", Bun.sleep(250))
+        const result = yield* opencode.run("wait for structured output", { format: "json" })
+        opencode.expectExit(result, 0)
+        expect(opencode.parseJsonEvents(result.stdout).some((event) => event.type === "text")).toBe(true)
+      }),
+    60_000,
+  )
+
+  cliIt.concurrent(
+    "drains a response larger than the stdout high-water mark before exiting",
+    ({ llm, opencode }) =>
+      Effect.gen(function* () {
+        const text = "bharatcode-output-drain-".repeat(16_384)
+        yield* llm.text(text)
+        const result = yield* opencode.run("write the complete response")
+        opencode.expectExit(result, 0)
+        expect(result.stdout.trim()).toBe(text)
       }),
     60_000,
   )

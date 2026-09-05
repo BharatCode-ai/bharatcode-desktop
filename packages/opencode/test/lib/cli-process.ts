@@ -1,12 +1,12 @@
-// Subprocess test harness for the opencode CLI. Spawns the real binary against
-// a TestLLMServer running in-process at a random port, with full env isolation.
+// Subprocess test harness for the opencode CLI. Spawns the real binary attached
+// to a TestLLMServer protocol fixture at a random port, with full env isolation.
 //
 // This is the missing test tier: in-process tests can't catch bugs that span
 // argv parsing → server boot → SDK call → event consumption → exit code (like
 // the original /event race or #27371's invalid-model hang).
 //
 // Configuration flows through opencode's built-in test affordances:
-//   - OPENCODE_CONFIG_CONTENT      : provider config inline, no files to find
+//   - OPENCODE_CONFIG_CONTENT      : disables formatter/LSP work, no files to find
 //   - OPENCODE_TEST_HOME           : pins os.homedir() → tmpdir
 //   - OPENCODE_DISABLE_PROJECT_CONFIG : skip walking up for opencode.json
 //   - OPENCODE_PURE                : skip external plugin discovery + install
@@ -32,6 +32,7 @@ const opencodeRoot = path.resolve(import.meta.dir, "../../")
 const cliEntry = path.join(opencodeRoot, "src/index.ts")
 
 export const testModelID = "test/test-model"
+const runModelID = "bharatcode/bharatcode:qwen36-35b-awq-200k"
 
 // Wrap a Bun subprocess pipe (or any ReadableStream<Uint8Array>) as a Stream.
 // Centralizes the `evaluate` + `onError` boilerplate and tags errors with the
@@ -236,16 +237,26 @@ export function withCliFixture<A, E>(
       }
     })
 
+    let recoveryReady = false
+    const prepareRecovery = Effect.fn("opencode.prepareRecovery")(function* () {
+      if (recoveryReady) return
+      const result = yield* spawn(["recovery", "start-fresh", "--confirm", "--json"], { timeoutMs: 30_000 })
+      if (result.exitCode !== 0) {
+        throw new Error(`failed to prepare isolated CLI recovery state: ${result.stderr}`)
+      }
+      recoveryReady = true
+    })
+
     const run = (message: string, opts?: RunOpts): Effect.Effect<RunResult> => {
-      const argv: string[] = ["run"]
+      const argv: string[] = ["run", "--attach", llm.cliUrl]
       if (opts?.printLogs) argv.push("--print-logs")
-      argv.push("--model", opts?.model ?? testModelID)
+      argv.push("--model", opts?.model ?? runModelID)
       if (opts?.agent) argv.push("--agent", opts.agent)
       if (opts?.format) argv.push("--format", opts.format)
       if (opts?.command) argv.push("--command", opts.command)
       if (opts?.extraArgs) argv.push(...opts.extraArgs)
       argv.push(message)
-      return spawn(argv, opts)
+      return prepareRecovery().pipe(Effect.andThen(spawn(argv, opts)))
     }
 
     const serve = Effect.fn("opencode.serve")(function* (opts?: ServeOpts) {

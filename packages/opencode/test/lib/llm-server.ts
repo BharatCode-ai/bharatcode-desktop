@@ -1,6 +1,6 @@
 import { NodeHttpServer, NodeHttpServerRequest } from "@effect/platform-node"
 import * as Http from "node:http"
-import { Deferred, Effect, Layer, Context, Stream } from "effect"
+import { Deferred, Effect, Layer, Context, Queue as EffectQueue, Stream } from "effect"
 import * as HttpServer from "effect/unstable/http/HttpServer"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 
@@ -22,7 +22,7 @@ type Hit = {
 
 type Match = (hit: Hit) => boolean
 
-type Queue = {
+type QueuedItem = {
   item: Item
   match?: Match
 }
@@ -604,6 +604,7 @@ function isTitleRequest(body: unknown): boolean {
 namespace TestLLMServer {
   export interface Service {
     readonly url: string
+    readonly cliUrl: string
     readonly push: (...input: (Item | Reply)[]) => Effect.Effect<void>
     readonly pushMatch: (match: Match, ...input: (Item | Reply)[]) => Effect.Effect<void>
     readonly textMatch: (match: Match, value: string, opts?: { usage?: Usage }) => Effect.Effect<void>
@@ -634,9 +635,11 @@ export class TestLLMServer extends Context.Service<TestLLMServer, TestLLMServer.
       const router = yield* HttpRouter.HttpRouter
 
       let hits: Hit[] = []
-      let list: Queue[] = []
+      let list: QueuedItem[] = []
       let waits: Wait[] = []
       let misses: Hit[] = []
+      const cliEvents = yield* EffectQueue.unbounded<unknown>()
+      const cliSessionID = "ses_cli_process_test"
 
       const queue = (...input: (Item | Reply)[]) => {
         list = [...list, ...input.map((value) => ({ item: item(value) }))]
@@ -691,16 +694,120 @@ export class TestLLMServer extends Context.Service<TestLLMServer, TestLLMServer.
         return send(next)
       })
 
+      const publishCliTurn = Effect.fn("TestLLMServer.publishCliTurn")(function* (next: Item) {
+        const now = Date.now()
+        yield* EffectQueue.offer(cliEvents, {
+          type: "message.part.updated",
+          properties: {
+            part: {
+              id: "prt_cli_step",
+              sessionID: cliSessionID,
+              messageID: "msg_cli_assistant",
+              type: "step-start",
+              snapshot: "",
+            },
+          },
+        })
+        if (next.type === "http-error") {
+          yield* EffectQueue.offer(cliEvents, {
+            type: "session.error",
+            properties: {
+              sessionID: cliSessionID,
+              error: { name: "ProviderError", data: { message: String(next.body) } },
+            },
+          })
+        } else {
+          if (next.wait) yield* Effect.promise(() => Promise.resolve(next.wait))
+          if (next.error) {
+            yield* EffectQueue.offer(cliEvents, {
+              type: "session.error",
+              properties: {
+                sessionID: cliSessionID,
+                error: { name: "ProviderError", data: { message: String(next.error) } },
+              },
+            })
+          } else {
+            for (const part of flow(next)) {
+              if (part.type !== "text" && part.type !== "reason") continue
+              yield* EffectQueue.offer(cliEvents, {
+                type: "message.part.updated",
+                properties: {
+                  part: {
+                    id: part.type === "text" ? "prt_cli_text" : "prt_cli_reasoning",
+                    sessionID: cliSessionID,
+                    messageID: "msg_cli_assistant",
+                    type: part.type === "text" ? "text" : "reasoning",
+                    text: part.text,
+                    time: { start: now, end: Date.now() },
+                  },
+                },
+              })
+            }
+          }
+          if (next.reset) {
+            yield* EffectQueue.shutdown(cliEvents)
+            return
+          }
+          if (next.hang) return
+        }
+        yield* EffectQueue.offer(cliEvents, {
+          type: "session.status",
+          properties: { sessionID: cliSessionID, status: { type: "idle" } },
+        })
+      })
+
+      yield* router.add("GET", "/config", HttpServerResponse.jsonUnsafe({ share: "manual" }))
+      yield* router.add(
+        "POST",
+        "/session",
+        HttpServerResponse.jsonUnsafe({ id: cliSessionID, title: "CLI process test", directory: "/tmp" }),
+      )
+      yield* router.add(
+        "GET",
+        "/event",
+        HttpServerResponse.stream(
+          Stream.fromQueue(cliEvents).pipe(
+            Stream.map((event) => `data: ${JSON.stringify(event)}\n\n`),
+            Stream.encodeText,
+          ),
+          { contentType: "text/event-stream" },
+        ),
+      )
+      yield* router.add("POST", "/session/:sessionID/message", (request) =>
+        Effect.gen(function* () {
+          const body = yield* request.json.pipe(Effect.orElseSucceed(() => ({})))
+          const model =
+            body && typeof body === "object" && "model" in body && body.model && typeof body.model === "object"
+              ? body.model
+              : undefined
+          const modelID = model && "modelID" in model ? model.modelID : undefined
+          if (modelID !== "bharatcode:qwen36-35b-awq-200k") {
+            return HttpServerResponse.jsonUnsafe(
+              { name: "ProviderModelNotFoundError", data: { message: `Model not found: bharatcode/${modelID}.` } },
+              { status: 400 },
+            )
+          }
+          const current = hit(request.originalUrl, body)
+          const next = pull(current) ?? reply().text("ok").stop().item()
+          yield* Effect.sync(() => {
+            void Effect.runPromise(publishCliTurn(next))
+          })
+          return HttpServerResponse.jsonUnsafe({ info: {}, parts: [] })
+        }),
+      )
+
       yield* router.add("POST", "/v1/chat/completions", handle("chat"))
       yield* router.add("POST", "/v1/responses", handle("responses"))
 
       yield* server.serve(router.asHttpEffect())
 
+      const cliUrl =
+        server.address._tag === "TcpAddress"
+          ? `http://127.0.0.1:${server.address.port}`
+          : `unix://${server.address.path}`
       return TestLLMServer.of({
-        url:
-          server.address._tag === "TcpAddress"
-            ? `http://127.0.0.1:${server.address.port}/v1`
-            : `unix://${server.address.path}/v1`,
+        url: `${cliUrl}/v1`,
+        cliUrl,
         push: Effect.fn("TestLLMServer.push")(function* (...input: (Item | Reply)[]) {
           queue(...input)
         }),
