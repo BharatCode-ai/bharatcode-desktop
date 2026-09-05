@@ -146,7 +146,7 @@
     },
     "packages/desktop": {
       "name": "@bharatcode/desktop",
-      "version": "1.15.27",
+      "version": "1.15.28",
       "dependencies": {
         "@zip.js/zip.js": "2.7.62",
         "drizzle-orm": "catalog:",
@@ -246,7 +246,7 @@
     },
     "packages/opencode": {
       "name": "bharatcode",
-      "version": "1.15.27",
+      "version": "1.15.28",
       "bin": {
         "bharatcode": "./bin/bharatcode.mjs",
       },
