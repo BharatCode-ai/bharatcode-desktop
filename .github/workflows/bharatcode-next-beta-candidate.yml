@@ -4,25 +4,25 @@ on:
   workflow_dispatch:
     inputs:
       source_sha:
-        description: Exact lowercase 40-hex reviewed Desktop 1.15.27 release source
+        description: Exact lowercase 40-hex reviewed Desktop 1.15.28 release source
         required: true
         type: string
       wsl_acceptance_mode:
-        description: Require formal WSL2 automation, or record a fresh owner-authorized 1.15.27 waiver
+        description: Require formal WSL2 automation, or record a fresh owner-authorized 1.15.28 waiver
         required: true
         default: required
         type: choice
         options:
           - required
-          - owner-waived-hotfix-1.15.27
+          - owner-waived-hotfix-1.15.28
       upgrade_acceptance_mode:
-        description: Require packaged Windows upgrade/rollback automation, or record the owner-authorized 1.15.27 waiver
+        description: Require packaged Windows upgrade/rollback automation, or record the owner-authorized 1.15.28 waiver
         required: true
         default: required
         type: choice
         options:
           - required
-          - owner-waived-hotfix-1.15.27
+          - owner-waived-hotfix-1.15.28
       publication_action:
         description: Finalize the complete immutable cohort as a public prerelease
         required: true
@@ -45,11 +45,11 @@ permissions:
 
 env:
   ACCEPTED_APPLICATION_SOURCE_SHA: 80c962f4148db531c35abcf4922059d2101c9bcd
-  ACCEPTED_RELEASE_PARENT_SHA: 70e04632a354e9639c4d4f9023040af04d597c5b
+  ACCEPTED_RELEASE_PARENT_SHA: 410006bdea08b4797f93118161abbc1f689fb6b6
   AUTHORIZED_OWNER_ACTOR: shrey16
   BHARATCODE_CHANNEL: beta
-  PREVIOUS_RELEASE_TAG: desktop-beta-1.15.26
-  RELEASE_TAG: desktop-beta-1.15.27
+  PREVIOUS_RELEASE_TAG: desktop-beta-1.15.27
+  RELEASE_TAG: desktop-beta-1.15.28
   OPENCODE_CHANNEL: beta
   SOURCE_SHA: ${{ inputs.source_sha }}
   VITE_OPENCODE_CHANNEL: beta
@@ -57,7 +57,7 @@ env:
 
 jobs:
   admit-source:
-    if: github.ref == 'refs/heads/codex/cli-output-drain-1.15.27'
+    if: github.ref == 'refs/heads/codex/access-denial-links-1.15.28'
     runs-on: ubuntu-24.04
     outputs:
       candidate_tag: ${{ steps.identity.outputs.candidate_tag }}
@@ -100,8 +100,8 @@ jobs:
           git merge-base --is-ancestor "$ACCEPTED_APPLICATION_SOURCE_SHA" "$SOURCE_SHA"
           [[ "$(git rev-parse "$SOURCE_SHA^")" == "$ACCEPTED_RELEASE_PARENT_SHA" ]]
           [[ "$(git diff --name-only "$ACCEPTED_RELEASE_PARENT_SHA" "$SOURCE_SHA")" == $'.github/workflows/bharatcode-next-beta-candidate.yml\npackages/opencode/script/lean-cohort.mjs\npackages/opencode/test/distribution/lean-candidate-workflow.test.ts\npackages/opencode/test/distribution/lean-cohort.test.ts' ]]
-          [[ "$UPGRADE_ACCEPTANCE_MODE" == "required" || "$UPGRADE_ACCEPTANCE_MODE" == "owner-waived-hotfix-1.15.27" ]]
-          [[ "$WSL_ACCEPTANCE_MODE" == "required" || "$WSL_ACCEPTANCE_MODE" == "owner-waived-hotfix-1.15.27" ]]
+          [[ "$UPGRADE_ACCEPTANCE_MODE" == "required" || "$UPGRADE_ACCEPTANCE_MODE" == "owner-waived-hotfix-1.15.28" ]]
+          [[ "$WSL_ACCEPTANCE_MODE" == "required" || "$WSL_ACCEPTANCE_MODE" == "owner-waived-hotfix-1.15.28" ]]
           [[ "$PUBLICATION_ACTION" == "hold" || "$PUBLICATION_ACTION" == "publish" ]]
           [[ "$WEBSITE_ACTION" == "hold" || "$WEBSITE_ACTION" == "notify" ]]
           if [[ "$WEBSITE_ACTION" == "notify" ]]; then
@@ -124,9 +124,9 @@ jobs:
           desktop_version="$(bun -e 'process.stdout.write((await Bun.file("packages/desktop/package.json").json()).version)')"
           [[ "$cli_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
           [[ "$desktop_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
-          if [[ "$WSL_ACCEPTANCE_MODE" == "owner-waived-hotfix-1.15.27" || "$UPGRADE_ACCEPTANCE_MODE" == "owner-waived-hotfix-1.15.27" ]]; then
+          if [[ "$WSL_ACCEPTANCE_MODE" == "owner-waived-hotfix-1.15.28" || "$UPGRADE_ACCEPTANCE_MODE" == "owner-waived-hotfix-1.15.28" ]]; then
             [[ "$DISPATCH_ACTOR" == "$AUTHORIZED_OWNER_ACTOR" ]]
-            [[ "$desktop_version" == "1.15.27" ]]
+            [[ "$desktop_version" == "1.15.28" ]]
           fi
           {
             printf 'candidate_tag=%s\n' "$candidate_tag"
@@ -898,7 +898,7 @@ jobs:
         run: if ($env:ARTIFACT_DIGEST -notmatch '^(sha256:)?[0-9a-f]{64}$') { throw "Invalid artifact digest" }
 
   record-wsl-waiver:
-    if: inputs.wsl_acceptance_mode == 'owner-waived-hotfix-1.15.27'
+    if: inputs.wsl_acceptance_mode == 'owner-waived-hotfix-1.15.28'
     needs: [admit-source, build-cli, package-windows]
     runs-on: ubuntu-24.04
     permissions:
@@ -1077,7 +1077,7 @@ jobs:
         run: if ($env:ARTIFACT_DIGEST -notmatch '^(sha256:)?[0-9a-f]{64}$') { throw "Invalid artifact digest" }
 
   record-upgrade-waiver:
-    if: inputs.upgrade_acceptance_mode == 'owner-waived-hotfix-1.15.27'
+    if: inputs.upgrade_acceptance_mode == 'owner-waived-hotfix-1.15.28'
     needs: [admit-source, package-windows]
     runs-on: ubuntu-24.04
     permissions:
@@ -1118,7 +1118,7 @@ jobs:
             const receipt = {
               schema: "bharatcode-windows-upgrade-rollback-waiver-v1",
               result: "OWNER_WAIVED",
-              reason: "WINDOWS_UPGRADE_ROLLBACK_ACCEPTANCE_WAIVED_BY_OWNER_FOR_1_15_27",
+              reason: "WINDOWS_UPGRADE_ROLLBACK_ACCEPTANCE_WAIVED_BY_OWNER_FOR_1_15_28",
               obligation: "POST_RELEASE_MANUAL_UPGRADE_ROLLBACK_TEST_REQUIRED",
               accepted_application_source_sha: process.env.ACCEPTED_APPLICATION_SOURCE_SHA,
               source_sha: process.env.SOURCE_SHA,
@@ -1171,9 +1171,9 @@ jobs:
         needs.package-linux.result == 'success' &&
         needs.accept-cli-native.result == 'success' &&
         ((inputs.upgrade_acceptance_mode == 'required' && needs.upgrade-rollback-windows-x64.result == 'success' && needs.record-upgrade-waiver.result == 'skipped') ||
-         (inputs.upgrade_acceptance_mode == 'owner-waived-hotfix-1.15.27' && needs.upgrade-rollback-windows-x64.result == 'skipped' && needs.record-upgrade-waiver.result == 'success')) &&
+         (inputs.upgrade_acceptance_mode == 'owner-waived-hotfix-1.15.28' && needs.upgrade-rollback-windows-x64.result == 'skipped' && needs.record-upgrade-waiver.result == 'success')) &&
         ((inputs.wsl_acceptance_mode == 'required' && needs.accept-wsl.result == 'success' && needs.record-wsl-waiver.result == 'skipped') ||
-         (inputs.wsl_acceptance_mode == 'owner-waived-hotfix-1.15.27' && needs.accept-wsl.result == 'skipped' && needs.record-wsl-waiver.result == 'success'))
+         (inputs.wsl_acceptance_mode == 'owner-waived-hotfix-1.15.28' && needs.accept-wsl.result == 'skipped' && needs.record-wsl-waiver.result == 'success'))
       }}
     needs:
       - admit-source
@@ -1506,7 +1506,7 @@ jobs:
         run: '[[ "$ARTIFACT_DIGEST" =~ ^(sha256:)?[0-9a-f]{64}$ ]]'
 
   publish-release:
-    name: Publish complete immutable Desktop 1.15.27 cohort
+    name: Publish complete immutable Desktop 1.15.28 cohort
     if: always() && !cancelled() && needs.admit-source.result == 'success' && needs.assemble-cohort.result == 'success' && needs.admit-source.outputs.publish_requested == 'true'
     needs: [admit-source, assemble-cohort]
     runs-on: ubuntu-24.04
@@ -1575,7 +1575,7 @@ jobs:
             import { PLATFORM_PACKAGE_NAMES, parseLeanCohortBytes } from "./packages/opencode/script/lean-cohort.mjs"
             const bytes = new Uint8Array(await Bun.file("release-input/bharatcode-next-beta-cohort.json").arrayBuffer())
             const manifest = parseLeanCohortBytes(bytes, { source_sha: process.env.SOURCE_SHA, run_id: process.env.GITHUB_RUN_ID, run_attempt: process.env.GITHUB_RUN_ATTEMPT })
-            if (manifest.desktop_version !== "1.15.27" || manifest.candidate_tag !== process.env.RELEASE_TAG) throw new Error("Release identity drift")
+            if (manifest.desktop_version !== "1.15.28" || manifest.candidate_tag !== process.env.RELEASE_TAG) throw new Error("Release identity drift")
             const expected = new Map([
               ...["bharatcode", ...PLATFORM_PACKAGE_NAMES].map((name) => [`cli-${name}`, [`${name}-${manifest.cli_version}.tgz`, "not-applicable"]]),
               ["desktop-windows-x64", ["bharatcode-desktop-next-beta-win-x64.exe", "unsigned"]],
@@ -1623,7 +1623,7 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/immutable-releases" -H "X-GitHub-Api-Version: 2026-03-10" > immutable-releases.json
           bun --eval 'const value=await Bun.file("immutable-releases.json").json(); if(value.enabled !== true) throw new Error("GitHub release immutability is not enabled")'
           previous="$(gh release view "$PREVIOUS_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease,targetCommitish)"
-          PREVIOUS_RELEASE="$previous" bun --eval 'const value=JSON.parse(process.env.PREVIOUS_RELEASE); if(value.isDraft || !value.isPrerelease || value.targetCommitish !== "3f20cb4236040b6ec6ae8519b4b28efdc9edb365") throw new Error("Rollback release drift")'
+          PREVIOUS_RELEASE="$previous" bun --eval 'const value=JSON.parse(process.env.PREVIOUS_RELEASE); if(value.isDraft || !value.isPrerelease || value.targetCommitish !== "c832c3810253bf91f1e3bebffce60fde6b00be8f") throw new Error("Rollback release drift")'
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then echo "Release already exists; refusing overwrite." >&2; exit 1; fi
           if [[ -n "$(git ls-remote origin "refs/tags/$RELEASE_TAG")" ]]; then echo "Tag already exists; refusing mixed provenance." >&2; exit 1; fi
 
@@ -1632,7 +1632,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --target "$SOURCE_SHA" --title "BharatCode Desktop 1.15.27 (Beta)" --notes "Immutable multi-platform BharatCode Desktop 1.15.27 beta cohort. Windows x64 is unsigned; macOS arm64/x64 is Developer ID signed, notarized, and stapled; Linux x64 packages are unsigned." --draft --prerelease
+          gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --target "$SOURCE_SHA" --title "BharatCode Desktop 1.15.28 (Beta)" --notes "Immutable multi-platform BharatCode Desktop 1.15.28 beta cohort. Windows x64 is unsigned; macOS arm64/x64 is Developer ID signed, notarized, and stapled; Linux x64 packages are unsigned." --draft --prerelease
           mapfile -t assets < <(find release-assets -maxdepth 1 -type f -printf '%p\n' | sort)
           [[ "${#assets[@]}" -eq 52 ]]
           gh release upload "$RELEASE_TAG" "${assets[@]}" --repo "$GITHUB_REPOSITORY"

@@ -34,7 +34,7 @@ const reviewedSecurityStepSha256 = {
   windowsUnsigned: "a3c024ac9c6087fca041b9d2aeeab56f59e5086557e1dbb56169846d701f5c6d",
 } as const
 const acceptedApplicationSourceSha = "80c962f4148db531c35abcf4922059d2101c9bcd"
-const acceptedReleaseParentSha = "70e04632a354e9639c4d4f9023040af04d597c5b"
+const acceptedReleaseParentSha = "410006bdea08b4797f93118161abbc1f689fb6b6"
 const wslRunnerLabel = "bharatcode-acceptance-${{ github.run_id }}-${{ github.run_attempt }}"
 const frozenWslPaths = [
   "packages/desktop/electron-builder.config.ts",
@@ -566,7 +566,7 @@ function runWorkflowCohortFixture(run: string, releaseStage?: string, updaterPre
       canonicalLeanJson({
         schema: "bharatcode-windows-upgrade-rollback-waiver-v1",
         result: "OWNER_WAIVED",
-        reason: "WINDOWS_UPGRADE_ROLLBACK_ACCEPTANCE_WAIVED_BY_OWNER_FOR_1_15_27",
+        reason: "WINDOWS_UPGRADE_ROLLBACK_ACCEPTANCE_WAIVED_BY_OWNER_FOR_1_15_28",
         obligation: "POST_RELEASE_MANUAL_UPGRADE_ROLLBACK_TEST_REQUIRED",
         accepted_application_source_sha: "80c962f4148db531c35abcf4922059d2101c9bcd",
         source_sha: sourceSha,
@@ -607,9 +607,9 @@ function runWorkflowCohortFixture(run: string, releaseStage?: string, updaterPre
         GITHUB_RUN_ID: runId,
         SOURCE_SHA: sourceSha,
         WORKFLOW_PATH: ".github/workflows/bharatcode-next-beta-candidate.yml",
-        RELEASE_TAG: "desktop-beta-1.15.27",
-        WSL_ACCEPTANCE_MODE: "owner-waived-hotfix-1.15.27",
-        UPGRADE_ACCEPTANCE_MODE: "owner-waived-hotfix-1.15.27",
+        RELEASE_TAG: "desktop-beta-1.15.28",
+        WSL_ACCEPTANCE_MODE: "owner-waived-hotfix-1.15.28",
+        UPGRADE_ACCEPTANCE_MODE: "owner-waived-hotfix-1.15.28",
       },
       stdout: "pipe",
       stderr: "pipe",
@@ -630,7 +630,7 @@ function runWorkflowCohortFixture(run: string, releaseStage?: string, updaterPre
           ...process.env,
           GITHUB_RUN_ATTEMPT: runAttempt,
           GITHUB_RUN_ID: runId,
-          RELEASE_TAG: "desktop-beta-1.15.27",
+          RELEASE_TAG: "desktop-beta-1.15.28",
           SOURCE_SHA: sourceSha,
         },
         stdout: "pipe",
@@ -1411,7 +1411,7 @@ function windowsUnsignedPolicyViolations(value: string) {
 }
 
 describe("lean next-beta candidate workflow", () => {
-  test("is manual-only and binds one exact 1.15.27 source plus a fresh WSL decision", async () => {
+  test("is manual-only and binds one exact 1.15.28 source plus a fresh WSL decision", async () => {
     const value = await source()
     const workflow = parse(value)
     expect(Object.keys(workflow.on)).toEqual(["workflow_dispatch"])
@@ -1423,19 +1423,19 @@ describe("lean next-beta candidate workflow", () => {
       "website_action",
     ])
     expect(workflow.on.workflow_dispatch.inputs.wsl_acceptance_mode).toEqual({
-      description: "Require formal WSL2 automation, or record a fresh owner-authorized 1.15.27 waiver",
+      description: "Require formal WSL2 automation, or record a fresh owner-authorized 1.15.28 waiver",
       required: true,
       default: "required",
       type: "choice",
-      options: ["required", "owner-waived-hotfix-1.15.27"],
+      options: ["required", "owner-waived-hotfix-1.15.28"],
     })
     expect(workflow.on.workflow_dispatch.inputs.upgrade_acceptance_mode).toEqual({
       description:
-        "Require packaged Windows upgrade/rollback automation, or record the owner-authorized 1.15.27 waiver",
+        "Require packaged Windows upgrade/rollback automation, or record the owner-authorized 1.15.28 waiver",
       required: true,
       default: "required",
       type: "choice",
-      options: ["required", "owner-waived-hotfix-1.15.27"],
+      options: ["required", "owner-waived-hotfix-1.15.28"],
     })
     expect(workflow.on.workflow_dispatch.inputs.publication_action).toEqual({
       description: "Finalize the complete immutable cohort as a public prerelease",
@@ -1452,11 +1452,11 @@ describe("lean next-beta candidate workflow", () => {
       options: ["hold", "notify"],
     })
     expect(value).toContain("^[0-9a-f]{40}$")
-    expect(value).toContain("github.ref == 'refs/heads/codex/cli-output-drain-1.15.27'")
+    expect(value).toContain("github.ref == 'refs/heads/codex/access-denial-links-1.15.28'")
     expect(value).toContain("github.sha")
     expect(value).toContain("inputs.source_sha")
     expect(value).toContain("ref: ${{ inputs.source_sha }}")
-    expect(value).toContain("RELEASE_TAG: desktop-beta-1.15.27")
+    expect(value).toContain("RELEASE_TAG: desktop-beta-1.15.28")
     const admission = runStep(value, "admit-source", "Admit immutable source and source-derived versions")
     expect(value).toContain(acceptedApplicationSourceSha)
     expect(value).toContain(`ACCEPTED_RELEASE_PARENT_SHA: ${acceptedReleaseParentSha}`)
@@ -1962,7 +1962,7 @@ describe("lean next-beta candidate workflow", () => {
     const value = await source()
     const workflow = parse(value)
     const job = workflow.jobs["record-wsl-waiver"]
-    expect(job.if).toBe("inputs.wsl_acceptance_mode == 'owner-waived-hotfix-1.15.27'")
+    expect(job.if).toBe("inputs.wsl_acceptance_mode == 'owner-waived-hotfix-1.15.28'")
     expect(workflow.jobs["accept-wsl"].if).toBe("inputs.wsl_acceptance_mode == 'required'")
     const run = runStep(value, "record-wsl-waiver", "Record exact owner-authorized WSL automation waiver")
     expect(run).toContain('result: "OWNER_WAIVED"')
@@ -1990,7 +1990,7 @@ describe("lean next-beta candidate workflow", () => {
     const value = await source()
     const workflow = parse(value)
     expect(workflow.jobs["record-upgrade-waiver"].if).toBe(
-      "inputs.upgrade_acceptance_mode == 'owner-waived-hotfix-1.15.27'",
+      "inputs.upgrade_acceptance_mode == 'owner-waived-hotfix-1.15.28'",
     )
     expect(workflow.jobs["upgrade-rollback-windows-x64"].if).toBe("inputs.upgrade_acceptance_mode == 'required'")
     const cohortCondition = workflow.jobs["assemble-cohort"].if ?? ""
@@ -1998,11 +1998,11 @@ describe("lean next-beta candidate workflow", () => {
       "inputs.upgrade_acceptance_mode == 'required' && needs.upgrade-rollback-windows-x64.result == 'success' && needs.record-upgrade-waiver.result == 'skipped'",
     )
     expect(cohortCondition).toContain(
-      "inputs.upgrade_acceptance_mode == 'owner-waived-hotfix-1.15.27' && needs.upgrade-rollback-windows-x64.result == 'skipped' && needs.record-upgrade-waiver.result == 'success'",
+      "inputs.upgrade_acceptance_mode == 'owner-waived-hotfix-1.15.28' && needs.upgrade-rollback-windows-x64.result == 'skipped' && needs.record-upgrade-waiver.result == 'success'",
     )
     const run = runStep(value, "record-upgrade-waiver", "Record exact owner-authorized Windows upgrade waiver")
     expect(run).toContain('result: "OWNER_WAIVED"')
-    expect(run).toContain('reason: "WINDOWS_UPGRADE_ROLLBACK_ACCEPTANCE_WAIVED_BY_OWNER_FOR_1_15_27"')
+    expect(run).toContain('reason: "WINDOWS_UPGRADE_ROLLBACK_ACCEPTANCE_WAIVED_BY_OWNER_FOR_1_15_28"')
     expect(run).toContain('obligation: "POST_RELEASE_MANUAL_UPGRADE_ROLLBACK_TEST_REQUIRED"')
     expect(run).toContain('source_sha: "70a1a462dbbfcb2d2fc6485592520ae2342b7e07"')
     expect(run).toContain("run_id: 33804419459")
@@ -2231,8 +2231,8 @@ describe("lean next-beta candidate workflow", () => {
     ])
       expect(stageRun).toContain(identity)
     const refuseRun = steps[refuse]?.run ?? ""
-    expect(value).toContain("PREVIOUS_RELEASE_TAG: desktop-beta-1.15.26")
-    expect(refuseRun).toContain('value.targetCommitish !== "3f20cb4236040b6ec6ae8519b4b28efdc9edb365"')
+    expect(value).toContain("PREVIOUS_RELEASE_TAG: desktop-beta-1.15.27")
+    expect(refuseRun).toContain('value.targetCommitish !== "c832c3810253bf91f1e3bebffce60fde6b00be8f"')
     expect(refuseRun).toContain('gh release view "$PREVIOUS_RELEASE_TAG"')
     expect(refuseRun).not.toContain("b44709aa0e94d66beb3d1d396ba782be2d69a076")
     expect(refuseRun).toContain("Release already exists; refusing overwrite.")
