@@ -465,12 +465,12 @@ describe("lean next-beta cohort contract", () => {
     ).toThrow("dispatcher is not authorized")
   })
 
-  test("accepts only the exact owner-authorized 1.15.26 upgrade waiver record", () => {
+  test("accepts only the exact owner-authorized 1.15.27 upgrade waiver record", () => {
     const desktopSha256 = "d".repeat(64)
     const receipt = {
       schema: "bharatcode-windows-upgrade-rollback-waiver-v1",
       result: "OWNER_WAIVED",
-      reason: "WINDOWS_UPGRADE_ROLLBACK_ACCEPTANCE_WAIVED_BY_OWNER_FOR_1_15_26",
+      reason: "WINDOWS_UPGRADE_ROLLBACK_ACCEPTANCE_WAIVED_BY_OWNER_FOR_1_15_27",
       obligation: "POST_RELEASE_MANUAL_UPGRADE_ROLLBACK_TEST_REQUIRED",
       accepted_application_source_sha: "80c962f4148db531c35abcf4922059d2101c9bcd",
       source_sha: sourceSha,
