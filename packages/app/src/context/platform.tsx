@@ -38,6 +38,7 @@ export type BharatCodeAccountState =
   | "switching"
 
 export type BharatCodeAccountStatus = {
+  revision?: number
   authenticated: boolean
   state: BharatCodeAccountState
   checkedAt: string
@@ -284,10 +285,12 @@ export type Platform = {
   /** Read safe BharatCode account/auth status without exposing tokens (desktop only) */
   getAccountStatus?(): Promise<BharatCodeAccountStatus>
 
+  onAccountStatusChanged?(cb: (status: BharatCodeAccountStatus) => void): () => void
+
   /** Refresh credentials if possible and check BharatCode connectivity (desktop only) */
   refreshAccountStatus?(): Promise<BharatCodeAccountStatus>
 
-  /** Start BharatCode browser sign-in (desktop only) */
+  /** Resolve only after the active browser callback has confirmed sign-in (desktop only). */
   beginSignIn?(options?: BharatCodeSignInOptions): Promise<BharatCodeAccountStatus>
 
   completeSignIn?(): Promise<BharatCodeAccountStatus>

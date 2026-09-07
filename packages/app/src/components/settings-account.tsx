@@ -1,7 +1,8 @@
 import { Button } from "@opencode-ai/ui/button"
 import { Icon } from "@opencode-ai/ui/icon"
 import { showToast } from "@opencode-ai/ui/toast"
-import { createResource, Match, Show, Switch, type Component, type JSX } from "solid-js"
+import { Match, Show, Switch, type Component, type JSX } from "solid-js"
+import { createAccountStatusResource } from "@/context/account-status"
 import { createStore } from "solid-js/store"
 import { useLanguage } from "@/context/language"
 import { type BharatCodeAccountStatus, type BharatCodeSignInOptions, usePlatform } from "@/context/platform"
@@ -127,7 +128,7 @@ export const SettingsAccount: Component = () => {
     loggingOut: false,
   })
 
-  const [status, { mutate }] = createResource(() => platform.getAccountStatus?.())
+  const [status, { mutate }] = createAccountStatusResource(platform)
   const view = () => accountStatusViewModel(status())
 
   async function refresh() {
@@ -152,18 +153,8 @@ export const SettingsAccount: Component = () => {
     setStore("signingIn", true)
     try {
       mutate(await platform.beginSignIn(accountSignInOptions(intent)))
-      const complete = platform.completeSignIn ?? platform.getAccountStatus
-      if (complete) {
-        for (let attempt = 0; attempt < 180; attempt++) {
-          await new Promise((resolve) => setTimeout(resolve, 1_000))
-          const next = await complete()
-          mutate(next)
-          if (!["authorizing", "switching"].includes(next.state)) break
-        }
-      }
-      if (["authorizing", "switching"].includes(status()?.state ?? "")) {
-        throw new Error("Timed out waiting for BharatCode sign-in. Try again.")
-      }
+      if (status()?.state !== "signed_in" || !status()?.authenticated)
+        throw new Error("BharatCode sign-in has not completed. Try again.")
       showToast({
         variant: "success",
         icon: "circle-check",

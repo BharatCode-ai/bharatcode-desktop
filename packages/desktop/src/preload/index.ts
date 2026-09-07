@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron"
-import type { ElectronAPI, InitStep, SqliteMigrationProgress } from "./types"
+import type { BharatCodeAccountStatus, ElectronAPI, InitStep, SqliteMigrationProgress } from "./types"
 
 const api: ElectronAPI = {
   inspectRecovery: () => ipcRenderer.invoke("recovery:inspect"),
@@ -84,6 +84,11 @@ const api: ElectronAPI = {
   exportDebugLogs: () => ipcRenderer.invoke("export-debug-logs"),
   recordFatalRendererError: (error) => ipcRenderer.invoke("record-fatal-renderer-error", error),
   getAccountStatus: () => ipcRenderer.invoke("get-account-status"),
+  onAccountStatusChanged: (cb) => {
+    const handler = (_: unknown, status: BharatCodeAccountStatus) => cb(status)
+    ipcRenderer.on("account-status-changed", handler)
+    return () => ipcRenderer.removeListener("account-status-changed", handler)
+  },
   beginSignIn: (options) => ipcRenderer.invoke("begin-sign-in", options),
   completeSignIn: () => ipcRenderer.invoke("complete-sign-in"),
   logout: () => ipcRenderer.invoke("logout"),

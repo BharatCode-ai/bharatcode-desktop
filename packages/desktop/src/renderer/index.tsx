@@ -5,6 +5,7 @@ import {
   ACCEPTED_FILE_TYPES,
   AppBaseProviders,
   AppInterface,
+  createAccountStatusResource,
   handleNotificationClick,
   loadLocaleDict,
   normalizeLocale,
@@ -263,6 +264,8 @@ const createPlatform = (): Platform => {
 
     getAccountStatus: () => window.api.getAccountStatus(),
 
+    onAccountStatusChanged: (cb) => window.api.onAccountStatusChanged(cb),
+
     refreshAccountStatus: () => window.api.refreshAccountStatus(),
 
     beginSignIn: (options) => window.api.beginSignIn({ selectAccount: options?.selectAccount }),
@@ -284,23 +287,18 @@ const createPlatform = (): Platform => {
 }
 
 function BharatCodeAuthGate(props: ParentProps) {
-  const [auth, { mutate }] = createResource(() => window.api.getAccountStatus())
+  const [auth, { mutate }] = createAccountStatusResource(window.api)
   const [signingIn, setSigningIn] = createSignal(false)
   const [error, setError] = createSignal<string | null>(null)
   const ready = () => auth()?.authenticated === true
+  const pending = () => signingIn() || ["authorizing", "switching", "refreshing"].includes(auth()?.state ?? "")
 
   async function signIn() {
     setSigningIn(true)
     setError(null)
     try {
       mutate(await window.api.beginSignIn())
-      for (let attempt = 0; attempt < 180; attempt++) {
-        await new Promise((resolve) => setTimeout(resolve, 1_000))
-        const next = await window.api.completeSignIn()
-        mutate(next)
-        if (next.authenticated) return
-      }
-      setError("Timed out waiting for BharatCode sign-in. Try again.")
+      if (!ready()) setError("BharatCode sign-in has not completed. Try again.")
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -310,7 +308,7 @@ function BharatCodeAuthGate(props: ParentProps) {
 
   return (
     <Show
-      when={!auth.loading && ready()}
+      when={ready()}
       fallback={
         <div class="w-screen h-screen bg-background-base text-text-strong flex items-center justify-center px-6">
           <div class="w-full max-w-md flex flex-col gap-5">
@@ -326,12 +324,12 @@ function BharatCodeAuthGate(props: ParentProps) {
               type="button"
               size="large"
               variant="primary"
-              disabled={auth.loading || signingIn()}
+              disabled={(!auth() && auth.loading) || pending()}
               onClick={() => void signIn()}
             >
-              {signingIn() ? "Waiting for browser sign-in..." : "Continue with BharatCode"}
+              {pending() ? "Waiting for browser sign-in..." : "Continue with BharatCode"}
             </Button>
-            <Show when={error()}>
+            <Show when={error() || auth()?.message}>
               {(message) => <div class="text-12-regular text-text-danger-base whitespace-pre-wrap">{message()}</div>}
             </Show>
             <div class="text-12-regular text-text-weak">BharatCode opens your browser for secure account sign-in.</div>

@@ -6,7 +6,8 @@ import { Tabs } from "@opencode-ai/ui/tabs"
 import { useMutation, useQueryClient } from "@tanstack/solid-query"
 import { showToast } from "@opencode-ai/ui/toast"
 import { useNavigate } from "@solidjs/router"
-import { type Accessor, createEffect, createMemo, createResource, For, onCleanup, Show } from "solid-js"
+import { type Accessor, createEffect, createMemo, For, onCleanup, Show } from "solid-js"
+import { createAccountStatusResource } from "@/context/account-status"
 import { createStore, reconcile } from "solid-js/store"
 import { ServerHealthIndicator, ServerRow } from "@/components/server/server-row"
 import { useCapabilities } from "@/context/capabilities"
@@ -209,12 +210,9 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
   const setupCapabilities = createMemo(
     () => installedCapabilities().filter((item) => item.status === "needs_setup" || item.status === "unhealthy").length,
   )
-  const [accountStatus, { mutate: mutateAccountStatus, refetch: refetchAccountStatus }] = createResource(
-    () => props.shown() && !!platform.getAccountStatus,
-    async (enabled) => {
-      if (!enabled || !platform.getAccountStatus) return undefined
-      return platform.getAccountStatus()
-    },
+  const [accountStatus, { mutate: mutateAccountStatus, refetch: refetchAccountStatus }] = createAccountStatusResource(
+    platform,
+    props.shown,
   )
 
   const openMarketplace = () => {

@@ -60,6 +60,7 @@ export type BharatCodeAccountState =
   | "switching"
 
 export type BharatCodeAccountStatus = {
+  revision?: number
   state: BharatCodeAccountState
   authenticated: boolean
   checkedAt: string
@@ -156,6 +157,7 @@ export type ElectronAPI = {
   exportDebugLogs: () => Promise<string>
   recordFatalRendererError: (error: FatalRendererError) => Promise<void>
   getAccountStatus: () => Promise<BharatCodeAccountStatus>
+  onAccountStatusChanged: (cb: (status: BharatCodeAccountStatus) => void) => () => void
   beginSignIn: (options?: BharatCodeSignInOptions) => Promise<BharatCodeAccountStatus>
   completeSignIn: () => Promise<BharatCodeAccountStatus>
   logout: () => Promise<BharatCodeAccountStatus>

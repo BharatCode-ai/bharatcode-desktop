@@ -1,4 +1,5 @@
-import { createResource, type JSX } from "solid-js"
+import { type JSX } from "solid-js"
+import { createAccountStatusResource } from "@/context/account-status"
 
 import type { BharatCodeAccountStatus } from "@/context/platform"
 
@@ -20,12 +21,16 @@ export function TitlebarAccountButton(props: {
   variant: "legacy" | "v2"
   label: string
   getStatus: () => Promise<BharatCodeAccountStatus>
+  onAccountStatusChanged?: (cb: (status: BharatCodeAccountStatus) => void) => () => void
   refresh: () => Promise<BharatCodeAccountStatus>
   signIn: (options?: { selectAccount?: boolean }) => Promise<BharatCodeAccountStatus>
   onOpen: () => void
   children?: JSX.Element
 }) {
-  const [status, { mutate }] = createResource(props.getStatus)
+  const [status, { mutate }] = createAccountStatusResource({
+    getAccountStatus: props.getStatus,
+    onAccountStatusChanged: props.onAccountStatusChanged,
+  })
   const view = () => titlebarAccountView(status())
 
   const act = async () => {
@@ -33,12 +38,6 @@ export function TitlebarAccountButton(props: {
     if (view().action === "refresh") return mutate(await props.refresh())
     if (view().action === "sign_in") {
       mutate(await props.signIn())
-      for (let attempt = 0; attempt < 180; attempt++) {
-        await new Promise((resolve) => setTimeout(resolve, 1_000))
-        const next = await props.getStatus()
-        mutate(next)
-        if (!["authorizing", "switching"].includes(next.state)) return
-      }
     }
   }
 
@@ -56,7 +55,7 @@ export function TitlebarAccountButton(props: {
       data-account-state={view().state}
       aria-label={`${props.label}: ${view().state}`}
       disabled={view().action === "none"}
-      onClick={() => void act()}
+      onClick={() => void act().catch(() => props.onOpen())}
     >
       {props.children ?? <span aria-hidden="true">●</span>}
     </button>

@@ -13,6 +13,7 @@ import { app, BrowserWindow, dialog, shell } from "electron"
 import contextMenu from "electron-context-menu"
 
 import { createBharatCodeAccountClient } from "./bharatcode-auth"
+import { createAccountSession } from "./account-session"
 import { createDeepLinkEvents } from "./deep-link-events"
 import { createSidecarAuthorizationPolicy, type SidecarAuthorizationPolicy } from "./sidecar-auth"
 import { BRANDING, appIdForChannel, productNameForChannel } from "./branding"
@@ -74,7 +75,7 @@ let logger: ReturnType<typeof initLogging>
 let mainWindow: BrowserWindow | null = null
 let server: SidecarListener | null = null
 let sidecarAuthorization: SidecarAuthorizationPolicy | undefined
-let accountClient: ReturnType<typeof createBharatCodeAccountClient> | undefined
+let accountClient: ReturnType<typeof createAccountSession> | undefined
 let wslLifecycle: ReturnType<typeof createWslLifecycle> | undefined
 let selectedWslDisplayName: string | undefined
 const pendingAccountCallbacks: string[] = []
@@ -149,6 +150,7 @@ function setInitStep(step: InitStep) {
 async function killSidecar() {
   sidecarAuthorization?.invalidate()
   sidecarAuthorization = undefined
+  accountClient?.dispose()
   accountClient = undefined
   if (!server) return
   const current = server
@@ -374,17 +376,7 @@ const main = Effect.gen(function* () {
     exportDebugLogs: () => exportDebugLogs(),
     recordFatalRendererError: (error) => writeLog("renderer", "fatal renderer error", { ...error }, "error"),
     getAccountStatus: () => requireAccountClient().getAccountStatus(),
-    beginSignIn: async (options) => {
-      const authorization = await requireAccountClient().beginSignIn({
-        selectAccount: options?.selectAccount === true,
-      })
-      await openExternalUrl(authorization.url, { openExternal: (url) => shell.openExternal(url) })
-      return {
-        state: options?.selectAccount ? ("switching" as const) : ("authorizing" as const),
-        authenticated: false,
-        checkedAt: new Date().toISOString(),
-      }
-    },
+    beginSignIn: (options) => requireAccountClient().beginSignIn({ selectAccount: options?.selectAccount === true }),
     completeSignIn: () => requireAccountClient().getAccountStatus(),
     logout: () => requireAccountClient().logout(),
     refreshAccountStatus: () => requireAccountClient().refreshAccountStatus(),
@@ -470,8 +462,14 @@ const main = Effect.gen(function* () {
   const url = `http://${hostname}:${port}`
   const password = randomUUID()
   const sidecarID = randomUUID()
-  accountClient = createBharatCodeAccountClient({
-    getConnection: async () => ({ url, username: "bharatcode", password }),
+  accountClient = createAccountSession({
+    client: createBharatCodeAccountClient({
+      getConnection: async () => ({ url, username: "bharatcode", password }),
+    }),
+    openBrowser: (url) => openExternalUrl(url, { openExternal: (value) => shell.openExternal(value) }),
+    changed: (status) => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("account-status-changed", status)
+    },
   })
   wslLifecycle = createWslLifecycle({
     revalidate: revalidateWslSelection,
@@ -585,6 +583,7 @@ const main = Effect.gen(function* () {
   void deepLinkEvents.flush().catch(() => logger.warn("Desktop pending callback handling failed."))
 
   mainWindow = createMainWindow(() => sidecarAuthorization)
+  mainWindow.on("closed", () => accountClient?.cancelSignIn())
   if (mainWindow) {
     createMenu({
       trigger: (id) => {

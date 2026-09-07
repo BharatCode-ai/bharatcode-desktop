@@ -61,7 +61,9 @@ test("Windows launcher failures are sanitized, with no URL or profile details", 
 
 test("sign-in production path uses the tested host handoff", () => {
   const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8")
-  expect(source).toContain("openExternalUrl(authorization.url")
+  expect(source).toContain("openBrowser: (url) => openExternalUrl(url")
+  const session = readFileSync(new URL("./account-session.ts", import.meta.url), "utf8")
+  expect(session).toContain("await options.openBrowser(authorization.url)")
   expect(source).not.toContain("shell.openExternal(authorization.url)")
 })
 

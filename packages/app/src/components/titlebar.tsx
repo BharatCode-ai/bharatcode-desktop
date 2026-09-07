@@ -103,6 +103,7 @@ export function Titlebar(props: { update?: TitlebarUpdate }) {
         variant={variant}
         label={language.t("settings.account.title")}
         getStatus={platform.getAccountStatus!}
+        onAccountStatusChanged={platform.onAccountStatusChanged}
         refresh={platform.refreshAccountStatus!}
         signIn={platform.beginSignIn!}
         onOpen={openAccountSettings}
