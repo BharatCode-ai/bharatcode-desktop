@@ -207,3 +207,51 @@ test("late subscribers fetch confirmed state and older failed status reads are i
   f.setStatus(async () => signedIn)
   expect((await f.session.getAccountStatus()).state).toBe("signed_in")
 })
+
+test("failed first logout cannot drop the read barrier for a second queued logout", async () => {
+  const firstRemoval = deferred<void>()
+  const secondRemoval = deferred<void>()
+  const staleRead = deferred<typeof signedIn>()
+  const events: Array<{ state: string }> = []
+  let removals = 0
+  let reads = 0
+  const session = createAccountSession({
+    client: {
+      getAccountStatus: async () => {
+        reads++
+        return staleRead.promise
+      },
+      beginSignIn: async () => {
+        throw new Error("unused")
+      },
+      completeSignIn: async () => {
+        throw new Error("unused")
+      },
+      logout: async () => {
+        if (++removals === 1) {
+          await firstRemoval.promise
+          throw new Error("first removal failed")
+        }
+        await secondRemoval.promise
+        return signedOut
+      },
+    },
+    openBrowser: async () => {},
+    changed: (status) => events.push(status),
+  })
+  const first = session.logout().catch((e: Error) => e.message)
+  const second = session.logout()
+  firstRemoval.resolve()
+  expect(await first).toBe("Could not sign out of BharatCode. Try again.")
+  const during = session.getAccountStatus()
+  await tick()
+  const readsWhileRemoving = reads
+  secondRemoval.resolve()
+  expect((await second).state).toBe("signed_out")
+  staleRead.resolve(signedIn)
+  const observed = await during
+  expect(readsWhileRemoving).toBe(0)
+  expect(observed.state).not.toBe("signed_in")
+  expect(events.at(-1)?.state).toBe("signed_out")
+  expect(events.some((event) => event.state === "signed_in")).toBe(false)
+})

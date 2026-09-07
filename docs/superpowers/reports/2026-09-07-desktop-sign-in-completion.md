@@ -39,6 +39,12 @@ The extracted released Settings sign-in function was exercised without network o
 
 ## Remaining release work
 
+### CTO review follow-up: overlapping logout barrier
+
+CTO reproduced a P2 on initial correction `d4f7cbad435829831a497afb75e3793959afce0e`: the first of two overlapping logout calls could release a shared boolean read barrier while the second was still pending. If the first failed, a read of old credentials could then overwrite the later successful logout status.
+
+The additive correction gives every queued logout its own counted barrier and invalidates outstanding read sequence numbers at every logout settlement. The exact regression failed before the correction (`readsWhileRemoving`: expected 0, received 1), then passed with no old signed-in read/publication. Focused account/session, account transport, deep-link privacy and sidecar-boundary matrix: 26 passed / 0 failed, 105 assertions. Desktop typecheck and changed-file formatting/whitespace passed. App source and package artifacts were unchanged by this follow-up; no additional hosted CI, build or release was launched.
+
 This is local source verification, not installed OAuth acceptance. Read-only GitHub inspection still lists `desktop-beta-1.15.28` as the most recent published prerelease; no stable/latest release exists through GitHub's latest endpoint.
 
 CTO independent exact-commit review is required. A separately prepared version-bumped package must carry this source, followed by authorized normal installed sign-out/sign-in with a different account, delayed browser completion, and confirmation that Account/model views update on the first attempt. No current profile, credentials, browser state, app process, package installation, production system or publication was mutated for this work.

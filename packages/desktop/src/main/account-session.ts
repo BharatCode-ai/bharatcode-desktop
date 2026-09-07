@@ -26,7 +26,7 @@ export function createAccountSession(options: {
   let generation = 0
   let reads = 0
   let disposed = false
-  let removing = false
+  let removing = 0
   let pending: Attempt | undefined
   let tail = Promise.resolve()
   let latest: BharatCodeAccountStatus = {
@@ -172,7 +172,7 @@ export function createAccountSession(options: {
   const logout = () => {
     cancel()
     const epoch = generation
-    removing = true
+    removing++
     state("refreshing")
     return serial(async () => {
       const next = await options.client.logout()
@@ -184,7 +184,10 @@ export function createAccountSession(options: {
         throw new Error("Could not sign out of BharatCode. Try again.")
       })
       .finally(() => {
-        removing = false
+        // Each queued logout owns its barrier. An earlier failure cannot expose
+        // the store while a later removal is still running.
+        removing--
+        reads++
       })
   }
 
