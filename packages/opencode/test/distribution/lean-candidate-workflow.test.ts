@@ -34,7 +34,8 @@ const reviewedSecurityStepSha256 = {
   windowsUnsigned: "a3c024ac9c6087fca041b9d2aeeab56f59e5086557e1dbb56169846d701f5c6d",
 } as const
 const acceptedApplicationSourceSha = "80c962f4148db531c35abcf4922059d2101c9bcd"
-const acceptedReleaseParentSha = "410006bdea08b4797f93118161abbc1f689fb6b6"
+const acceptedReleaseParentSha = "25bbb62132b7a7beba025492c2c6a893c976663d"
+const reviewedApplicationSourceSha = "9d0be61151c55363915bcfc8f99ebc8ae0d53dfa"
 const wslRunnerLabel = "bharatcode-acceptance-${{ github.run_id }}-${{ github.run_attempt }}"
 const frozenWslPaths = [
   "packages/desktop/electron-builder.config.ts",
@@ -194,9 +195,7 @@ const internalWslInputs = [
 ]
 const releaseControlDeltaPaths = [
   ".github/workflows/bharatcode-next-beta-candidate.yml",
-  "packages/opencode/script/lean-cohort.mjs",
   "packages/opencode/test/distribution/lean-candidate-workflow.test.ts",
-  "packages/opencode/test/distribution/lean-cohort.test.ts",
 ] as const
 
 async function source() {
@@ -560,40 +559,62 @@ function runWorkflowCohortFixture(run: string, releaseStage?: string, updaterPre
       bytes: readFileSync(windowsPath).byteLength,
       sha256: digest(windowsPath),
     }
-    const upgradeName = "bharatcode-upgrade-rollback-waiver-windows-x64.json"
+    // Synthetic contract fixtures only, never release evidence or renewed owner waivers.
+    const currentBeta = parseCurrentBetaFixtureBytes(readFileSync(resolve(packages, "../", currentBetaFixture)))
+    const upgradeName = "bharatcode-upgrade-rollback-windows-x64.json"
     writeSubject(
       upgradeName,
       canonicalLeanJson({
-        schema: "bharatcode-windows-upgrade-rollback-waiver-v1",
-        result: "OWNER_WAIVED",
-        reason: "WINDOWS_UPGRADE_ROLLBACK_ACCEPTANCE_WAIVED_BY_OWNER_FOR_1_15_28",
-        obligation: "POST_RELEASE_MANUAL_UPGRADE_ROLLBACK_TEST_REQUIRED",
-        accepted_application_source_sha: "80c962f4148db531c35abcf4922059d2101c9bcd",
+        schema: "bharatcode-lean-upgrade-rollback-receipt-v1",
+        result: "PASS",
+        repository: "BharatCode-ai/bharatcode-desktop",
         source_sha: sourceSha,
-        desktop_sha256: candidate.sha256,
-        failed_evidence: {
-          source_sha: "70a1a462dbbfcb2d2fc6485592520ae2342b7e07",
-          run_id: 33804419459,
-          run_attempt: 1,
-          stage: "CANDIDATE_RECOVERY",
+        candidate_tag: `next-beta-${sourceSha.slice(0, 12)}`,
+        candidate,
+        current_beta: {
+          release_id: currentBeta.release_id,
+          tag: currentBeta.tag,
+          source_sha: currentBeta.source_sha,
+          asset: currentBeta.assets[0],
         },
-        github: { actor: "shrey16", run_id: Number(runId), run_attempt: Number(runAttempt) },
+        host: { os: "windows", arch: "x64", runner_image: "synthetic-fixture" },
+        checks: {
+          bharatcode_runtime_only: true,
+          candidate_installed_over_beta: true,
+          candidate_started: true,
+          current_beta_download_verified: true,
+          current_beta_installed: true,
+          eligible_state_preserved: true,
+          eligible_state_seeded: true,
+          migration_source_preserved: true,
+          recovery_evidence_preserved: true,
+          rollback_installed: true,
+          rollback_state_structurally_valid: true,
+          share_network_attempt_absent: true,
+          sharenext_absent: true,
+        },
+        github: { run_id: runId, run_attempt: runAttempt },
         completed_at: "2026-09-01T10:00:00.000Z",
       }),
     )
-    const waiverName = "bharatcode-wsl-acceptance-waiver.json"
+    const waiverName = "bharatcode-wsl-scenarios-9-10.json"
     writeSubject(
       waiverName,
       canonicalLeanJson({
-        schema: "bharatcode-wsl-acceptance-waiver-v1",
-        result: "OWNER_WAIVED",
-        reason: "FORMAL_WINDOWS_WSL2_VM_ACCEPTANCE_NOT_RUN_BY_OWNER_DECISION",
-        manual_acceptance: "INSTALLED_WINDOWS_STARTUP_SIGNIN_PROJECT_MODELS_SESSION_RESTORE_USER_CONFIRMED",
-        accepted_application_source_sha: "80c962f4148db531c35abcf4922059d2101c9bcd",
+        schema: "bharatcode-wsl-scenarios-9-10-v1",
+        result: "PASS",
         source_sha: sourceSha,
         desktop_sha256: candidate.sha256,
         runtime_manifest_sha256: digest(runtimeManifestPath),
-        github: { actor: "shrey16", run_id: Number(runId), run_attempt: Number(runAttempt) },
+        runtime: {
+          manifest_source_sha: sourceSha,
+          executed_source_sha: sourceSha,
+          manifest_sha256: "f".repeat(64),
+          executed_sha256: "f".repeat(64),
+        },
+        github: { run_id: Number(runId), run_attempt: Number(runAttempt) },
+        identity: { distro_sha256: "1".repeat(64), user_sha256: "2".repeat(64), uid: 1000 },
+        scenarios: { "9": true, "10": true },
         completed_at: "2026-09-01T10:00:00.000Z",
       }),
     )
@@ -607,9 +628,9 @@ function runWorkflowCohortFixture(run: string, releaseStage?: string, updaterPre
         GITHUB_RUN_ID: runId,
         SOURCE_SHA: sourceSha,
         WORKFLOW_PATH: ".github/workflows/bharatcode-next-beta-candidate.yml",
-        RELEASE_TAG: "desktop-beta-1.15.28",
-        WSL_ACCEPTANCE_MODE: "owner-waived-hotfix-1.15.28",
-        UPGRADE_ACCEPTANCE_MODE: "owner-waived-hotfix-1.15.28",
+        RELEASE_TAG: `desktop-beta-${desktopVersion}`,
+        WSL_ACCEPTANCE_MODE: "required",
+        UPGRADE_ACCEPTANCE_MODE: "required",
       },
       stdout: "pipe",
       stderr: "pipe",
@@ -630,7 +651,7 @@ function runWorkflowCohortFixture(run: string, releaseStage?: string, updaterPre
           ...process.env,
           GITHUB_RUN_ATTEMPT: runAttempt,
           GITHUB_RUN_ID: runId,
-          RELEASE_TAG: "desktop-beta-1.15.28",
+          RELEASE_TAG: `desktop-beta-${desktopVersion}`,
           SOURCE_SHA: sourceSha,
         },
         stdout: "pipe",
@@ -1411,7 +1432,7 @@ function windowsUnsignedPolicyViolations(value: string) {
 }
 
 describe("lean next-beta candidate workflow", () => {
-  test("is manual-only and binds one exact 1.15.28 source plus a fresh WSL decision", async () => {
+  test("is manual-only and binds the reviewed 1.15.29 source without recycling historical waivers", async () => {
     const value = await source()
     const workflow = parse(value)
     expect(Object.keys(workflow.on)).toEqual(["workflow_dispatch"])
@@ -1423,19 +1444,19 @@ describe("lean next-beta candidate workflow", () => {
       "website_action",
     ])
     expect(workflow.on.workflow_dispatch.inputs.wsl_acceptance_mode).toEqual({
-      description: "Require formal WSL2 automation, or record a fresh owner-authorized 1.15.28 waiver",
+      description: "Require WSL2 acceptance; historical version waivers cannot authorize this candidate",
       required: true,
       default: "required",
       type: "choice",
-      options: ["required", "owner-waived-hotfix-1.15.28"],
+      options: ["required"],
     })
     expect(workflow.on.workflow_dispatch.inputs.upgrade_acceptance_mode).toEqual({
       description:
-        "Require packaged Windows upgrade/rollback automation, or record the owner-authorized 1.15.28 waiver",
+        "Require packaged Windows upgrade/rollback acceptance; historical version waivers cannot authorize this candidate",
       required: true,
       default: "required",
       type: "choice",
-      options: ["required", "owner-waived-hotfix-1.15.28"],
+      options: ["required"],
     })
     expect(workflow.on.workflow_dispatch.inputs.publication_action).toEqual({
       description: "Finalize the complete immutable cohort as a public prerelease",
@@ -1452,13 +1473,16 @@ describe("lean next-beta candidate workflow", () => {
       options: ["hold", "notify"],
     })
     expect(value).toContain("^[0-9a-f]{40}$")
-    expect(value).toContain("github.ref == 'refs/heads/codex/access-denial-links-1.15.28'")
+    expect(value).toContain("github.ref == 'refs/heads/codex/account-switch-1.15.29'")
     expect(value).toContain("github.sha")
     expect(value).toContain("inputs.source_sha")
     expect(value).toContain("ref: ${{ inputs.source_sha }}")
-    expect(value).toContain("RELEASE_TAG: desktop-beta-1.15.28")
+    expect(value).toContain("RELEASE_TAG: desktop-beta-1.15.29")
     const admission = runStep(value, "admit-source", "Admit immutable source and source-derived versions")
     expect(value).toContain(acceptedApplicationSourceSha)
+    expect(value).toContain(`REVIEWED_APPLICATION_SOURCE_SHA: ${reviewedApplicationSourceSha}`)
+    expect(admission).toContain('git merge-base --is-ancestor "$REVIEWED_APPLICATION_SOURCE_SHA" "$SOURCE_SHA"')
+    expect(admission).toContain('[[ "$cli_version" == "1.15.29" && "$desktop_version" == "1.15.29" ]]')
     expect(value).toContain(`ACCEPTED_RELEASE_PARENT_SHA: ${acceptedReleaseParentSha}`)
     expect(admission).toContain('git rev-parse "$SOURCE_SHA^"')
     expect(admission).toContain('== "$ACCEPTED_RELEASE_PARENT_SHA"')
@@ -1467,7 +1491,28 @@ describe("lean next-beta candidate workflow", () => {
     const root = resolve(import.meta.dir, "../../../..")
     const git = (...args: string[]) => Bun.spawnSync(["git", ...args], { cwd: root, stdout: "pipe", stderr: "pipe" })
     expect(git("merge-base", "--is-ancestor", acceptedApplicationSourceSha, "HEAD").exitCode).toBe(0)
+    expect(git("merge-base", "--is-ancestor", reviewedApplicationSourceSha, "HEAD").exitCode).toBe(0)
     expect(git("diff", "--quiet", acceptedReleaseParentSha, "HEAD", "--", ...frozenWslPaths).exitCode).toBe(0)
+  })
+
+  test("executes admission rejection of old, relabeled, missing, and unknown acceptance waivers", async () => {
+    const admission = runStep(await source(), "admit-source", "Admit immutable source and source-derived versions")
+    const checks = admission.slice(
+      admission.indexOf('[[ "$UPGRADE_ACCEPTANCE_MODE"'),
+      admission.indexOf('[[ "$PUBLICATION_ACTION"'),
+    )
+    expect(checks).not.toBe("")
+    const run = (upgrade: string, wsl: string) =>
+      Bun.spawnSync(["bash", "-c", `set -euo pipefail\n${checks}`], {
+        env: { PATH: process.env.PATH, UPGRADE_ACCEPTANCE_MODE: upgrade, WSL_ACCEPTANCE_MODE: wsl },
+        stdout: "pipe",
+        stderr: "pipe",
+      }).exitCode
+    expect(run("required", "required")).toBe(0)
+    for (const mode of ["", "owner-waived-hotfix-1.15.28", "owner-waived-hotfix-1.15.29", "PASS", "OWNER_WAIVED"]) {
+      expect(run(mode, "required")).not.toBe(0)
+      expect(run("required", mode)).not.toBe(0)
+    }
   })
 
   test("requires one immutable run-attempt-scoped WSL runner label through cohort finalization", async () => {
@@ -2042,9 +2087,10 @@ describe("lean next-beta candidate workflow", () => {
       undefined,
       updaterScript,
     )
+    expect(cohort.stderr.toString()).toBe("")
     expect(cohort.exitCode).toBe(0)
-    expect(cohort.manifest?.wsl_gate_result).toBe("OWNER_WAIVED")
-    expect(cohort.manifest?.upgrade_gate_result).toBe("OWNER_WAIVED")
+    expect(cohort.manifest?.wsl_gate_result).toBe("PASS")
+    expect(cohort.manifest?.upgrade_gate_result).toBe("PASS")
     expect(cohort.manifest?.artifacts).toHaveLength(REQUIRED_COHORT_KEYS.length)
     expect(cohort.checksum).toMatch(/^[0-9a-f]{64}  bharatcode-next-beta-cohort\.json\n$/u)
   })
@@ -2231,8 +2277,8 @@ describe("lean next-beta candidate workflow", () => {
     ])
       expect(stageRun).toContain(identity)
     const refuseRun = steps[refuse]?.run ?? ""
-    expect(value).toContain("PREVIOUS_RELEASE_TAG: desktop-beta-1.15.27")
-    expect(refuseRun).toContain('value.targetCommitish !== "c832c3810253bf91f1e3bebffce60fde6b00be8f"')
+    expect(value).toContain("PREVIOUS_RELEASE_TAG: desktop-beta-1.15.28")
+    expect(refuseRun).toContain('value.targetCommitish !== "55cce6826b0d44dd790c429fc57337a506e862b9"')
     expect(refuseRun).toContain('gh release view "$PREVIOUS_RELEASE_TAG"')
     expect(refuseRun).not.toContain("b44709aa0e94d66beb3d1d396ba782be2d69a076")
     expect(refuseRun).toContain("Release already exists; refusing overwrite.")
