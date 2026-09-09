@@ -4,6 +4,18 @@
 - Local `main` ref may not exist; use `dev` or `origin/dev` for diffs.
 - Prefer automation: execute requested actions without confirmation unless blocked by missing info or safety/irreversibility.
 
+## Branch discipline
+
+- Use `dev` in the main Desktop checkout for sequential fixes and the active release batch.
+- Do not create a branch per fix, review, report, or build failure. A separate branch
+  requires explicit user direction or approved parallel ownership with a named owner,
+  purpose, and merge target.
+- Freeze release candidates by exact commit/tag; do not multiply branches for evidence.
+- Report branch/head, local vs pushed, merged vs unmerged, and remaining dirty state
+  at handoff. After a merge, verify ancestry and worktree/process ownership before cleanup.
+- Never delete unmerged work, dirty worktrees, or force-push a divergent remote to tidy
+  the branch list. See `docs/branch-inventory-2026-09-09.md` for the initial inventory.
+
 ## Commits and PR Titles
 
 Use conventional commit-style messages and PR titles: `type(scope): summary`.
