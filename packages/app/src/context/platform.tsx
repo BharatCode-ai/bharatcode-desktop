@@ -25,41 +25,31 @@ export type DictationTranscription = {
 }
 
 export type BharatCodeSignInOptions = {
-  forceAccountSelection?: boolean
-  onBrowserUrl?: (url: string) => void
+  selectAccount?: boolean
 }
 
-export type BharatCodeAccountState = "signed_out" | "signed_in" | "needs_sign_in" | "connection_issue"
-
-export type BharatCodeConnectionStatus = {
-  ok: boolean
-  endpoint: string
-  kind?: "auth" | "http" | "network" | "service" | "unknown"
-  status?: number
-  message?: string
-}
+export type BharatCodeAccountState =
+  | "signed_out"
+  | "signed_in"
+  | "needs_sign_in"
+  | "connection_issue"
+  | "authorizing"
+  | "refreshing"
+  | "switching"
 
 export type BharatCodeAccountStatus = {
+  revision?: number
   authenticated: boolean
-  configured: boolean
-  credentialsPath: string
-  configPath: string
   state: BharatCodeAccountState
   checkedAt: string
   email?: string
+  name?: string
   expiresAt?: number
   message?: string
-  connection?: BharatCodeConnectionStatus
 }
 
 export type CapabilityTrust = "bundled" | "curated" | "local"
-export type CapabilityStatus =
-  | "available"
-  | "installed"
-  | "enabled"
-  | "needs_setup"
-  | "unhealthy"
-  | "update_available"
+export type CapabilityStatus = "available" | "installed" | "enabled" | "needs_setup" | "unhealthy" | "update_available"
 export type CapabilityCategory =
   | "workflow"
   | "code-hosting"
@@ -89,13 +79,15 @@ export type CapabilityMcpConfig =
       url: string
       enabled?: boolean
       headers?: Record<string, string>
-      oauth?: false | {
-        clientId?: string
-        clientSecret?: string
-        scope?: string
-        callbackPort?: number
-        redirectUri?: string
-      }
+      oauth?:
+        | false
+        | {
+            clientId?: string
+            clientSecret?: string
+            scope?: string
+            callbackPort?: number
+            redirectUri?: string
+          }
       timeout?: number
     }
   | {
@@ -169,6 +161,33 @@ export type FatalRendererErrorLog = {
   os?: DesktopOS
 }
 
+export type WslErrorCode =
+  | "wsl-unavailable"
+  | "no-wsl2-distribution"
+  | "selection-required"
+  | "selection-invalid"
+  | "root-user"
+  | "prerequisite-missing"
+  | "runtime-integrity"
+  | "path-translation"
+  | "start-failed"
+  | "connection-lost"
+  | "stop-failed"
+
+export type WslStatus = { phase: "off" | "ready" | "starting" | "running" } | { phase: "error"; code: WslErrorCode }
+
+export type WslSnapshot = {
+  enabled: boolean
+  revision: number
+  selectedDisplayName?: string
+  distributions: Array<{ displayName: string; version: 2; selected: boolean }>
+  status: WslStatus
+}
+
+export type WslConfigurationUpdate =
+  | { enabled: false; expectedRevision: number }
+  | { enabled: true; expectedRevision: number; selectedDisplayName: string }
+
 export type Platform = {
   /** Platform discriminator */
   platform: PlatformName
@@ -224,11 +243,14 @@ export type Platform = {
   /** Set the default server URL to use on app startup (platform-specific) */
   setDefaultServer?(url: ServerConnection.Key | null): Promise<void> | void
 
-  /** Get the configured WSL integration (desktop only) */
-  getWslEnabled?(): Promise<boolean>
+  /** Read the renderer-safe WSL integration status (Windows desktop only) */
+  getWslSnapshot?(): Promise<WslSnapshot>
 
-  /** Set the configured WSL integration (desktop only) */
-  setWslEnabled?(config: boolean): Promise<void> | void
+  /** Apply a revision-bound WSL selection update (Windows desktop only) */
+  configureWsl?(update: WslConfigurationUpdate): Promise<WslSnapshot>
+
+  /** Revalidate WSL prerequisites and selection (Windows desktop only) */
+  retryWsl?(): Promise<WslSnapshot>
 
   /** Get the preferred display backend (desktop only) */
   getDisplayBackend?(): Promise<DisplayBackend | null> | DisplayBackend | null
@@ -261,13 +283,19 @@ export type Platform = {
   transcribeAudio?(audio: DictationAudioInput): Promise<DictationTranscription>
 
   /** Read safe BharatCode account/auth status without exposing tokens (desktop only) */
-  getBharatCodeAccountStatus?(): Promise<BharatCodeAccountStatus>
+  getAccountStatus?(): Promise<BharatCodeAccountStatus>
+
+  onAccountStatusChanged?(cb: (status: BharatCodeAccountStatus) => void): () => void
 
   /** Refresh credentials if possible and check BharatCode connectivity (desktop only) */
-  refreshBharatCodeAccountStatus?(): Promise<BharatCodeAccountStatus>
+  refreshAccountStatus?(): Promise<BharatCodeAccountStatus>
 
-  /** Start BharatCode browser sign-in (desktop only) */
-  signInToBharatCode?(options?: BharatCodeSignInOptions): Promise<unknown>
+  /** Resolve only after the active browser callback has confirmed sign-in (desktop only). */
+  beginSignIn?(options?: BharatCodeSignInOptions): Promise<BharatCodeAccountStatus>
+
+  completeSignIn?(): Promise<BharatCodeAccountStatus>
+
+  logout?(): Promise<BharatCodeAccountStatus>
 
   /** Read installed and available BharatCode capabilities (desktop only) */
   getCapabilitySnapshot?(): Promise<CapabilitySnapshot>

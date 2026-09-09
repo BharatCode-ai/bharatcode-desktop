@@ -75,3 +75,39 @@ it.live("local dev log is not truncated twice for the same run", () =>
     expect(yield* Effect.promise(() => fs.readFile(path.join(dir, "dev.log"), "utf8"))).toContain("main startup")
   }),
 )
+
+it.live("init creates a missing log directory before opening the run log", () =>
+  Effect.gen(function* () {
+    const log = Global.Path.log
+    yield* Effect.addFinalizer(() => Effect.sync(() => (Global.Path.log = log)))
+    const dir = yield* tmpdirScoped()
+    const missing = path.join(dir, "missing", "Log")
+    Global.Path.log = missing
+    yield* Effect.promise(() => Log.init({ print: false, dev: false }))
+    expect((yield* Effect.promise(() => fs.stat(missing))).isDirectory()).toBe(true)
+    expect(path.dirname(Log.file())).toBe(missing)
+  }),
+)
+
+it.live("init rejects directory creation and log-open failures with a safe message", () =>
+  Effect.gen(function* () {
+    const log = Global.Path.log
+    yield* Effect.addFinalizer(() => Effect.sync(() => (Global.Path.log = log)))
+    const dir = yield* tmpdirScoped()
+    const blocked = path.join(dir, "private-user-path")
+    yield* Effect.promise(() => fs.writeFile(blocked, "not a directory"))
+    Global.Path.log = path.join(blocked, "Log")
+    yield* Effect.promise(async () => {
+      await expect(Log.init({ print: false })).rejects.toThrow(
+        "BharatCode could not open its log. Check disk space and write access.",
+      )
+    })
+    Global.Path.log = dir
+    yield* Effect.promise(() => fs.mkdir(path.join(dir, "dev.log")))
+    yield* Effect.promise(async () => {
+      await expect(Log.init({ print: false, dev: true })).rejects.toThrow(
+        "BharatCode could not open its log. Check disk space and write access.",
+      )
+    })
+  }),
+)

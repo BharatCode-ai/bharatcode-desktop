@@ -11,6 +11,7 @@ import { BRANDING } from "./branding"
 import { exportDebugLogs, write as writeLog } from "./logging"
 import { getStore } from "./store"
 import { createUnresponsiveSampler } from "./unresponsive"
+import type { SidecarAuthorizationPolicy } from "./sidecar-auth"
 
 const root = dirname(fileURLToPath(import.meta.url))
 const rendererRoot = join(root, "../renderer")
@@ -119,7 +120,9 @@ export function setDockIcon() {
   if (!icon.isEmpty()) app.dock?.setIcon(icon)
 }
 
-export function createMainWindow() {
+export function createMainWindow(
+  sidecarAuthorization?: SidecarAuthorizationPolicy | (() => SidecarAuthorizationPolicy | undefined),
+) {
   const state = windowState({
     defaultWidth: 1280,
     defaultHeight: 800,
@@ -159,12 +162,25 @@ export function createMainWindow() {
 
   allowRendererPermissions(win)
   wireWindowRecovery(win, "main")
+  const authorization = () =>
+    typeof sidecarAuthorization === "function" ? sidecarAuthorization() : sidecarAuthorization
 
-  win.webContents.session.webRequest.onBeforeSendHeaders((details, callback) => {
+  const filter = { urls: ["<all_urls>"] }
+  win.webContents.session.webRequest.onBeforeRequest(filter, (details, callback) =>
+    callback(authorization()?.beforeRequest(details, win.webContents.id) ?? { cancel: false }),
+  )
+  win.webContents.session.webRequest.onBeforeSendHeaders(filter, (details, callback) => {
     const { requestHeaders } = details
     upsertKeyValue(requestHeaders, "Access-Control-Allow-Origin", ["*"])
-    callback({ requestHeaders })
+    callback(
+      authorization()?.beforeSendHeaders({ ...details, requestHeaders }, win.webContents.id) ?? {
+        requestHeaders,
+      },
+    )
   })
+  win.webContents.session.webRequest.onBeforeRedirect(filter, (details) => authorization()?.beforeRedirect(details))
+  win.webContents.session.webRequest.onCompleted(filter, (details) => authorization()?.complete(details.id))
+  win.webContents.session.webRequest.onErrorOccurred(filter, (details) => authorization()?.complete(details.id))
 
   win.webContents.session.webRequest.onHeadersReceived((details, callback) => {
     const { responseHeaders = {} } = details

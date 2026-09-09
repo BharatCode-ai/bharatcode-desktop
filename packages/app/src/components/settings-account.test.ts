@@ -4,9 +4,6 @@ import type { BharatCodeAccountStatus } from "@/context/platform"
 
 const base: BharatCodeAccountStatus = {
   authenticated: true,
-  configured: true,
-  credentialsPath: "/home/user/.bharatcode/credentials.json",
-  configPath: "/home/user/.config/opencode/opencode.jsonc",
   state: "signed_in",
   checkedAt: "2026-07-10T00:00:00.000Z",
 }
@@ -22,7 +19,7 @@ describe("accountStatusViewModel", () => {
   })
 
   test("uses sign-in copy for first-run signed-out state", () => {
-    const view = accountStatusViewModel({ ...base, authenticated: false, configured: false, state: "signed_out" })
+    const view = accountStatusViewModel({ ...base, authenticated: false, state: "signed_out" })
 
     expect(view.titleKey).toBe("settings.account.state.signedOut.title")
     expect(view.descriptionKey).toBe("settings.account.state.signedOut.description")
@@ -45,11 +42,6 @@ describe("accountStatusViewModel", () => {
     const view = accountStatusViewModel({
       ...base,
       state: "connection_issue",
-      connection: {
-        ok: false,
-        endpoint: "https://bharatcode.ai/api/model/v1/models",
-        kind: "network",
-      },
     })
 
     expect(view.titleKey).toBe("settings.account.state.connectionIssue.title")
@@ -59,10 +51,9 @@ describe("accountStatusViewModel", () => {
   })
 })
 
-
 describe("accountSignInOptions", () => {
   test("requests provider account selection only for explicit account switching", () => {
     expect(accountSignInOptions("default")).toEqual({})
-    expect(accountSignInOptions("switch_account")).toEqual({ forceAccountSelection: true })
+    expect(accountSignInOptions("switch_account")).toEqual({ selectAccount: true })
   })
 })

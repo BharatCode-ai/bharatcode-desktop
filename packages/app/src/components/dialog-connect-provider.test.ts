@@ -3,15 +3,19 @@ import { bharatCodeProviderConnectMode } from "./dialog-connect-provider-mode"
 
 describe("bharatCodeProviderConnectMode", () => {
   test("uses Desktop OAuth for BharatCode when the platform bridge is available", () => {
-    expect(bharatCodeProviderConnectMode("bharatcode", { signInToBharatCode: async () => undefined })).toBe(
-      "desktop_oauth",
-    )
+    expect(
+      bharatCodeProviderConnectMode("bharatcode", {
+        beginSignIn: async () => ({ state: "signed_out", authenticated: false, checkedAt: "" }),
+      }),
+    ).toBe("desktop_oauth")
   })
 
   test("keeps non-BharatCode providers on the existing provider auth flow", () => {
-    expect(bharatCodeProviderConnectMode("anthropic", { signInToBharatCode: async () => undefined })).toBe(
-      "provider_auth",
-    )
+    expect(
+      bharatCodeProviderConnectMode("anthropic", {
+        beginSignIn: async () => ({ state: "signed_out", authenticated: false, checkedAt: "" }),
+      }),
+    ).toBe("provider_auth")
   })
 
   test("falls back to guidance instead of asking for raw BharatCode provider internals", () => {

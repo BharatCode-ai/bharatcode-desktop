@@ -67,6 +67,12 @@ import { useServer } from "@/context/server"
 import { useLanguage, type Locale } from "@/context/language"
 import { pathKey } from "@/utils/path-key"
 import {
+  createStartupRestoreGuard,
+  resolveDesktopStartupChatDirectory,
+  resolveStartupSession,
+  startupChatPath,
+} from "@/app-startup"
+import {
   displayName,
   effectiveWorkspaceOrder,
   errorMessage,
@@ -102,7 +108,6 @@ export default function Layout(props: ParentProps) {
       workspaceName: {} as Record<string, string>,
       workspaceBranchName: {} as Record<string, Record<string, string>>,
       workspaceExpanded: {} as Record<string, boolean>,
-      gettingStartedDismissed: false,
     }),
   )
 
@@ -154,7 +159,7 @@ export default function Layout(props: ParentProps) {
   const currentDir = createMemo(() => route().dir)
 
   const [state, setState] = createStore({
-    autoselect: !initialDirectory && !USE_NEW_DESIGN,
+    autoselect: !initialDirectory && (platform.platform === "desktop" || !USE_NEW_DESIGN),
     busyWorkspaces: {} as Record<string, boolean>,
     hoverProject: undefined as string | undefined,
     scrollSessionKey: undefined as string | undefined,
@@ -556,23 +561,106 @@ export default function Layout(props: ParentProps) {
     return projects.find((p) => p.worktree === root)
   })
 
-  const [autoselecting] = createResource(async () => {
-    await ready.promise
-    await layout.ready.promise
-    if (!untrack(() => state.autoselect)) return
-
-    const list = layout.projects.list()
-    const last = server.projects.last()
-
-    if (list.length === 0) {
-      if (!last) return
-      await openProject(last, true)
-    } else {
-      const next = list.find((project) => project.worktree === last) ?? list[0]
-      if (!next) return
-      await openProject(next.worktree, true)
-    }
+  const startupAbort = new AbortController()
+  const startupGuard = createStartupRestoreGuard()
+  onCleanup(() => {
+    startupGuard.cancel()
+    startupAbort.abort()
   })
+  createEffect(
+    on(
+      () => [location.pathname, server.key],
+      () => startupGuard.cancel(),
+      { defer: true },
+    ),
+  )
+  const [autoselecting, { refetch: retryStartup }] = createResource(
+    () => pageReady() && layoutReady() && (platform.platform !== "desktop" || (server.ready() && globalSync.ready)),
+    async (ready) => {
+      if (!ready || !untrack(() => state.autoselect)) return
+
+      if (platform.platform === "desktop") {
+        const source = server.key
+        const current = startupGuard.begin(
+          () => !startupAbort.signal.aborted && state.autoselect && location.pathname === "/" && server.key === source,
+        )
+        const directory = resolveDesktopStartupChatDirectory({
+          platform: "desktop",
+          ready: true,
+          projects: layout.projects.list(),
+          lastProject: server.projects.last(),
+          home: globalSync.data.path.home,
+        })
+        if (!directory || !current()) return
+        layout.projects.open(directory)
+        const root = projectRoot(directory)
+        const project = layout.projects.list().find((item) => pathKey(item.worktree) === pathKey(root))
+        const signal = AbortSignal.any([startupAbort.signal, AbortSignal.timeout(15_000)])
+        try {
+          const session = await resolveStartupSession({
+            root,
+            directories: [root, ...(project?.sandboxes ?? [])],
+            remembered: store.lastProjectSession[root],
+            current,
+            worktrees: async () => {
+              const result = await globalSDK.client.worktree.list({ directory: root }, { throwOnError: false, signal })
+              if (!result.response.ok || !Array.isArray(result.data)) throw new Error("Session restore unavailable")
+              return result.data
+            },
+            get: async (target) => {
+              const result = await globalSDK.client.session.get(
+                { sessionID: target.id, directory: target.directory },
+                { throwOnError: false, signal },
+              )
+              if (result.response.status === 404) return undefined
+              if (!result.response.ok || !result.data) throw new Error("Session restore unavailable")
+              return result.data
+            },
+            list: async (directory) => {
+              const result = await globalSDK.client.session.list({ directory }, { throwOnError: false, signal })
+              if (!result.response.ok || !Array.isArray(result.data)) throw new Error("Session restore unavailable")
+              return result.data
+            },
+          })
+          if (!current()) return
+          server.projects.touch(root)
+          if (session) rememberSessionRoute(session.directory, session.id, root)
+          setState("autoselect", false)
+          navigate(startupChatPath(root, session), { replace: true })
+        } catch {
+          if (!current()) return
+          const toast = showToast({
+            persistent: true,
+            title: language.t("session.startup.restoreFailed.title"),
+            description: language.t("session.startup.restoreFailed.description"),
+            actions: [
+              {
+                label: language.t("session.startup.retry"),
+                onClick: () => {
+                  if (autoselecting.loading) return
+                  toaster.dismiss(toast)
+                  void retryStartup()
+                },
+              },
+            ],
+          })
+        }
+        return
+      }
+
+      const list = layout.projects.list()
+      const last = server.projects.last()
+
+      if (list.length === 0) {
+        if (!last) return
+        await openProject(last, true)
+      } else {
+        const next = list.find((project) => project.worktree === last) ?? list[0]
+        if (!next) return
+        await openProject(next.worktree, true)
+      }
+    },
+  )
 
   const workspaceName = (directory: string, projectId?: string, branch?: string) => {
     const key = pathKey(directory)
@@ -1029,12 +1117,6 @@ export default function Layout(props: ParentProps) {
         onSelect: () => navigateProjectByOffset(1),
       },
       {
-        id: "provider.connect",
-        title: language.t("command.provider.connect"),
-        category: language.t("command.category.provider"),
-        onSelect: () => connectProvider(),
-      },
-      {
         id: "server.switch",
         title: language.t("command.server.switch"),
         category: language.t("command.category.server"),
@@ -1047,7 +1129,7 @@ export default function Layout(props: ParentProps) {
         keybind: "mod+comma",
         onSelect: () => openSettings(),
       },
-      ...(platform.getBharatCodeAccountStatus
+      ...(platform.getAccountStatus
         ? [
             {
               id: "account.open",
@@ -1057,7 +1139,7 @@ export default function Layout(props: ParentProps) {
             },
           ]
         : []),
-      ...(platform.signInToBharatCode
+      ...(platform.beginSignIn
         ? [
             {
               id: "account.reconnect",
@@ -1230,14 +1312,6 @@ export default function Layout(props: ParentProps) {
     return commands
   })
 
-  function connectProvider() {
-    const run = ++dialogRun
-    void import("@/components/dialog-select-provider").then((x) => {
-      if (dialogDead || dialogRun !== run) return
-      dialog.show(() => <x.DialogSelectProvider />)
-    })
-  }
-
   function openServer() {
     const run = ++dialogRun
     void import("@/components/dialog-select-server").then((x) => {
@@ -1255,9 +1329,9 @@ export default function Layout(props: ParentProps) {
   }
 
   async function reconnectBharatCodeAccount() {
-    if (!platform.signInToBharatCode) return
+    if (!platform.beginSignIn) return
     try {
-      await platform.signInToBharatCode()
+      await platform.beginSignIn()
       showToast({
         variant: "success",
         icon: "circle-check",
@@ -2340,35 +2414,6 @@ export default function Layout(props: ParentProps) {
             </>
           )}
         </Show>
-
-        <div
-          class="shrink-0 px-3 py-3"
-          classList={{
-            hidden: store.gettingStartedDismissed || !(providers.all().size > 0 && providers.paid().length === 0),
-          }}
-        >
-          <div class="rounded-xl bg-background-base shadow-xs-border-base" data-component="getting-started">
-            <div class="p-3 flex flex-col gap-6">
-              <div class="flex flex-col gap-2">
-                <div class="text-14-medium text-text-strong">{language.t("sidebar.gettingStarted.title")}</div>
-                <div class="text-14-regular text-text-base" style={{ "line-height": "var(--line-height-normal)" }}>
-                  {language.t("sidebar.gettingStarted.line1")}
-                </div>
-                <div class="text-14-regular text-text-base" style={{ "line-height": "var(--line-height-normal)" }}>
-                  {language.t("sidebar.gettingStarted.line2")}
-                </div>
-              </div>
-              <div data-component="getting-started-actions">
-                <Button size="large" icon="plus-small" onClick={connectProvider}>
-                  {language.t("command.provider.connect")}
-                </Button>
-                <Button size="large" variant="ghost" onClick={() => setStore("gettingStartedDismissed", true)}>
-                  {language.t("toast.update.action.notYet")}
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
       </div>
     )
   }

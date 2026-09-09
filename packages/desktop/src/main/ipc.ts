@@ -10,16 +10,18 @@ import type {
   SqliteMigrationProgress,
   TitlebarTheme,
   WindowConfig,
-  WslConfig,
   BharatCodeAccountStatus,
-  BharatCodeAuthState,
   BharatCodeSignInOptions,
   DictationAudioInput,
+  RecoveryAction,
+  RecoveryStatus,
 } from "../preload/types"
 import type { CapabilitySnapshot } from "./capabilities"
+import { parseWslConfigurationUpdate, type WslConfigurationUpdate, type WslSnapshot } from "./wsl-contract"
 import { runDesktopMenuAction } from "./desktop-menu-actions"
 import { getStore } from "./store"
 import { getPinchZoomEnabled, setPinchZoomEnabled, setTitlebar, updateTitlebar } from "./windows"
+import { parseRecoveryAction } from "./startup-recovery"
 
 const pickerFilters = (ext?: string[]) => {
   if (!ext || ext.length === 0) return undefined
@@ -27,31 +29,35 @@ const pickerFilters = (ext?: string[]) => {
 }
 
 type Deps = {
+  inspectRecovery: () => Promise<RecoveryStatus>
+  runRecovery: (action: RecoveryAction) => Promise<RecoveryStatus>
   killSidecar: () => Promise<void> | void
-  awaitInitialization: (sendStep: (step: InitStep) => void) => Promise<ServerReadyData>
+  awaitInitialization: (sendStep: (step: InitStep) => void, signal?: AbortSignal) => Promise<ServerReadyData>
   getWindowConfig: () => Promise<WindowConfig> | WindowConfig
   consumeInitialDeepLinks: () => Promise<string[]> | string[]
   getDefaultServerUrl: () => Promise<string | null> | string | null
   setDefaultServerUrl: (url: string | null) => Promise<void> | void
-  getWslConfig: () => Promise<WslConfig>
-  setWslConfig: (config: WslConfig) => Promise<void> | void
+  getWslSnapshot: () => Promise<WslSnapshot>
+  configureWsl: (update: WslConfigurationUpdate) => Promise<WslSnapshot>
+  retryWsl: () => Promise<WslSnapshot>
+  translateProjectPaths: (paths: readonly string[]) => Promise<readonly string[]>
   getDisplayBackend: () => Promise<string | null>
   setDisplayBackend: (backend: string | null) => Promise<void> | void
   parseMarkdown: (markdown: string) => Promise<string> | string
   checkAppExists: (appName: string) => Promise<boolean> | boolean
-  wslPath: (path: string, mode: "windows" | "linux" | null) => Promise<string>
   resolveAppPath: (appName: string) => Promise<string | null>
-  loadingWindowComplete: () => void
+  loadingWindowComplete: (senderID: number) => void
   runUpdater: (alertOnFail: boolean) => Promise<void> | void
   checkUpdate: () => Promise<{ updateAvailable: boolean; version?: string }>
   installUpdate: () => Promise<void> | void
   setBackgroundColor: (color: string) => void
   exportDebugLogs: () => Promise<string>
   recordFatalRendererError: (error: FatalRendererError) => Promise<void> | void
-  getBharatCodeAuthState: () => Promise<BharatCodeAuthState>
-  getBharatCodeAccountStatus: () => Promise<BharatCodeAccountStatus>
-  refreshBharatCodeAccountStatus: () => Promise<BharatCodeAccountStatus>
-  signInToBharatCode: (options?: BharatCodeSignInOptions & { onBrowserUrl?: (url: string) => void }) => Promise<BharatCodeAuthState>
+  getAccountStatus: () => Promise<BharatCodeAccountStatus>
+  beginSignIn: (options?: BharatCodeSignInOptions) => Promise<BharatCodeAccountStatus>
+  completeSignIn: () => Promise<BharatCodeAccountStatus>
+  logout: () => Promise<BharatCodeAccountStatus>
+  refreshAccountStatus: () => Promise<BharatCodeAccountStatus>
   transcribeDictation: (audio: DictationAudioInput) => Promise<unknown>
   getCapabilitySnapshot: () => Promise<CapabilitySnapshot> | CapabilitySnapshot
   installCapability: (id: string) => Promise<CapabilitySnapshot> | CapabilitySnapshot
@@ -61,10 +67,19 @@ type Deps = {
 }
 
 export function registerIpcHandlers(deps: Deps) {
+  ipcMain.handle("recovery:inspect", () => deps.inspectRecovery())
+  ipcMain.handle("recovery:run", (_event: IpcMainInvokeEvent, action: unknown) =>
+    deps.runRecovery(parseRecoveryAction(action)),
+  )
   ipcMain.handle("kill-sidecar", () => deps.killSidecar())
   ipcMain.handle("await-initialization", (event: IpcMainInvokeEvent) => {
+    const observer = new AbortController()
+    const dispose = () => observer.abort()
+    event.sender.once("destroyed", dispose)
     const send = (step: InitStep) => event.sender.send("init-step", step)
-    return deps.awaitInitialization(send)
+    return deps.awaitInitialization(send, observer.signal).finally(() => {
+      event.sender.removeListener("destroyed", dispose)
+    })
   })
   ipcMain.handle("get-window-config", () => deps.getWindowConfig())
   ipcMain.handle("consume-initial-deep-links", () => deps.consumeInitialDeepLinks())
@@ -72,19 +87,19 @@ export function registerIpcHandlers(deps: Deps) {
   ipcMain.handle("set-default-server-url", (_event: IpcMainInvokeEvent, url: string | null) =>
     deps.setDefaultServerUrl(url),
   )
-  ipcMain.handle("get-wsl-config", () => deps.getWslConfig())
-  ipcMain.handle("set-wsl-config", (_event: IpcMainInvokeEvent, config: WslConfig) => deps.setWslConfig(config))
+  ipcMain.handle("wsl:get-snapshot", () => deps.getWslSnapshot())
+  ipcMain.handle("wsl:configure", (_event: IpcMainInvokeEvent, update: unknown) =>
+    deps.configureWsl(parseWslConfigurationUpdate(update)),
+  )
+  ipcMain.handle("wsl:retry", () => deps.retryWsl())
   ipcMain.handle("get-display-backend", () => deps.getDisplayBackend())
   ipcMain.handle("set-display-backend", (_event: IpcMainInvokeEvent, backend: string | null) =>
     deps.setDisplayBackend(backend),
   )
   ipcMain.handle("parse-markdown", (_event: IpcMainInvokeEvent, markdown: string) => deps.parseMarkdown(markdown))
   ipcMain.handle("check-app-exists", (_event: IpcMainInvokeEvent, appName: string) => deps.checkAppExists(appName))
-  ipcMain.handle("wsl-path", (_event: IpcMainInvokeEvent, path: string, mode: "windows" | "linux" | null) =>
-    deps.wslPath(path, mode),
-  )
   ipcMain.handle("resolve-app-path", (_event: IpcMainInvokeEvent, appName: string) => deps.resolveAppPath(appName))
-  ipcMain.on("loading-window-complete", () => deps.loadingWindowComplete())
+  ipcMain.on("loading-window-complete", (event: IpcMainEvent) => deps.loadingWindowComplete(event.sender.id))
   ipcMain.handle("run-updater", (_event: IpcMainInvokeEvent, alertOnFail: boolean) => deps.runUpdater(alertOnFail))
   ipcMain.handle("check-update", () => deps.checkUpdate())
   ipcMain.handle("install-update", () => deps.installUpdate())
@@ -93,15 +108,13 @@ export function registerIpcHandlers(deps: Deps) {
   ipcMain.handle("record-fatal-renderer-error", (_event: IpcMainInvokeEvent, error: FatalRendererError) =>
     deps.recordFatalRendererError(error),
   )
-  ipcMain.handle("get-bharatcode-auth-state", () => deps.getBharatCodeAuthState())
-  ipcMain.handle("get-bharatcode-account-status", () => deps.getBharatCodeAccountStatus())
-  ipcMain.handle("refresh-bharatcode-account-status", () => deps.refreshBharatCodeAccountStatus())
-  ipcMain.handle("sign-in-to-bharatcode", (event: IpcMainInvokeEvent, options?: BharatCodeSignInOptions) =>
-    deps.signInToBharatCode({
-      ...options,
-      onBrowserUrl: (url) => event.sender.send("bharatcode-sign-in-url", url),
-    }),
+  ipcMain.handle("get-account-status", () => deps.getAccountStatus())
+  ipcMain.handle("begin-sign-in", (_event: IpcMainInvokeEvent, options?: BharatCodeSignInOptions) =>
+    deps.beginSignIn(options),
   )
+  ipcMain.handle("complete-sign-in", () => deps.completeSignIn())
+  ipcMain.handle("logout", () => deps.logout())
+  ipcMain.handle("refresh-account-status", () => deps.refreshAccountStatus())
   ipcMain.handle("transcribe-dictation", (_event: IpcMainInvokeEvent, audio: DictationAudioInput) =>
     deps.transcribeDictation(audio),
   )
@@ -149,7 +162,8 @@ export function registerIpcHandlers(deps: Deps) {
         defaultPath: opts?.defaultPath,
       })
       if (result.canceled) return null
-      return opts?.multiple ? result.filePaths : result.filePaths[0]
+      const translated = await deps.translateProjectPaths(result.filePaths)
+      return opts?.multiple ? translated : translated[0]
     },
   )
 
@@ -166,7 +180,8 @@ export function registerIpcHandlers(deps: Deps) {
         filters: pickerFilters(opts?.extensions),
       })
       if (result.canceled) return null
-      return opts?.multiple ? result.filePaths : result.filePaths[0]
+      const translated = await deps.translateProjectPaths(result.filePaths)
+      return opts?.multiple ? translated : translated[0]
     },
   )
 

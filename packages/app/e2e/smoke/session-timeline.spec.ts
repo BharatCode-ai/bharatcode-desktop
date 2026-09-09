@@ -1,10 +1,23 @@
 import { expect, test, type Page } from "@playwright/test"
 import { base64Encode } from "@opencode-ai/core/util/encode"
+import { dirname, resolve } from "node:path"
+import { fileURLToPath } from "node:url"
 import { fixture, pageMessages } from "./session-timeline.fixture"
 import { trackPageErrors, expectNoSmokeErrors } from "../utils/errors"
 import { mockOpenCodeServer } from "../utils/mock-server"
 
 const forbiddenText = ["Load details", "Show earlier steps"]
+const dompurifyBundle = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../../../ui/node_modules/dompurify/dist/purify.min.js",
+)
+
+type Purifier = {
+  setConfig: (config: Record<string, unknown>) => void
+  addHook: (name: string, hook: (node: Element, data: { allowedAttributes: Record<string, boolean> }) => void) => void
+  sanitize: (html: string) => string
+  isValidAttribute: (tag: string, attribute: string, value: string) => boolean
+}
 
 type SmokeState = {
   ids: string[]
@@ -47,9 +60,37 @@ test.describe("smoke: session timeline", () => {
     const expectedPartIDs = fixture.expected.targetPartIDs
     const expectedMessageIDs = fixture.expected.targetMessageIDs
     await expectSessionTimelineReady(page, expectedPartIDs, expectedMessageIDs, errors)
+    await expectSanitizedMarkdown(page)
     await expectCanScrollToStart(page, expectedPartIDs, expectedMessageIDs, errors)
   })
+
+  test("does not retain a trusted attribute allowance for later hostile markdown", async ({ page }) => {
+    await page.addScriptTag({ path: dompurifyBundle })
+    const poisoned = await page.evaluate(() => {
+      const purifier = (globalThis as typeof globalThis & { DOMPurify: Purifier }).DOMPurify
+      purifier.setConfig({ ALLOWED_TAGS: ["img"], ALLOWED_ATTR: ["src"] })
+      purifier.addHook("uponSanitizeAttribute", (node, data) => {
+        if (node.getAttribute("data-trusted") === "1") data.allowedAttributes.onerror = true
+      })
+      purifier.sanitize('<img data-trusted="1" src="x" onerror="trusted()">')
+      return {
+        html: purifier.sanitize('<img src="x" onerror="globalThis.compromised=true">'),
+        valid: purifier.isValidAttribute("img", "onerror", "hostile()"),
+      }
+    })
+
+    expect(poisoned).toEqual({ html: '<img src="x">', valid: false })
+  })
 })
+
+async function expectSanitizedMarkdown(page: Page) {
+  const safe = page.locator('[data-sanitizer-safe="true"]')
+  await expect(safe).toHaveText("safe")
+  const markdown = safe.locator('xpath=ancestor::*[@data-component="markdown"][1]')
+  await expect(markdown.locator("script")).toHaveCount(0)
+  await expect(markdown.locator("[onerror]")).toHaveCount(0)
+  await expect(markdown.locator('a[href^="javascript:"]')).toHaveCount(0)
+}
 
 async function configureSmokePage(page: Page, directory: string) {
   await page.addInitScript(() => {
@@ -406,7 +447,7 @@ function expectCompleteScroll(
   ).toEqual([])
   expect(new Set(expectedPartIDs).size).toBe(expectedPartIDs.length)
   expect(new Set(expectedMessageIDs).size).toBe(expectedMessageIDs.length)
-  expect(expectedPartIDs.length).toBe(331)
+  expect(expectedPartIDs.length).toBe(332)
 }
 
 async function selectHomeProject(page: Page, projectName: string) {

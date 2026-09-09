@@ -3,8 +3,7 @@ import { hideBin } from "yargs/helpers"
 import { RunCommand } from "./cli/cmd/run"
 import { GenerateCommand } from "./cli/cmd/generate"
 import * as Log from "@opencode-ai/core/util/log"
-import { ConsoleCommand } from "./cli/cmd/account"
-import { ProvidersCommand } from "./cli/cmd/providers"
+import { AccountCommand } from "./cli/cmd/account"
 import { AgentCommand } from "./cli/cmd/agent"
 import { UpgradeCommand } from "./cli/cmd/upgrade"
 import { UninstallCommand } from "./cli/cmd/uninstall"
@@ -19,7 +18,6 @@ import { Filesystem } from "@/util/filesystem"
 import { DebugCommand } from "./cli/cmd/debug"
 import { StatsCommand } from "./cli/cmd/stats"
 import { McpCommand } from "./cli/cmd/mcp"
-import { GithubCommand } from "./cli/cmd/github"
 import { ExportCommand } from "./cli/cmd/export"
 import { ImportCommand } from "./cli/cmd/import"
 import { AttachCommand } from "./cli/cmd/tui/attach"
@@ -30,7 +28,6 @@ import { WebCommand } from "./cli/cmd/web"
 import { PrCommand } from "./cli/cmd/pr"
 import { SessionCommand } from "./cli/cmd/session"
 import { DbCommand } from "./cli/cmd/db"
-import path from "path"
 import { Global } from "@opencode-ai/core/global"
 import { JsonMigration } from "@/storage/json-migration"
 import { Database } from "@/storage/db"
@@ -40,8 +37,11 @@ import { Heap } from "./cli/heap"
 import { drizzle } from "drizzle-orm/bun-sqlite"
 import { ensureProcessMetadata } from "@opencode-ai/core/util/opencode-process"
 import { isRecord } from "@/util/record"
+import { createDefaultRecoveryController, DoctorCommand, RecoveryCommand } from "./cli/cmd/doctor"
 
-const processMetadata = ensureProcessMetadata("main")
+type ParsedCommandContext = {
+  getInternalMethods(): { getContext(): { commands: readonly string[] } }
+}
 
 process.on("unhandledRejection", (e) => {
   Log.Default.error("rejection", {
@@ -59,17 +59,17 @@ const args = hideBin(process.argv)
 
 function show(out: string) {
   const text = out.trimStart()
-  if (!text.startsWith("opencode ")) {
-    process.stderr.write(UI.logo() + EOL + EOL)
-    process.stderr.write(text)
+  if (!text.startsWith("bharatcode ")) {
+    process.stdout.write(UI.logo() + EOL + EOL)
+    process.stdout.write(text)
     return
   }
-  process.stderr.write(out)
+  process.stdout.write(out)
 }
 
 const cli = yargs(args)
   .parserConfiguration({ "populate--": true })
-  .scriptName("opencode")
+  .scriptName("bharatcode")
   .wrap(100)
   .help("help", "show help")
   .alias("help", "h")
@@ -89,6 +89,21 @@ const cli = yargs(args)
     type: "boolean",
   })
   .middleware(async (opts) => {
+    // argv._ also contains post-separator values; the command context contains only selected handlers.
+    const command = (cli as typeof cli & ParsedCommandContext).getInternalMethods().getContext().commands[0]
+    const recoveryCommand = command === "doctor" || command === "recovery"
+    const informationalInvocation = opts.help === true || opts.version === true
+    const bypassRecoveryGate = recoveryCommand || informationalInvocation
+    if (!bypassRecoveryGate) {
+      const recovery = await createDefaultRecoveryController({ initialize: true }).inspect()
+      if (recovery.state !== "ready") {
+        throw new Error("BharatCode recovery is required. Run `bharatcode doctor` before startup.")
+      }
+    }
+    if (bypassRecoveryGate) return
+
+    const processMetadata = ensureProcessMetadata("main")
+    await Global.ensure()
     if (opts.pure) {
       process.env.OPENCODE_PURE = "1"
     }
@@ -109,15 +124,15 @@ const cli = yargs(args)
     process.env.OPENCODE = "1"
     process.env.OPENCODE_PID = String(process.pid)
 
-    Log.Default.info("opencode", {
+    Log.Default.info("bharatcode", {
       version: InstallationVersion,
       args: process.argv.slice(2),
       process_role: processMetadata.processRole,
       run_id: processMetadata.runID,
     })
 
-    const marker = path.join(Global.Path.data, "opencode.db")
-    if (!(await Filesystem.exists(marker))) {
+    const marker = Global.Path.database
+    if (!bypassRecoveryGate && !(await Filesystem.exists(marker))) {
       const tty = process.stderr.isTTY
       process.stderr.write("Performing one time database migration, may take a few minutes..." + EOL)
       const width = 36
@@ -162,8 +177,7 @@ const cli = yargs(args)
   .command(RunCommand)
   .command(GenerateCommand)
   .command(DebugCommand)
-  .command(ConsoleCommand)
-  .command(ProvidersCommand)
+  .command(AccountCommand)
   .command(AgentCommand)
   .command(UpgradeCommand)
   .command(UninstallCommand)
@@ -173,11 +187,12 @@ const cli = yargs(args)
   .command(StatsCommand)
   .command(ExportCommand)
   .command(ImportCommand)
-  .command(GithubCommand)
   .command(PrCommand)
   .command(SessionCommand)
   .command(PluginCommand)
   .command(DbCommand)
+  .command(DoctorCommand)
+  .command(RecoveryCommand)
   .fail((msg, err) => {
     if (
       msg?.startsWith("Unknown argument") ||

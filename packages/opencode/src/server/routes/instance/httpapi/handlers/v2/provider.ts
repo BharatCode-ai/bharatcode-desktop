@@ -1,13 +1,21 @@
-import { Catalog } from "@opencode-ai/core/catalog"
-import { PluginBoot } from "@opencode-ai/core/plugin/boot"
+import { BharatCodeCatalog } from "@/bharatcode/catalog"
 import { Effect } from "effect"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import { InstanceHttpApi } from "../../api"
 import { ProviderNotFoundError, ServiceUnavailableError } from "../../errors"
 
-const catalogUnavailable = new ServiceUnavailableError({
-  message: "Provider catalog is unavailable",
-  service: "catalog",
+const unavailable = () =>
+  new ServiceUnavailableError({ message: "BharatCode model catalog is unavailable", service: "bharatcode" })
+
+const models = Effect.fn("BharatCodeHttpApi.models")(function* () {
+  const catalog = yield* BharatCodeCatalog.Service
+  const records = yield* catalog.list().pipe(Effect.mapError(unavailable))
+  const result = records.flatMap((record) => {
+    const model = BharatCodeCatalog.toV2Model(record)
+    return model ? [model] : []
+  })
+  if (!result.length) return yield* unavailable()
+  return result
 })
 
 export const providerHandlers = HttpApiBuilder.group(InstanceHttpApi, "v2.provider", (handlers) =>
@@ -16,28 +24,21 @@ export const providerHandlers = HttpApiBuilder.group(InstanceHttpApi, "v2.provid
       .handle(
         "providers",
         Effect.fn(function* () {
-          const catalog = yield* Catalog.Service
-          const pluginBoot = yield* PluginBoot.Service
-          yield* pluginBoot.wait().pipe(Effect.catchDefect(() => Effect.fail(catalogUnavailable)))
-          return yield* catalog.provider.available()
+          yield* models()
+          return [BharatCodeCatalog.toV2Provider()]
         }),
       )
       .handle(
         "provider",
         Effect.fn(function* (ctx) {
-          const catalog = yield* Catalog.Service
-          const pluginBoot = yield* PluginBoot.Service
-          yield* pluginBoot.wait().pipe(Effect.catchDefect(() => Effect.fail(catalogUnavailable)))
-          return yield* catalog.provider.get(ctx.params.providerID).pipe(
-            Effect.catchTag("CatalogV2.ProviderNotFound", (error) =>
-              Effect.fail(
-                new ProviderNotFoundError({
-                  providerID: error.providerID,
-                  message: `Provider not found: ${error.providerID}`,
-                }),
-              ),
-            ),
-          )
+          if (ctx.params.providerID !== "bharatcode") {
+            return yield* new ProviderNotFoundError({
+              providerID: ctx.params.providerID,
+              message: "BharatCode supports only provider 'bharatcode'.",
+            })
+          }
+          yield* models()
+          return BharatCodeCatalog.toV2Provider()
         }),
       )
   }),

@@ -1,0 +1,49 @@
+.recovery-shell {
+  min-height: 100dvh;
+  display: flex;
+  padding: 24px;
+  overflow-y: auto;
+}
+
+.recovery-content {
+  margin: auto;
+  width: min(100%, 400px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 24px;
+}
+
+.recovery-panel,
+.recovery-actions {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  gap: 12px;
+}
+
+.recovery-panel {
+  text-align: center;
+  align-items: center;
+}
+
+.recovery-heading {
+  font-size: 18px;
+  line-height: 1.4;
+  font-weight: 600;
+  text-wrap: balance;
+}
+
+.recovery-message {
+  font-size: 14px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.recovery-actions [data-component="button"] {
+  min-height: 44px;
+  height: auto;
+  padding-block: 12px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}

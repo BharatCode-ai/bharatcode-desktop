@@ -9,7 +9,6 @@ import { Npm } from "../npm"
 import { PluginV2 } from "../plugin"
 import { AccountPlugin } from "./account"
 import { EnvPlugin } from "./env"
-import { ModelsDevPlugin } from "./models-dev"
 import { ProviderPlugins } from "./provider"
 
 type Plugin = {
@@ -56,7 +55,6 @@ export const layer = Layer.effect(
       for (const item of ProviderPlugins) {
         yield* add(item)
       }
-      yield* add(ModelsDevPlugin)
     }).pipe(Effect.withSpan("PluginBoot.boot"))
 
     yield* boot.pipe(

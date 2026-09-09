@@ -11,8 +11,6 @@ import * as ConfigPaths from "@/config/paths"
 
 const log = Log.create({ service: "tui.migrate" })
 
-const TUI_SCHEMA_URL = "https://opencode.ai/tui.json"
-
 const decodeTheme = Schema.decodeUnknownOption(Schema.String)
 const decodeRecord = Schema.decodeUnknownOption(Schema.Record(Schema.String, Schema.Unknown))
 const decodeScrollSpeed = Schema.decodeUnknownOption(ScrollSpeed)
@@ -25,13 +23,13 @@ interface MigrateInput {
 }
 
 /**
- * Migrates tui-specific keys (theme, keybinds, tui) from opencode.json files
+ * Migrates tui-specific keys (theme, keybinds, tui) from BharatCode config files
  * into dedicated tui.json files. Migration is performed per-directory and
  * skips only locations where a tui.json already exists.
  */
 export async function migrateTuiConfig(input: MigrateInput) {
-  const opencode = await opencodeFiles(input)
-  for (const file of opencode) {
+  const configs = await bharatcodeFiles(input)
+  for (const file of configs) {
     const source = await Filesystem.readText(file).catch((error) => {
       log.warn("failed to read config for tui migration", { path: file, error })
       return undefined
@@ -56,9 +54,7 @@ export async function migrateTuiConfig(input: MigrateInput) {
     const targetExists = await Filesystem.exists(target)
     if (targetExists) continue
 
-    const payload: Record<string, unknown> = {
-      $schema: TUI_SCHEMA_URL,
-    }
+    const payload: Record<string, unknown> = {}
     if (extracted.theme !== undefined) payload.theme = extracted.theme
     if (extracted.keybinds !== undefined) payload.keybinds = extracted.keybinds
     if (tui) Object.assign(payload, tui)
@@ -134,15 +130,12 @@ async function backupAndStripLegacy(file: string, source: string) {
     })
 }
 
-async function opencodeFiles(input: { directories: string[]; cwd: string }) {
-  const files = [
-    ...ConfigPaths.fileInDirectory(Global.Path.config, "opencode"),
-    ...(await Filesystem.findUp(["opencode.json", "opencode.jsonc"], input.cwd, undefined, { rootFirst: true })),
-  ]
+async function bharatcodeFiles(input: { directories: string[]; cwd: string }) {
+  const files = [...ConfigPaths.fileInDirectory(Global.Path.config, "bharatcode")]
   for (const dir of unique(input.directories)) {
-    files.push(...ConfigPaths.fileInDirectory(dir, "opencode"))
+    files.push(...ConfigPaths.fileInDirectory(dir, "bharatcode"))
   }
-  if (Flag.OPENCODE_CONFIG) files.push(Flag.OPENCODE_CONFIG)
+  if (Flag.BHARATCODE_CONFIG) files.push(Flag.BHARATCODE_CONFIG)
 
   const existing = await Promise.all(
     unique(files).map(async (file) => {

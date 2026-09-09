@@ -17,7 +17,7 @@ import { iife } from "@/util/iife"
 import { Global } from "@opencode-ai/core/global"
 import path from "path"
 import { pathToFileURL } from "url"
-import { Effect, Layer, Context, Schema, Types } from "effect"
+import { Effect, Layer, Context, Schema, Types, Option } from "effect"
 import { EffectBridge } from "@/effect/bridge"
 import { InstanceState } from "@/effect/instance-state"
 import { EffectPromise } from "@/effect/promise"
@@ -28,6 +28,9 @@ import * as ProviderTransform from "./transform"
 import { ModelID, ProviderID } from "./schema"
 import { ModelStatus } from "./model-status"
 import { RuntimeFlags } from "@/effect/runtime-flags"
+import { ProductPolicy } from "@/product/policy"
+import { BharatCodeAccount } from "@/bharatcode/account"
+import { BharatCodeCatalog } from "@/bharatcode/catalog"
 
 const log = Log.create({ service: "provider" })
 
@@ -971,18 +974,40 @@ export function toPublicInfo(provider: Info): Info {
 }
 
 export function defaultModelIDs<T extends { models: Record<string, { id: string }> }>(providers: Record<string, T>) {
-  return mapValues(providers, (item) => sort(Object.values(item.models))[0].id)
+  return Object.fromEntries(
+    Object.entries(providers).flatMap(([providerID, provider]) => {
+      const model = sort(Object.values(provider.models))[0]
+      return model ? [[providerID, model.id] as const] : []
+    }),
+  )
 }
 
 export class ModelNotFoundError extends Schema.TaggedErrorClass<ModelNotFoundError>()("ProviderModelNotFoundError", {
   providerID: ProviderID,
   modelID: ModelID,
   suggestions: Schema.optional(Schema.Array(Schema.String)),
+  reason: Schema.optional(Schema.String),
   cause: Schema.optional(Schema.Defect),
 }) {
   static isInstance(input: unknown): input is ModelNotFoundError {
     return input instanceof ModelNotFoundError
   }
+}
+
+export function modelNotFoundMessage(error: ModelNotFoundError) {
+  const reason = error.reason?.trim()
+  if (reason) return reason
+  const hint = error.suggestions?.length ? ` Did you mean: ${error.suggestions.join(", ")}?` : ""
+  return `Model not found: ${error.providerID}/${error.modelID}.${hint}`
+}
+
+function policyDeniedModel() {
+  return new ModelNotFoundError({
+    providerID: ProviderID.make("unsupported"),
+    modelID: ModelID.make("unavailable"),
+    suggestions: [],
+    reason: ProductPolicy.recoveryMessage("provider_request"),
+  })
 }
 
 export class InitError extends Schema.TaggedErrorClass<InitError>()("ProviderInitError", {
@@ -1028,6 +1053,7 @@ interface State {
   models: Map<string, LanguageModelV3>
   providers: Record<ProviderID, Info>
   catalog: Record<ProviderID, Info>
+  catalogFailureReason?: string
   sdk: Map<string, BundledSDK>
   modelLoaders: Record<string, CustomModelLoader>
   varsLoaders: Record<string, CustomVarsLoader>
@@ -1121,6 +1147,55 @@ function fromModelsDevModel(provider: ModelsDev.Provider, model: ModelsDev.Model
   }
 }
 
+export function fromBharatCodeCatalogModel(model: BharatCodeCatalog.Model): Model | undefined {
+  const eligibility = BharatCodeCatalog.codingEligibility(model)
+  if (!eligibility.eligible) return
+
+  const input = eligibility.input
+  const output = eligibility.output
+  const result: Model = {
+    id: ModelID.make(model.id),
+    providerID: ProviderID.make("bharatcode"),
+    name: model.displayName,
+    family: "bharatcode",
+    api: {
+      id: model.id,
+      url: BharatCodeAccount.MODEL_API_BASE_URL,
+      npm: "@ai-sdk/openai-compatible",
+    },
+    status: "active",
+    headers: {},
+    options: {},
+    cost: { input: 0, output: 0, cache: { read: 0, write: 0 } },
+    limit: { context: model.contextWindow!, output: model.maxOutputTokens! },
+    capabilities: {
+      temperature: false,
+      reasoning: eligibility.reasoning,
+      attachment: input.includes("image"),
+      toolcall: eligibility.toolCalling,
+      input: {
+        text: input.includes("text"),
+        audio: input.includes("audio"),
+        image: input.includes("image"),
+        video: input.includes("video"),
+        pdf: input.includes("pdf"),
+      },
+      output: {
+        text: output.includes("text"),
+        audio: output.includes("audio"),
+        image: output.includes("image"),
+        video: output.includes("video"),
+        pdf: output.includes("pdf"),
+      },
+      interleaved: false,
+    },
+    release_date: "",
+    variants: {},
+  }
+  result.variants = mapValues(ProviderTransform.variants(result), (value) => value)
+  return result
+}
+
 export function fromModelsDevProvider(provider: ModelsDev.Provider): Info {
   const models: Record<string, Model> = {}
   for (const [key, model] of Object.entries(provider.models)) {
@@ -1195,14 +1270,67 @@ export const layer = Layer.effect(
     const auth = yield* Auth.Service
     const env = yield* Env.Service
     const plugin = yield* Plugin.Service
-    const modelsDevSvc = yield* ModelsDev.Service
+    const modelsDevSvc = Option.getOrUndefined(yield* Effect.serviceOption(ModelsDev.Service))
     const runtimeFlags = yield* RuntimeFlags.Service
+    const policy = yield* ProductPolicy.Service
+    const bharatCodeAccount = yield* BharatCodeAccount.Service
+    const bharatCodeCatalog = yield* BharatCodeCatalog.Service
 
     const state = yield* InstanceState.make<State>(() =>
       Effect.gen(function* () {
         using _ = log.time("state")
         const bridge = yield* EffectBridge.make()
         const cfg = yield* config.get()
+        yield* policy.assertConfig(cfg).pipe(Effect.orDie)
+        if (policy.isShipped) {
+          const catalogResult = yield* bharatCodeCatalog.list().pipe(
+            Effect.map((records) => ({ records, failureReason: undefined as string | undefined })),
+            Effect.catch((error) =>
+              Effect.sync(() => {
+                log.warn("BharatCode model catalog unavailable", {
+                  category:
+                    typeof error === "object" && error !== null && "_tag" in error
+                      ? String(error._tag)
+                      : "BharatCodeCatalogUnavailable",
+                })
+                return {
+                  records: [] as readonly BharatCodeCatalog.Model[],
+                  failureReason: BharatCodeCatalog.modelUnavailableReason(error),
+                }
+              }),
+            ),
+          )
+          const models = Object.fromEntries(
+            catalogResult.records.flatMap((record) => {
+              const model = fromBharatCodeCatalogModel(record)
+              return model ? [[model.id, model] as const] : []
+            }),
+          )
+          const provider: Info = {
+            id: ProviderID.make("bharatcode"),
+            name: "BharatCode",
+            source: "custom",
+            env: [],
+            options: {
+              baseURL: BharatCodeAccount.MODEL_API_BASE_URL,
+              apiKey: "bharatcode-native-oauth",
+              fetch: (input: string | URL | Request, init?: RequestInit) =>
+                bridge.promise(bharatCodeAccount.authenticatedFetch(input, init)),
+            },
+            models,
+          }
+          const providers = { [provider.id]: provider } as Record<ProviderID, Info>
+          return {
+            models: new Map<string, LanguageModelV3>(),
+            providers,
+            catalog: providers,
+            catalogFailureReason: catalogResult.failureReason,
+            sdk: new Map<string, BundledSDK>(),
+            modelLoaders: {},
+            varsLoaders: {},
+          }
+        }
+        if (!modelsDevSvc) return yield* Effect.die(new Error("Generic provider catalog service was not provided."))
         const modelsDev = yield* modelsDevSvc.get()
         const catalog = mapValues(modelsDev, fromModelsDevProvider)
         const database = mapValues(catalog, toPublicInfo)
@@ -1243,6 +1371,7 @@ export const layer = Layer.effect(
 
         // load plugins first so config() hook runs before reading cfg.provider
         const plugins = yield* plugin.list()
+        yield* Effect.forEach(plugins, (hook) => policy.assertHook(hook).pipe(Effect.orDie), { discard: true })
 
         // now read config providers - includes any modifications from plugin config() hook
         const configProviders = Object.entries(cfg.provider ?? {})
@@ -1530,7 +1659,10 @@ export const layer = Layer.effect(
       }),
     )
 
-    const list = Effect.fn("Provider.list")(() => InstanceState.use(state, (s) => s.providers))
+    const list = Effect.fn("Provider.list")(function* () {
+      if (policy.isShipped) yield* InstanceState.invalidate(state)
+      return yield* InstanceState.use(state, (s) => s.providers)
+    })
 
     async function resolveSDK(model: Model, s: State, envs: Record<string, string | undefined>) {
       try {
@@ -1687,11 +1819,15 @@ export const layer = Layer.effect(
       }
     }
 
-    const getProvider = Effect.fn("Provider.getProvider")((providerID: ProviderID) =>
-      InstanceState.use(state, (s) => s.providers[providerID]),
-    )
+    const getProvider = Effect.fn("Provider.getProvider")(function* (providerID: ProviderID) {
+      if (!policy.allowsProvider(providerID)) return undefined as unknown as Info
+      if (policy.isShipped) yield* InstanceState.invalidate(state)
+      return yield* InstanceState.use(state, (s) => s.providers[providerID])
+    })
 
     const getModel = Effect.fn("Provider.getModel")(function* (providerID: ProviderID, modelID: ModelID) {
+      if (!policy.allowsProvider(providerID)) return yield* policyDeniedModel()
+      if (policy.isShipped) yield* InstanceState.invalidate(state)
       const s = yield* InstanceState.get(state)
       const provider = s.providers[providerID]
       if (!provider) {
@@ -1701,7 +1837,12 @@ export const layer = Layer.effect(
           : fuzzysort
               .go(providerID, Object.keys({ ...s.catalog, ...s.providers }), { limit: 3, threshold: -10000 })
               .map((m) => m.target)
-        return yield* new ModelNotFoundError({ providerID, modelID, suggestions })
+        return yield* new ModelNotFoundError({
+          providerID,
+          modelID,
+          suggestions,
+          reason: providerID === "bharatcode" ? s.catalogFailureReason : undefined,
+        })
       }
 
       const info = provider.models[modelID]
@@ -1710,12 +1851,18 @@ export const layer = Layer.effect(
         const suggestions = current.length
           ? current
           : modelSuggestions(s.catalog[providerID], modelID, runtimeFlags.enableExperimentalModels)
-        return yield* new ModelNotFoundError({ providerID, modelID, suggestions })
+        return yield* new ModelNotFoundError({
+          providerID,
+          modelID,
+          suggestions,
+          reason: providerID === "bharatcode" ? s.catalogFailureReason : undefined,
+        })
       }
       return info
     })
 
     const getLanguage = Effect.fn("Provider.getLanguage")(function* (model: Model) {
+      if (!policy.allowsProvider(model.providerID)) return yield* policyDeniedModel()
       const s = yield* InstanceState.get(state)
       const envs = yield* env.all()
       const key = `${model.providerID}/${model.id}`
@@ -1742,6 +1889,8 @@ export const layer = Layer.effect(
     })
 
     const closest = Effect.fn("Provider.closest")(function* (providerID: ProviderID, query: string[]) {
+      if (!policy.allowsProvider(providerID)) return undefined
+      if (policy.isShipped) yield* InstanceState.invalidate(state)
       const s = yield* InstanceState.get(state)
       const provider = s.providers[providerID]
       if (!provider) return undefined
@@ -1754,6 +1903,8 @@ export const layer = Layer.effect(
     })
 
     const getSmallModel = Effect.fn("Provider.getSmallModel")(function* (providerID: ProviderID) {
+      if (!policy.allowsProvider(providerID)) return undefined
+      if (policy.isShipped) yield* InstanceState.invalidate(state)
       const cfg = yield* config.get()
 
       if (cfg.small_model) {
@@ -1812,6 +1963,7 @@ export const layer = Layer.effect(
     })
 
     const defaultModel = Effect.fn("Provider.defaultModel")(function* () {
+      if (policy.isShipped) yield* InstanceState.invalidate(state)
       const cfg = yield* config.get()
       if (cfg.model) return parseModel(cfg.model)
 
@@ -1849,7 +2001,7 @@ export const layer = Layer.effect(
   }),
 )
 
-export const defaultLayer = Layer.suspend(() =>
+export const genericInternalLayer = Layer.suspend(() =>
   layer.pipe(
     Layer.provide(AppFileSystem.defaultLayer),
     Layer.provide(Env.defaultLayer),
@@ -1858,8 +2010,27 @@ export const defaultLayer = Layer.suspend(() =>
     Layer.provide(Plugin.defaultLayer),
     Layer.provide(ModelsDev.defaultLayer),
     Layer.provide(RuntimeFlags.defaultLayer),
+    Layer.provide(ProductPolicy.genericInternalLayer),
+    Layer.provide(BharatCodeAccount.defaultLayer),
+    Layer.provide(BharatCodeCatalog.defaultLayer),
   ),
 )
+
+export const shippedLayer = Layer.suspend(() =>
+  layer.pipe(
+    Layer.provide(AppFileSystem.defaultLayer),
+    Layer.provide(Env.defaultLayer),
+    Layer.provide(Config.defaultLayer),
+    Layer.provide(Auth.defaultLayer),
+    Layer.provide(Plugin.defaultLayer),
+    Layer.provide(RuntimeFlags.defaultLayer),
+    Layer.provide(ProductPolicy.shippedLayer),
+    Layer.provide(BharatCodeAccount.defaultLayer),
+    Layer.provide(BharatCodeCatalog.defaultLayer),
+  ),
+)
+
+export const defaultLayer = shippedLayer
 
 const priority = ["gpt-5", "claude-sonnet-4", "big-pickle", "gemini-3-pro"]
 export function sort<T extends { id: string }>(models: T[]) {

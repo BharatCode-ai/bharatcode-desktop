@@ -1,0 +1,846 @@
+name: BharatCode build release candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact 40-hex commit at the selected dispatch ref; build once, then test these artifacts manually
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  BHARATCODE_CHANNEL: beta
+  OPENCODE_CHANNEL: beta
+  SOURCE_SHA: ${{ inputs.source_sha }}
+  VITE_OPENCODE_CHANNEL: beta
+  WORKFLOW_PATH: .github/workflows/bharatcode-next-beta-candidate.yml
+
+jobs:
+  admit-source:
+    runs-on: ubuntu-24.04
+    outputs:
+      candidate_tag: ${{ steps.identity.outputs.candidate_tag }}
+      cli_version: ${{ steps.identity.outputs.cli_version }}
+      desktop_version: ${{ steps.identity.outputs.desktop_version }}
+    steps:
+      - name: Checkout the frozen source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.source_sha }}
+      - name: Setup repository-pinned Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version-file: package.json
+      - name: Check source and matching package versions
+        id: identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$GITHUB_SHA" == "$SOURCE_SHA" ]]
+          [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]]
+          [[ -z "$(git status --porcelain)" ]]
+          bun --eval '
+            const desktop = (await Bun.file("packages/desktop/package.json").json()).version
+            const cli = (await Bun.file("packages/opencode/package.json").json()).version
+            if (!/^\d+\.\d+\.\d+$/.test(desktop) || desktop !== cli) throw new Error("Desktop/CLI versions must match")
+            const output = ["desktop_version=" + desktop, "cli_version=" + cli, "candidate_tag=desktop-beta-" + desktop].join("\n") + "\n"
+            const { appendFileSync } = await import("node:fs")
+            appendFileSync(process.env.GITHUB_OUTPUT, output)
+          '
+
+  build-cli:
+    needs: admit-source
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout the exact candidate
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          ref: ${{ env.SOURCE_SHA }}
+
+      - name: Setup repository-pinned Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+
+      - name: Install exact dependencies
+        run: bun install --frozen-lockfile --linker hoisted --os='*' --cpu='*'
+
+      - name: Preflight exact cross-platform native dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun --eval '
+            import { realpathSync } from "node:fs"
+            import { dirname, resolve, sep } from "node:path"
+            import { PLATFORM_TARGETS } from "./packages/opencode/script/distribution.mjs"
+            const root = await Bun.file("package.json").json()
+            const opencode = await Bun.file("packages/opencode/package.json").json()
+            const opentui = [...new Set(PLATFORM_TARGETS.map((target) => `@opentui/core-${target.os}-${target.arch}`))].sort()
+            const watcher = [...new Set(PLATFORM_TARGETS.map((target) => `@parcel/watcher-${target.os}-${target.arch}${target.os === "linux" ? `-${target.abi ?? "glibc"}` : ""}`))].sort()
+            if (opentui.length !== 6 || watcher.length !== 8) throw new Error("native package target closure drift")
+            const versions = {
+              opentui: root.workspaces.catalog["@opentui/core"],
+              watcher: opencode.dependencies["@parcel/watcher"],
+            }
+            if (!/^\d+\.\d+\.\d+$/.test(versions.opentui) || !/^\d+\.\d+\.\d+$/.test(versions.watcher)) throw new Error("native package version is not exact")
+            const packageRoot = resolve("packages/opencode")
+            const workspaceRoot = realpathSync(resolve("."))
+            const approvedDependencyRoot = realpathSync(resolve(workspaceRoot, "node_modules"))
+            if (approvedDependencyRoot !== resolve(workspaceRoot, "node_modules")) throw new Error("native dependency root origin drift")
+            const opentuiManifestResolution = Bun.resolveSync("@opentui/core/package.json", packageRoot)
+            const opentuiManifestPath = realpathSync(opentuiManifestResolution)
+            if (opentuiManifestResolution !== opentuiManifestPath || !opentuiManifestPath.startsWith(`${approvedDependencyRoot}${sep}`)) throw new Error("OpenTUI base origin drift")
+            const opentuiManifest = await Bun.file(opentuiManifestPath).json()
+            if (opentuiManifest.name !== "@opentui/core" || opentuiManifest.version !== versions.opentui) throw new Error("OpenTUI base identity drift")
+            for (const name of opentui) if (opentuiManifest.optionalDependencies[name] !== versions.opentui) throw new Error(`OpenTUI optional provenance drift: ${name}`)
+            for (const name of watcher) if (opencode.devDependencies[name] !== versions.watcher) throw new Error(`Parcel direct provenance drift: ${name}`)
+            const payloads = {
+              "@opentui/core-linux-arm64": { file: "libopentui.so", bytes: 8313392, sha256: "33e1b1a7cceb0103a189161fe74606fc88034330201bd59049a88c86295b373a", os: "linux", arch: "arm64" },
+              "@opentui/core-linux-x64": { file: "libopentui.so", bytes: 8199928, sha256: "84f757983fe83bb47f4bc31bae73f5cafefbcd5bc891cf1b0aa8163dfbe6de2c", os: "linux", arch: "x64" },
+              "@opentui/core-darwin-arm64": { file: "libopentui.dylib", bytes: 1676080, sha256: "f5d966c54afd6969234b911460b8ce06085fbe287ce32a60554ff40b31c99a4f", os: "darwin", arch: "arm64" },
+              "@opentui/core-darwin-x64": { file: "libopentui.dylib", bytes: 1687295, sha256: "caa637b108a6c12d8a6287578f84de97c9db38df1500351ee8b19a40f4cd2968", os: "darwin", arch: "x64" },
+              "@opentui/core-win32-arm64": { file: "opentui.dll", bytes: 1662344, sha256: "20e901d69ead6c23181436592babfd000849ac15d84d592f9d9ed487d3e24eac", os: "win32", arch: "arm64" },
+              "@opentui/core-win32-x64": { file: "opentui.dll", bytes: 1851784, sha256: "3ddefc1a47f5f35aea1755b86f0d6f0f127b686a294a473c08234ae0b98e08cb", os: "win32", arch: "x64" },
+              "@parcel/watcher-linux-arm64-glibc": { file: "watcher.node", bytes: 457680, sha256: "a0bc8fc5f3e68e95218c2541b812dc07ba5fb8afd765b6252ab9e68ba5edb2aa", os: "linux", arch: "arm64" },
+              "@parcel/watcher-linux-arm64-musl": { file: "watcher.node", bytes: 469800, sha256: "21ffdef959a00016dca15757b31a2416db3bfcad21cd2ec93286b82c72b15c1e", os: "linux", arch: "arm64" },
+              "@parcel/watcher-linux-x64-glibc": { file: "watcher.node", bytes: 514960, sha256: "e58979069d4f71d2e36f7dc130d6dbc671e63666fe3943fd2ed481519cbf374c", os: "linux", arch: "x64" },
+              "@parcel/watcher-linux-x64-musl": { file: "watcher.node", bytes: 511160, sha256: "689df89fa2412de37604b44fe0223af61fa322f5cb12c3528a29cb2051b7fa1e", os: "linux", arch: "x64" },
+              "@parcel/watcher-darwin-arm64": { file: "watcher.node", bytes: 342608, sha256: "ea31618e251be57fdf7a8160bc2cb57d3131a430287681de2d321bbc3679e777", os: "darwin", arch: "arm64" },
+              "@parcel/watcher-darwin-x64": { file: "watcher.node", bytes: 346272, sha256: "5fc72d98675a3b98dd795ce8e533c8ee2ae73b850c541469dc5c0ba2ea42a2a1", os: "darwin", arch: "x64" },
+              "@parcel/watcher-win32-arm64": { file: "watcher.node", bytes: 548864, sha256: "805e3bdafc8b6f02b02955db024292652b0c92773a0918d1f78fdf2c8ff68769", os: "win32", arch: "arm64" },
+              "@parcel/watcher-win32-x64": { file: "watcher.node", bytes: 518144, sha256: "a8199cf7b6c5102267a5889f80321a4cc92e631d7504c474d32a35b4d440f315", os: "win32", arch: "x64" },
+            }
+            const required = [...opentui, ...watcher].sort()
+            if (JSON.stringify(Object.keys(payloads).sort()) !== JSON.stringify(required)) throw new Error("native payload closure drift")
+            for (const [name, version] of [...opentui.map((name) => [name, versions.opentui]), ...watcher.map((name) => [name, versions.watcher])]) {
+              const manifestResolution = Bun.resolveSync(`${name}/package.json`, packageRoot)
+              const manifestPath = realpathSync(manifestResolution)
+              if (manifestResolution !== manifestPath || !manifestPath.startsWith(`${approvedDependencyRoot}${sep}`)) throw new Error(`native package origin drift: ${name}`)
+              const manifest = await Bun.file(manifestPath).json()
+              if (manifest.name !== name || manifest.version !== version) throw new Error(`native package identity drift: ${name}`)
+              const packageDir = realpathSync(dirname(manifestPath))
+              if (!packageDir.startsWith(`${approvedDependencyRoot}${sep}`)) throw new Error(`native package directory origin drift: ${name}`)
+              const entryResolution = Bun.resolveSync(name, packageRoot)
+              const entry = realpathSync(entryResolution)
+              if (entryResolution !== entry || !entry.startsWith(`${approvedDependencyRoot}${sep}`) || (entry !== packageDir && !entry.startsWith(`${packageDir}${sep}`))) throw new Error(`native package entry drift: ${name}`)
+              const payload = payloads[name]
+              const payloadResolution = resolve(packageDir, payload.file)
+              const payloadPath = realpathSync(payloadResolution)
+              if (payloadResolution !== payloadPath || !payloadPath.startsWith(`${approvedDependencyRoot}${sep}`) || !payloadPath.startsWith(`${packageDir}${sep}`)) throw new Error(`native payload path drift: ${name}`)
+              const bytes = new Uint8Array(await Bun.file(payloadPath).arrayBuffer())
+              if (payload.bytes !== bytes.length || new Bun.CryptoHasher("sha256").update(bytes).digest("hex") !== payload.sha256) throw new Error(`native payload digest drift: ${name}`)
+              const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+              if (payload.os === "linux") {
+                if (bytes.length < 20 || Buffer.from(bytes.subarray(0, 6)).toString("hex") !== "7f454c460201" || view.getUint16(18, true) !== (payload.arch === "arm64" ? 0xb7 : 0x3e)) throw new Error(`native ELF identity drift: ${name}`)
+                continue
+              }
+              if (payload.os === "darwin") {
+                if (bytes.length < 8 || view.getUint32(0, true) !== 0xfeedfacf || view.getUint32(4, true) !== (payload.arch === "arm64" ? 0x0100000c : 0x01000007)) throw new Error(`native Mach-O identity drift: ${name}`)
+                continue
+              }
+              const peOffset = bytes.length >= 0x40 ? view.getUint32(0x3c, true) : bytes.length
+              if (bytes[0] !== 0x4d || bytes[1] !== 0x5a || peOffset + 6 > bytes.length || view.getUint32(peOffset, true) !== 0x00004550 || view.getUint16(peOffset + 4, true) !== (payload.arch === "arm64" ? 0xaa64 : 0x8664)) throw new Error(`native PE identity drift: ${name}`)
+            }
+          '
+
+      - name: Prove dependency install kept exact build inputs clean
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "$(git status --porcelain=v1 -- package.json bun.lock packages/opencode/package.json)"
+
+      - name: Build and pack the exact CLI cohort and Desktop WSL runtime
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          CLI_VERSION: ${{ needs.admit-source.outputs.cli_version }}
+          DESKTOP_VERSION: ${{ needs.admit-source.outputs.desktop_version }}
+        run: |
+          set -euo pipefail
+          mkdir -p out/cli out/wsl cli-dist
+          (
+            cd packages/opencode
+            OPENCODE_VERSION="$CLI_VERSION" BHARATCODE_SOURCE_SHA="$SOURCE_SHA" \
+              bun run script/build.ts --skip-install --skip-embed-web-ui --wsl-candidate
+            cp -R dist/* "$GITHUB_WORKSPACE/cli-dist/"
+          )
+          bun --eval '
+            import { lstatSync, realpathSync } from "node:fs"
+            import { resolve, sep } from "node:path"
+            import { PLATFORM_PACKAGE_NAMES } from "./packages/opencode/script/lean-cohort.mjs"
+            for (const name of PLATFORM_PACKAGE_NAMES) {
+              const pkg = await Bun.file(`cli-dist/${name}/package.json`).json()
+              if (pkg.name !== name || pkg.version !== process.env.CLI_VERSION) throw new Error(`CLI package drift: ${name}`)
+              if (JSON.stringify(Object.keys(pkg).sort()) !== JSON.stringify(["cpu", "files", "name", "os", "preferUnplugged", "repository", "version"])) throw new Error(`CLI package schema drift: ${name}`)
+              if (JSON.stringify(pkg.repository) !== JSON.stringify({ type: "git", url: "git+https://github.com/BharatCode-ai/bharatcode-cli.git" })) throw new Error(`CLI package repository drift: ${name}`)
+              const binary = Buffer.from(await Bun.file(`cli-dist/${name}/bin/bharatcode${name.includes("windows") ? ".exe" : ""}`).arrayBuffer())
+              const header = binary.subarray(0, 4).toString("hex")
+              if (name.includes("windows") ? header.slice(0, 4) !== "4d5a" || !binary.includes(Buffer.from("PE\0\0")) : name.includes("darwin") ? !["cffaedfe", "feedfacf"].includes(header) : header !== "7f454c46") throw new Error(`CLI binary header drift: ${name}`)
+              const packed = Bun.spawnSync(["bun", "pm", "pack", "--destination", "../../out/cli"], { cwd: `cli-dist/${name}`, stdout: "inherit", stderr: "inherit" })
+              if (packed.exitCode !== 0) process.exit(packed.exitCode)
+            }
+            const optionalDependencies = Object.fromEntries(PLATFORM_PACKAGE_NAMES.map((name) => [name, process.env.CLI_VERSION]))
+            const metaRoot = resolve("cli-dist/bharatcode")
+            await Bun.$`mkdir -p ${metaRoot}/bin ${metaRoot}/script`
+            if (realpathSync(metaRoot) !== metaRoot || lstatSync(metaRoot).isSymbolicLink()) throw new Error("CLI meta package root drift")
+            const sources = [
+              { source: resolve("packages/opencode/bin/bharatcode.mjs"), target: resolve(metaRoot, "bin/bharatcode.mjs"), packagePath: "package/bin/bharatcode.mjs" },
+              { source: resolve("packages/opencode/script/distribution.mjs"), target: resolve(metaRoot, "script/distribution.mjs"), packagePath: "package/script/distribution.mjs" },
+            ]
+            const digest = (bytes) => new Bun.CryptoHasher("sha256").update(bytes).digest("hex")
+            for (const binding of sources) {
+              if (realpathSync(binding.source) !== binding.source || lstatSync(binding.source).isSymbolicLink()) throw new Error("CLI meta source path drift")
+              if (!binding.target.startsWith(`${metaRoot}${sep}`)) throw new Error("CLI meta target path drift")
+              const sourceBytes = new Uint8Array(await Bun.file(binding.source).arrayBuffer())
+              await Bun.write(binding.target, sourceBytes)
+              if (realpathSync(binding.target) !== binding.target || lstatSync(binding.target).isSymbolicLink()) throw new Error("CLI meta staged path drift")
+              const targetBytes = new Uint8Array(await Bun.file(binding.target).arrayBuffer())
+              if (sourceBytes.length !== targetBytes.length || digest(sourceBytes) !== digest(targetBytes)) throw new Error("CLI meta staged bytes drift")
+            }
+            const metaManifest = { name: "bharatcode", version: process.env.CLI_VERSION, repository: { type: "git", url: "git+https://github.com/BharatCode-ai/bharatcode-cli.git" }, type: "module", bin: { bharatcode: "bin/bharatcode.mjs" }, files: ["bin", "script/distribution.mjs"], optionalDependencies, os: ["darwin", "linux", "win32"], cpu: ["arm64", "x64"] }
+            const metaManifestPath = resolve(metaRoot, "package.json")
+            if (!metaManifestPath.startsWith(`${metaRoot}${sep}`)) throw new Error("CLI meta manifest path drift")
+            await Bun.write(metaManifestPath, JSON.stringify(metaManifest, null, 2))
+            if (realpathSync(metaManifestPath) !== metaManifestPath || lstatSync(metaManifestPath).isSymbolicLink()) throw new Error("CLI meta manifest path drift")
+            const writtenManifest = await Bun.file(metaManifestPath).json()
+            if (JSON.stringify(Object.keys(writtenManifest).sort()) !== JSON.stringify(["bin", "cpu", "files", "name", "optionalDependencies", "os", "repository", "type", "version"])) throw new Error("CLI meta package schema drift")
+            if (JSON.stringify(writtenManifest) !== JSON.stringify(metaManifest)) throw new Error("CLI meta package content drift")
+            const packed = Bun.spawnSync(["bun", "pm", "pack", "--destination", "../../out/cli"], { cwd: "cli-dist/bharatcode", stdout: "inherit", stderr: "inherit" })
+            if (packed.exitCode !== 0) process.exit(packed.exitCode)
+            const metaTarball = resolve("out/cli", `bharatcode-${process.env.CLI_VERSION}.tgz`)
+            const listed = Bun.spawnSync(["tar", "-tzf", metaTarball], { stdout: "pipe", stderr: "inherit" })
+            if (listed.exitCode !== 0) process.exit(listed.exitCode)
+            const entries = listed.stdout.toString().trim().split("\n").filter(Boolean).sort()
+            const expectedEntries = ["package/bin/bharatcode.mjs", "package/package.json", "package/script/distribution.mjs"]
+            if (JSON.stringify(entries) !== JSON.stringify(expectedEntries)) throw new Error("CLI meta tarball closure drift")
+            for (const binding of sources) {
+              const extracted = Bun.spawnSync(["tar", "-xOf", metaTarball, binding.packagePath], { stdout: "pipe", stderr: "inherit" })
+              if (extracted.exitCode !== 0) process.exit(extracted.exitCode)
+              const sourceBytes = new Uint8Array(await Bun.file(binding.source).arrayBuffer())
+              if (sourceBytes.length !== extracted.stdout.length || digest(sourceBytes) !== digest(extracted.stdout)) throw new Error("CLI meta tarball bytes drift")
+            }
+            const extractedManifest = Bun.spawnSync(["tar", "-xOf", metaTarball, "package/package.json"], { stdout: "pipe", stderr: "inherit" })
+            if (extractedManifest.exitCode !== 0) process.exit(extractedManifest.exitCode)
+            const manifestBytes = new Uint8Array(await Bun.file(metaManifestPath).arrayBuffer())
+            if (manifestBytes.length !== extractedManifest.stdout.length || digest(manifestBytes) !== digest(extractedManifest.stdout)) throw new Error("CLI meta tarball manifest drift")
+          '
+          # Versions already match; reuse the same-source Linux CLI for WSL.
+          runtime="cli-dist/bharatcode-linux-x64/bin/bharatcode"
+          bytes="$(stat -c %s "$runtime")"
+          sha256="$(sha256sum "$runtime" | cut -d ' ' -f 1)"
+          cp "$runtime" out/wsl/bharatcode-runtime-linux-x64-glibc
+          RUNTIME_BYTES="$bytes" RUNTIME_SHA256="$sha256" bun --eval '
+            const value = { schema: 1, source_sha: process.env.SOURCE_SHA, version: process.env.DESKTOP_VERSION, arch: "x64", filename: "bharatcode-runtime-linux-x64-glibc", bytes: Number(process.env.RUNTIME_BYTES), sha256: process.env.RUNTIME_SHA256 }
+            await Bun.write("out/wsl/manifest.json", `${JSON.stringify(value)}\n`)
+          '
+          test "$(find out/cli -maxdepth 1 -name '*.tgz' | wc -l)" -eq 13
+          for package in out/cli/*.tgz; do
+            tar -tzf "$package" | sort -u | grep -Fx package/package.json
+          done
+
+      - name: Attest CLI package subjects
+        id: attest_cli
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-path: out/cli/*.tgz
+          show-summary: false
+
+      - name: Attest WSL runtime inputs
+        id: attest_wsl_runtime
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-path: |
+            out/wsl/bharatcode-runtime-linux-x64-glibc
+            out/wsl/manifest.json
+          show-summary: false
+
+      - name: Preserve one unique provenance bundle per CLI subject
+        shell: bash
+        env:
+          CLI_BUNDLE: ${{ steps.attest_cli.outputs.bundle-path }}
+          WSL_BUNDLE: ${{ steps.attest_wsl_runtime.outputs.bundle-path }}
+        run: |
+          set -euo pipefail
+          for subject in out/cli/*.tgz; do
+            cp "$CLI_BUNDLE" "$subject.intoto.jsonl"
+          done
+          cp "$WSL_BUNDLE" out/wsl/runtime-inputs.intoto.jsonl
+
+      - name: Upload same-run immutable CLI and WSL inputs
+        id: upload_cli
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cp2-cli-${{ github.run_id }}
+          path: |
+            out/cli
+            out/wsl
+          if-no-files-found: error
+          overwrite: false
+
+      - name: Bind uploaded CLI archive digest
+        env:
+          ARTIFACT_DIGEST: ${{ steps.upload_cli.outputs.artifact-digest }}
+        run: '[[ "$ARTIFACT_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || [[ "$ARTIFACT_DIGEST" =~ ^[0-9a-f]{64}$ ]]'
+
+  package-windows:
+    needs: [admit-source, build-cli]
+    runs-on: windows-2022
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    env:
+      BHARATCODE_ALLOW_UNSIGNED_WINDOWS: "1"
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      INTEGRATED_HEAD: ${{ inputs.source_sha }}
+    steps:
+      - name: Checkout the exact candidate
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          ref: ${{ env.SOURCE_SHA }}
+
+      - name: Setup repository-pinned Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+
+      - name: Require Windows native build tools
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path -LiteralPath $vswhere -PathType Leaf)) { throw "Windows native build tools are unavailable" }
+          $installation = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if ([string]::IsNullOrWhiteSpace($installation)) { throw "Windows native build tools are unavailable" }
+
+      - name: Download same-run WSL runtime
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: cp2-cli-${{ github.run_id }}
+          path: candidate-input
+          digest-mismatch: error
+
+      - name: Install exact dependencies and stage WSL runtime
+        shell: pwsh
+        run: |
+          bun install --frozen-lockfile --linker hoisted
+          $runtime = (Resolve-Path candidate-input/wsl/bharatcode-runtime-linux-x64-glibc).Path
+          $manifest = (Resolve-Path candidate-input/wsl/manifest.json).Path
+          Set-ItemProperty -LiteralPath $runtime -Name IsReadOnly -Value $true
+          Set-ItemProperty -LiteralPath $manifest -Name IsReadOnly -Value $true
+          $env:BHARATCODE_WSL_RUNTIME = $runtime
+          $env:BHARATCODE_WSL_RUNTIME_MANIFEST = $manifest
+          $env:BHARATCODE_WSL_RUNTIME_ARCH = "x64"
+          bun run --cwd packages/desktop stage:wsl-runtime
+
+      - name: Build unsigned Windows installer
+        working-directory: packages/desktop
+        shell: pwsh
+        run: |
+          bun run typecheck
+          bun run build
+          bunx electron-builder --win nsis --x64 --config electron-builder.config.ts --publish never
+          $files = @(Get-ChildItem dist -File -Filter *.exe)
+          if ($files.Count -ne 1) { throw "Expected exactly one Windows installer" }
+          $blockmaps = @(Get-ChildItem dist -File -Filter *.exe.blockmap)
+          if ($blockmaps.Count -ne 1 -or $blockmaps[0].Name -ne "$($files[0].Name).blockmap") { throw "Expected the matching Windows updater blockmap" }
+          $metadata = @(Get-ChildItem dist -File -Filter beta.yml)
+          if ($metadata.Count -ne 1) { throw "Expected exactly one Windows beta updater manifest" }
+          Move-Item $files[0].FullName "$env:GITHUB_WORKSPACE/bharatcode-desktop-next-beta-win-x64.exe"
+          Copy-Item $blockmaps[0].FullName "$env:GITHUB_WORKSPACE/bharatcode-desktop-next-beta-win-x64.exe.producer.blockmap"
+          Copy-Item $metadata[0].FullName "$env:GITHUB_WORKSPACE/beta-windows.producer.yml"
+          Copy-Item resources/wsl-runtime/manifest.json "$env:GITHUB_WORKSPACE/bharatcode-wsl-runtime-manifest.json"
+
+      - name: Verify unsigned Windows policy and package version
+        shell: pwsh
+        run: |
+          $signature = Get-AuthenticodeSignature bharatcode-desktop-next-beta-win-x64.exe
+          if ($env:BHARATCODE_ALLOW_UNSIGNED_WINDOWS -cne "1" -or $env:CSC_IDENTITY_AUTO_DISCOVERY -cne "false") { throw "Unsigned Windows policy is not explicit" }
+          if ($signature.Status -ne "NotSigned" -or $null -ne $signature.SignerCertificate -or $null -ne $signature.TimeStamperCertificate) { throw "Windows package unexpectedly contains a signature" }
+          $version = (Get-Item bharatcode-desktop-next-beta-win-x64.exe).VersionInfo.ProductVersion
+          if ([version]$version -ne [version]'${{ needs.admit-source.outputs.desktop_version }}') { throw "Windows package version drift" }
+
+      - name: Attest Windows installer
+        id: attest_windows
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-path: bharatcode-desktop-next-beta-win-x64.exe
+          show-summary: false
+
+      - name: Stage Windows provenance
+        shell: pwsh
+        env:
+          BUNDLE_PATH: ${{ steps.attest_windows.outputs.bundle-path }}
+        run: Copy-Item $env:BUNDLE_PATH bharatcode-desktop-next-beta-win-x64.exe.intoto.jsonl
+
+      - name: Upload same-run immutable Windows package
+        id: upload_windows
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cp2-windows-${{ github.run_id }}
+          path: |
+            bharatcode-desktop-next-beta-win-x64.exe
+            bharatcode-desktop-next-beta-win-x64.exe.intoto.jsonl
+            bharatcode-desktop-next-beta-win-x64.exe.producer.blockmap
+            beta-windows.producer.yml
+            bharatcode-wsl-runtime-manifest.json
+          if-no-files-found: error
+          overwrite: ${{ false }}
+
+      - name: Bind uploaded Windows archive digest
+        shell: pwsh
+        env:
+          ARTIFACT_DIGEST: ${{ steps.upload_windows.outputs.artifact-digest }}
+        run: if ($env:ARTIFACT_DIGEST -notmatch '^(sha256:)?[0-9a-f]{64}$') { throw "Invalid artifact digest" }
+
+  package-macos:
+    needs: admit-source
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-14
+          - arch: x64
+            runner: macos-15-intel
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout the exact candidate
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          ref: ${{ env.SOURCE_SHA }}
+
+      - name: Setup repository-pinned Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+
+      - name: Install, test, typecheck, and build without signing credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          for key in CSC_LINK CSC_KEY_PASSWORD APPLE_API_KEY APPLE_API_KEY_ID APPLE_API_ISSUER APPLE_TEAM_ID; do
+            [[ -z "${!key:-}" ]]
+          done
+          bun install --frozen-lockfile --linker hoisted
+          (cd packages/core && bun test test/storage-paths.test.ts)
+          (cd packages/opencode && bun test test/migration/cutover.test.ts test/bharatcode/account.test.ts)
+          bun run --cwd packages/desktop typecheck
+          bun run --cwd packages/desktop build
+
+      - name: Materialize protected Apple API key
+        shell: bash
+        env:
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+        run: |
+          set -euo pipefail
+          [[ -n "$APPLE_API_KEY" ]]
+          key_path="$RUNNER_TEMP/bharatcode-notary-key.p8"
+          APPLE_KEY_PATH="$key_path" bun --eval '
+            const raw = process.env.APPLE_API_KEY.trim()
+            const decoded = Buffer.from(raw, "base64")
+            const value = decoded.includes(Buffer.from("BEGIN PRIVATE KEY")) ? decoded : Buffer.from(raw)
+            await Bun.write(process.env.APPLE_KEY_PATH, value.toString().endsWith("\n") ? value : Buffer.concat([value, Buffer.from("\n")]))
+          '
+          chmod 600 "$key_path"
+
+      - name: Build signed, notarized, stapled macOS package
+        shell: bash
+        env:
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ runner.temp }}/bharatcode-notary-key.p8
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          EXPECTED_APPLE_DEVELOPER_ID_SUBJECT: ${{ vars.BHARATCODE_EXPECTED_APPLE_DEVELOPER_ID_SUBJECT }}
+        run: |
+          set -euo pipefail
+          for key in CSC_LINK CSC_KEY_PASSWORD APPLE_API_KEY APPLE_API_KEY_ID APPLE_API_ISSUER APPLE_TEAM_ID; do
+            [[ -n "${!key:-}" ]]
+          done
+          bun --eval '
+            const value = process.env.EXPECTED_APPLE_DEVELOPER_ID_SUBJECT
+            const team = process.env.APPLE_TEAM_ID
+            if (typeof value !== "string" || value.trim() !== value || value.includes("\n") || value.includes("\r") || !/^[A-Za-z0-9][A-Za-z0-9 .-]{0,127}$/.test(value)) throw new Error("protected Apple identity subject is missing or malformed")
+            if (typeof team !== "string" || !/^[A-Z0-9]{10}$/.test(team)) throw new Error("protected Apple team identity is missing or malformed")
+          '
+          (cd packages/desktop && bunx electron-builder --mac zip --${{ matrix.arch }} --config electron-builder.config.ts --publish never)
+          app_path="$(find packages/desktop/dist -maxdepth 3 -type d -name '*.app' -print -quit)"
+          [[ -n "$app_path" ]]
+          codesign --verify --deep --strict --verbose=2 "$app_path"
+          spctl --assess --verbose --type exec "$app_path"
+          xcrun stapler validate "$app_path"
+          # Run 29712784688 jobs 88259572335 and 88259572313 proved the former repository variable was absent.
+          expected_authority="Developer ID Application: ${EXPECTED_APPLE_DEVELOPER_ID_SUBJECT} (${APPLE_TEAM_ID})"
+          signature="$(codesign -dv --verbose=4 "$app_path" 2>&1)"
+          [[ "$(grep -c '^Authority=' <<< "$signature")" -eq 3 ]]
+          grep -Fx "Authority=$expected_authority" <<< "$signature"
+          grep -Fx "Authority=Developer ID Certification Authority" <<< "$signature"
+          grep -Fx "Authority=Apple Root CA" <<< "$signature"
+          [[ "$(grep -c '^TeamIdentifier=' <<< "$signature")" -eq 1 ]]
+          grep -Fx "TeamIdentifier=$APPLE_TEAM_ID" <<< "$signature"
+          [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app_path/Contents/Info.plist")" == "${{ needs.admit-source.outputs.desktop_version }}" ]]
+          executable="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app_path/Contents/Info.plist")"
+          expected_arch="${{ matrix.arch }}"
+          [[ "$expected_arch" != "x64" ]] || expected_arch="x86_64"
+          [[ "$(lipo -archs "$app_path/Contents/MacOS/$executable")" == "$expected_arch" ]]
+          zip_path="$(find packages/desktop/dist -maxdepth 1 -type f -name '*.zip' -print -quit)"
+          [[ -n "$zip_path" ]]
+          blockmap_path="${zip_path}.blockmap"
+          metadata_path="packages/desktop/dist/beta-mac.yml"
+          [[ -f "$blockmap_path" && -f "$metadata_path" ]]
+          cp "$zip_path" "bharatcode-desktop-next-beta-mac-${{ matrix.arch }}.zip"
+          cp "$blockmap_path" "bharatcode-desktop-next-beta-mac-${{ matrix.arch }}.zip.producer.blockmap"
+          cp "$metadata_path" "beta-mac-${{ matrix.arch }}.producer.yml"
+
+      - name: Remove protected Apple API key
+        if: always()
+        shell: bash
+        run: rm -f "$RUNNER_TEMP/bharatcode-notary-key.p8"
+
+      - name: Attest macOS package
+        id: attest_macos
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-path: bharatcode-desktop-next-beta-mac-${{ matrix.arch }}.zip
+          show-summary: false
+
+      - name: Stage macOS provenance
+        env:
+          BUNDLE_PATH: ${{ steps.attest_macos.outputs.bundle-path }}
+        run: cp "$BUNDLE_PATH" "bharatcode-desktop-next-beta-mac-${{ matrix.arch }}.zip.intoto.jsonl"
+
+      - name: Upload same-run immutable macOS package
+        id: upload_macos
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cp2-macos-${{ matrix.arch }}-${{ github.run_id }}
+          path: |
+            bharatcode-desktop-next-beta-mac-${{ matrix.arch }}.zip
+            bharatcode-desktop-next-beta-mac-${{ matrix.arch }}.zip.intoto.jsonl
+            bharatcode-desktop-next-beta-mac-${{ matrix.arch }}.zip.producer.blockmap
+            beta-mac-${{ matrix.arch }}.producer.yml
+          if-no-files-found: error
+          overwrite: ${{ false }}
+
+      - name: Bind uploaded macOS archive digest
+        env:
+          ARTIFACT_DIGEST: ${{ steps.upload_macos.outputs.artifact-digest }}
+        run: '[[ "$ARTIFACT_DIGEST" =~ ^(sha256:)?[0-9a-f]{64}$ ]]'
+
+  package-linux:
+    needs: admit-source
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - name: Checkout the exact candidate
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          ref: ${{ env.SOURCE_SHA }}
+
+      - name: Setup repository-pinned Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+
+      - name: Build Linux packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile --linker hoisted
+          bun run --cwd packages/desktop typecheck
+          bun run --cwd packages/desktop build
+          (cd packages/desktop && bunx electron-builder --linux AppImage deb --x64 --config electron-builder.config.ts --publish never)
+          appimage="$(find packages/desktop/dist -maxdepth 1 -type f -name '*.AppImage' -print -quit)"
+          deb="$(find packages/desktop/dist -maxdepth 1 -type f -name '*.deb' -print -quit)"
+          [[ -n "$appimage" && -n "$deb" ]]
+          expected_package="$(bun --eval 'import { packageNameForChannel } from "./packages/desktop/src/main/branding.ts"; process.stdout.write(packageNameForChannel("beta"))')"
+          [[ "$(dpkg-deb --field "$deb" Package)" == "$expected_package" ]]
+          [[ "$(dpkg-deb --field "$deb" Architecture)" == "amd64" ]]
+          [[ "$(dpkg-deb --field "$deb" Version)" == "${{ needs.admit-source.outputs.desktop_version }}" ]]
+          sudo apt-get install -y "./$deb"
+          dpkg-query -W -f='${Architecture} ${Version}\n' "$expected_package" | grep -F "amd64 ${{ needs.admit-source.outputs.desktop_version }}"
+          chmod +x "$appimage"
+          file "$appimage" | grep -F "x86-64"
+          "$appimage" --appimage-extract > /dev/null
+          # Run 29712784688 job 88259572297 proved AppRun is a wrapper, not the packaged application ELF.
+          # Canonical false-EULA render: app-builder-bin v5.0.0-alpha.12 source 580c34f2e19347061bc2243fa6ab6e57e9bbd2a6, ExecutableName bharatcode-beta.
+          bash -n squashfs-root/AppRun
+          [[ "$(stat -c %s squashfs-root/AppRun)" -eq 2356 ]]
+          [[ "$(sha256sum squashfs-root/AppRun | cut -d ' ' -f 1)" == "897b7e36db7be71f3bf8a427cd24ece7d7fdd6763ecf79f9878e6e0a3f96b9d6" ]]
+          appimage_target="squashfs-root/$expected_package"
+          [[ -f "$appimage_target" && -x "$appimage_target" && ! -L "$appimage_target" ]]
+          file -L -b "$appimage_target" | grep -E '^ELF 64-bit LSB (pie )?executable, x86-64,'
+          cp "$appimage" bharatcode-desktop-next-beta-linux-x64.AppImage
+          cp "$deb" bharatcode-desktop-next-beta-linux-x64.deb
+          [[ -f packages/desktop/dist/beta-linux.yml ]]
+          cp packages/desktop/dist/beta-linux.yml beta-linux.producer.yml
+
+      - name: Attest Linux AppImage
+        id: attest_appimage
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-path: bharatcode-desktop-next-beta-linux-x64.AppImage
+          show-summary: false
+
+      - name: Attest Linux Debian package
+        id: attest_deb
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-path: bharatcode-desktop-next-beta-linux-x64.deb
+          show-summary: false
+
+      - name: Stage Linux provenance
+        env:
+          APPIMAGE_BUNDLE: ${{ steps.attest_appimage.outputs.bundle-path }}
+          DEB_BUNDLE: ${{ steps.attest_deb.outputs.bundle-path }}
+        run: |
+          cp "$APPIMAGE_BUNDLE" bharatcode-desktop-next-beta-linux-x64.AppImage.intoto.jsonl
+          cp "$DEB_BUNDLE" bharatcode-desktop-next-beta-linux-x64.deb.intoto.jsonl
+
+      - name: Upload same-run immutable Linux packages
+        id: upload_linux
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cp2-linux-${{ github.run_id }}
+          path: |
+            bharatcode-desktop-next-beta-linux-x64.AppImage
+            bharatcode-desktop-next-beta-linux-x64.AppImage.intoto.jsonl
+            bharatcode-desktop-next-beta-linux-x64.deb
+            bharatcode-desktop-next-beta-linux-x64.deb.intoto.jsonl
+            beta-linux.producer.yml
+          if-no-files-found: error
+          overwrite: ${{ false }}
+
+      - name: Bind uploaded Linux archive digest
+        env:
+          ARTIFACT_DIGEST: ${{ steps.upload_linux.outputs.artifact-digest }}
+        run: '[[ "$ARTIFACT_DIGEST" =~ ^(sha256:)?[0-9a-f]{64}$ ]]'
+
+  accept-cli-native:
+    needs: [admit-source, build-cli]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            package: bharatcode-linux-x64
+          - runner: windows-2025
+            package: bharatcode-windows-x64
+          - runner: macos-14
+            package: bharatcode-darwin-arm64
+          - runner: macos-15-intel
+            package: bharatcode-darwin-x64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout the exact candidate
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          ref: ${{ env.SOURCE_SHA }}
+
+      - name: Setup repository-pinned Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+
+      - name: Download same-run CLI packages
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: cp2-cli-${{ github.run_id }}
+          path: candidate-input
+          digest-mismatch: error
+
+      - name: Install meta and platform tarballs globally, then execute npx
+        shell: bash
+        env:
+          CLI_VERSION: ${{ needs.admit-source.outputs.cli_version }}
+        run: |
+          set -euo pipefail
+          prefix="$RUNNER_TEMP/bharatcode-cli-native"
+          meta="$(find candidate-input -type f -name "bharatcode-${CLI_VERSION}.tgz" -print -quit)"
+          native="$(find candidate-input -type f -name "${{ matrix.package }}-${CLI_VERSION}.tgz" -print -quit)"
+          [[ -n "$meta" && -n "$native" ]]
+          npm install --global --prefix "$prefix" --ignore-scripts --offline "$native" "$meta"
+          fail_layout() {
+            printf '%s\n' "native CLI acceptance layout validation failed" >&2
+            exit 1
+          }
+          # Run 29722640762 job 88289107783 proved a raw drive-letter PATH redirects npm's Git Bash shim to A:\_temp.
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            command -v cygpath >/dev/null || fail_layout
+            prefix_path="$(cygpath -u "$prefix")"
+            [[ "$prefix_path" == /* && "$prefix_path" != *:* ]] || fail_layout
+            package_root="$prefix_path/node_modules/bharatcode"
+            native_root="$prefix_path/node_modules/${{ matrix.package }}"
+            shim_root="$prefix_path"
+            windows_suffix=".exe"
+            layout="windows-global"
+          else
+            prefix_path="$prefix"
+            package_root="$prefix/lib/node_modules/bharatcode"
+            native_root="$prefix/lib/node_modules/${{ matrix.package }}"
+            shim_root="$prefix/bin"
+            windows_suffix=""
+            layout="unix-global"
+          fi
+          [[ -f "$package_root/bin/bharatcode.mjs" ]] || fail_layout
+          [[ -f "$package_root/script/distribution.mjs" ]] || fail_layout
+          [[ -f "$native_root/bin/bharatcode${windows_suffix}" ]] || fail_layout
+          [[ -f "$shim_root/bharatcode" ]] || fail_layout
+          [[ "$RUNNER_OS" != "Windows" || -f "$shim_root/bharatcode.cmd" ]] || fail_layout
+          [[ "$RUNNER_OS" != "Windows" || -f "$shim_root/bharatcode.ps1" ]] || fail_layout
+          [[ "$RUNNER_OS" != "Windows" ]] || grep -F 'node_modules/bharatcode/bin/bharatcode.mjs' "$shim_root/bharatcode" >/dev/null || fail_layout
+          export PATH="$shim_root:$PATH"
+          [[ "$(command -v bharatcode)" == "$shim_root/bharatcode" ]] || fail_layout
+          export npm_config_prefix="$prefix"
+          export npm_config_offline=true
+          npx_cache="$prefix_path/.npx-cache"
+          [[ ! -e "$npx_cache" ]] || fail_layout
+          mkdir "$npx_cache"
+          export npm_config_cache="$npx_cache"
+          printf '%s\n' "native CLI layout verified: $layout"
+          [[ "$(bharatcode --version)" == "$CLI_VERSION" ]]
+          npx --no-install bharatcode --version | grep -Fx "$CLI_VERSION"
+
+  assemble-candidate:
+    needs: [admit-source, build-cli, package-windows, package-macos, package-linux, accept-cli-native]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout the frozen source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.source_sha }}
+      - name: Setup repository-pinned Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version-file: package.json
+      - name: Download same-run producer artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: cp2-*-${{ github.run_id }}
+          path: cohort-input
+          merge-multiple: false
+          digest-mismatch: error
+
+      - name: Normalize and verify updater artifacts against exact packages
+        env:
+          DESKTOP_VERSION: ${{ needs.admit-source.outputs.desktop_version }}
+        run: |
+          set -euo pipefail
+          bun --eval '
+            import { createHash } from "node:crypto"
+            import { mkdir, stat } from "node:fs/promises"
+            import { basename, join } from "node:path"
+            import { Glob } from "bun"
+            import { validateLeanUpdaterInfo } from "./packages/opencode/script/lean-cohort.mjs"
+            const paths = await Array.fromAsync(new Glob("**/*").scan({ cwd: "cohort-input", absolute: true, onlyFiles: true }))
+            const one = (name) => {
+              const matches = paths.filter((path) => basename(path) === name)
+              if (matches.length !== 1) throw new Error(`Expected exactly one ${name}`)
+              return matches[0]
+            }
+            const packageBinding = async (source_url, public_url) => {
+              const path = one(public_url)
+              const bytes = new Uint8Array(await Bun.file(path).arrayBuffer())
+              return { source_url, public_url, bytes: (await stat(path)).size, sha512: createHash("sha512").update(bytes).digest("base64") }
+            }
+            const normalize = async (producer, label, expected) => {
+              const value = Bun.YAML.parse(await Bun.file(one(producer)).text())
+              return validateLeanUpdaterInfo(value, { label, version: process.env.DESKTOP_VERSION, files: expected })
+            }
+            const windowsExpected = [await packageBinding("bharatcode-desktop-win-x64.exe", "bharatcode-desktop-next-beta-win-x64.exe")]
+            const linuxExpected = [
+              await packageBinding("bharatcode-desktop-linux-x86_64.AppImage", "bharatcode-desktop-next-beta-linux-x64.AppImage"),
+              await packageBinding("bharatcode-desktop-linux-amd64.deb", "bharatcode-desktop-next-beta-linux-x64.deb"),
+            ]
+            const macArm64Expected = [await packageBinding("bharatcode-desktop-mac-arm64.zip", "bharatcode-desktop-next-beta-mac-arm64.zip")]
+            const macX64Expected = [await packageBinding("bharatcode-desktop-mac-x64.zip", "bharatcode-desktop-next-beta-mac-x64.zip")]
+            const windows = await normalize("beta-windows.producer.yml", "Windows beta updater", windowsExpected)
+            const linux = await normalize("beta-linux.producer.yml", "Linux beta updater", linuxExpected)
+            const macArm64 = await normalize("beta-mac-arm64.producer.yml", "macOS arm64 beta updater", macArm64Expected)
+            const macX64 = await normalize("beta-mac-x64.producer.yml", "macOS x64 beta updater", macX64Expected)
+            const macFiles = [...macArm64.files, ...macX64.files].sort((left, right) => left.url.localeCompare(right.url))
+            const mac = validateLeanUpdaterInfo(
+              { version: process.env.DESKTOP_VERSION, files: macFiles, path: macFiles[0].url, sha512: macFiles[0].sha512, releaseDate: [macArm64.releaseDate, macX64.releaseDate].sort().at(-1) },
+              { label: "macOS beta updater", version: process.env.DESKTOP_VERSION, files: macFiles.map((file) => ({ source_url: file.url, public_url: file.url, bytes: file.size, sha512: file.sha512 })) },
+            )
+            await mkdir("updater-assets", { recursive: false })
+            for (const [filename, value] of [["beta.yml", windows], ["beta-mac.yml", mac], ["beta-linux.yml", linux]]) {
+              await Bun.write(join("updater-assets", filename), Bun.YAML.stringify(value))
+            }
+            for (const [producer, filename] of [
+              ["bharatcode-desktop-next-beta-win-x64.exe.producer.blockmap", "bharatcode-desktop-next-beta-win-x64.exe.blockmap"],
+              ["bharatcode-desktop-next-beta-mac-arm64.zip.producer.blockmap", "bharatcode-desktop-next-beta-mac-arm64.zip.blockmap"],
+              ["bharatcode-desktop-next-beta-mac-x64.zip.producer.blockmap", "bharatcode-desktop-next-beta-mac-x64.zip.blockmap"],
+            ]) {
+              const bytes = new Uint8Array(await Bun.file(one(producer)).arrayBuffer())
+              if (bytes.byteLength === 0) throw new Error(`Empty updater blockmap: ${producer}`)
+              await Bun.write(join("updater-assets", filename), bytes)
+            }
+          '
+
+      - name: Stage packages and record source, signing policy, and hashes
+        env:
+          DESKTOP_VERSION: ${{ needs.admit-source.outputs.desktop_version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bun packages/desktop/scripts/batch-release.mjs stage
+          tar -czf desktop-candidate.tar.gz -C release-assets .
+          sha256sum desktop-candidate.tar.gz | tee desktop-candidate.tar.gz.sha256
+          {
+            echo '## Candidate ready for manual acceptance — NOT published'
+            echo "Source: $SOURCE_SHA"
+            echo "Build run: $GITHUB_RUN_ID (assembly attempt $GITHUB_RUN_ATTEMPT)"
+            echo 'Record the archive SHA-256 below in the manual checklist.'
+            cat desktop-candidate.tar.gz.sha256
+            echo 'Use the separate Publish tested candidate workflow only after approval.'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Attest the final candidate archive
+        id: attest_candidate
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6
+        with:
+          subject-path: desktop-candidate.tar.gz
+          show-summary: false
+      - name: Preserve standard provenance
+        env:
+          BUNDLE_PATH: ${{ steps.attest_candidate.outputs.bundle-path }}
+        run: cp "$BUNDLE_PATH" desktop-candidate.tar.gz.intoto.jsonl
+      - name: Upload candidate for manual testing
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: desktop-candidate-${{ github.run_id }}
+          path: |
+            desktop-candidate.tar.gz
+            desktop-candidate.tar.gz.sha256
+            desktop-candidate.tar.gz.intoto.jsonl
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 30

@@ -7,9 +7,9 @@ import { usePlatform } from "@/context/platform"
 import { SettingsGeneral } from "./settings-general"
 import { SettingsKeybinds } from "./settings-keybinds"
 import { SettingsMarketplace } from "./settings-marketplace"
-import { SettingsProviders } from "./settings-providers"
 import { SettingsModels } from "./settings-models"
 import { SettingsAccount } from "./settings-account"
+import { SettingsWsl, wslSettingsVisible } from "./settings-wsl"
 
 export const DialogSettings: Component<{ defaultTab?: string }> = (props) => {
   const language = useLanguage()
@@ -17,7 +17,12 @@ export const DialogSettings: Component<{ defaultTab?: string }> = (props) => {
 
   return (
     <Dialog size="x-large" transition>
-      <Tabs orientation="vertical" variant="settings" defaultValue={props.defaultTab ?? "general"} class="h-full settings-dialog">
+      <Tabs
+        orientation="vertical"
+        variant="settings"
+        defaultValue={props.defaultTab ?? "general"}
+        class="h-full settings-dialog"
+      >
         <Tabs.List>
           <div class="flex flex-col justify-between h-full w-full">
             <div class="flex flex-col gap-3 w-full pt-3">
@@ -29,7 +34,7 @@ export const DialogSettings: Component<{ defaultTab?: string }> = (props) => {
                       <Icon name="sliders" />
                       {language.t("settings.tab.general")}
                     </Tabs.Trigger>
-                    <Show when={platform.getBharatCodeAccountStatus}>
+                    <Show when={platform.getAccountStatus}>
                       <Tabs.Trigger value="account">
                         <Icon name="shield" />
                         {language.t("settings.account.title")}
@@ -43,16 +48,18 @@ export const DialogSettings: Component<{ defaultTab?: string }> = (props) => {
                       <Icon name="mcp" />
                       {language.t("settings.marketplace.title")}
                     </Tabs.Trigger>
+                    <Show when={wslSettingsVisible(platform)}>
+                      <Tabs.Trigger value="wsl">
+                        <Icon name="console" />
+                        {language.t("settings.desktop.section.wsl")}
+                      </Tabs.Trigger>
+                    </Show>
                   </div>
                 </div>
 
                 <div class="flex flex-col gap-1.5">
                   <Tabs.SectionTitle>{language.t("settings.section.server")}</Tabs.SectionTitle>
                   <div class="flex flex-col gap-1.5 w-full">
-                    <Tabs.Trigger value="providers">
-                      <Icon name="providers" />
-                      {language.t("settings.providers.title")}
-                    </Tabs.Trigger>
                     <Tabs.Trigger value="models">
                       <Icon name="models" />
                       {language.t("settings.models.title")}
@@ -70,7 +77,7 @@ export const DialogSettings: Component<{ defaultTab?: string }> = (props) => {
         <Tabs.Content value="general" class="no-scrollbar">
           <SettingsGeneral />
         </Tabs.Content>
-        <Show when={platform.getBharatCodeAccountStatus}>
+        <Show when={platform.getAccountStatus}>
           <Tabs.Content value="account" class="no-scrollbar">
             <SettingsAccount />
           </Tabs.Content>
@@ -81,9 +88,11 @@ export const DialogSettings: Component<{ defaultTab?: string }> = (props) => {
         <Tabs.Content value="marketplace" class="no-scrollbar">
           <SettingsMarketplace />
         </Tabs.Content>
-        <Tabs.Content value="providers" class="no-scrollbar">
-          <SettingsProviders />
-        </Tabs.Content>
+        <Show when={wslSettingsVisible(platform)}>
+          <Tabs.Content value="wsl" class="no-scrollbar">
+            <SettingsWsl />
+          </Tabs.Content>
+        </Show>
         <Tabs.Content value="models" class="no-scrollbar">
           <SettingsModels />
         </Tabs.Content>

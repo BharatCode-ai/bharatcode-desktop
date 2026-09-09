@@ -13,6 +13,8 @@ import { AppFileSystem } from "@opencode-ai/core/filesystem"
 import { Account } from "@/account/account"
 import { Agent } from "@/agent/agent"
 import { Auth } from "@/auth"
+import { BharatCodeAccount } from "@/bharatcode/account"
+import { BharatCodeCatalog } from "@/bharatcode/catalog"
 import { Bus } from "@/bus"
 import { Config } from "@/config/config"
 import { Command } from "@/command"
@@ -30,7 +32,6 @@ import { InstanceLayer } from "@/project/instance-layer"
 import { Plugin } from "@/plugin"
 import { Project } from "@/project/project"
 import { ProviderAuth } from "@/provider/auth"
-import { ModelsDev } from "@opencode-ai/core/models-dev"
 import { Provider } from "@/provider/provider"
 import { Pty } from "@/pty"
 import { PtyTicket } from "@/pty/ticket"
@@ -88,6 +89,7 @@ import { corsVaryFix } from "./middleware/cors-vary"
 import { errorLayer } from "./middleware/error"
 import { fenceLayer } from "./middleware/fence"
 import { schemaErrorLayer } from "./middleware/schema-error"
+import { ProductPolicy } from "@/product/policy"
 
 export const context = Context.makeUnsafe<unknown>(new Map())
 
@@ -194,6 +196,8 @@ export function createRoutes(
       Account.defaultLayer,
       Agent.defaultLayer,
       Auth.defaultLayer,
+      BharatCodeAccount.defaultLayer,
+      BharatCodeCatalog.defaultLayer,
       Command.defaultLayer,
       Config.defaultLayer,
       File.defaultLayer,
@@ -202,12 +206,12 @@ export function createRoutes(
       LSP.defaultLayer,
       Installation.defaultLayer,
       MCP.defaultLayer,
-      ModelsDev.defaultLayer,
       Permission.defaultLayer,
       Plugin.defaultLayer,
       Project.defaultLayer,
       ProviderAuth.defaultLayer,
       Provider.defaultLayer,
+      ProductPolicy.defaultLayer,
       Pty.defaultLayer,
       PtyTicket.defaultLayer,
       Question.defaultLayer,

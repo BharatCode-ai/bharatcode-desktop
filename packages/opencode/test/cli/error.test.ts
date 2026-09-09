@@ -81,6 +81,35 @@ describe("cli.error", () => {
     expect(FormatError({ _tag: "ProviderModelNotFoundError", ...data })).toBe(expected)
   })
 
+  test("surfaces the canonical BharatCode replacement for a retired model without rewriting it", () => {
+    const reason =
+      "BharatCode supports only bharatcode/bharatcode:qwen36-35b-awq-200k. Retired model IDs are not translated."
+    const data = {
+      providerID: "bharatcode",
+      modelID: "bharatcode:qwen36-35b-q6-256k-vision",
+      suggestions: ["bharatcode:qwen36-35b-awq-200k"],
+      reason,
+    }
+
+    expect(FormatError({ name: "ProviderModelNotFoundError", data })).toStartWith(reason)
+  })
+
+  test("preserves the BharatCode subscription-required message", () => {
+    const reason =
+      "BharatCode App is only available to Pro subscribers. If you're a student, please sign in with your student email id instead or reach out at help@bharatcode.ai to verify your student status. BharatCode Chat is free for all users, visit chat.bharatcode.ai."
+    const result = FormatError({
+      name: "ProviderModelNotFoundError",
+      data: {
+        providerID: "bharatcode",
+        modelID: "bharatcode:qwen36-35b-awq-200k",
+        reason,
+      },
+    })
+
+    expect(result).toStartWith(reason)
+    expect(result).not.toContain("Model not found")
+  })
+
   test("formats legacy and tagged provider init errors the same way", () => {
     const data = { providerID: "anthropic" }
     const expected = 'Failed to initialize provider "anthropic". Check credentials and configuration.'

@@ -16,13 +16,11 @@ import {
   onCleanup,
   batch,
   Show,
-  on,
 } from "solid-js"
 import { win32DisableProcessedInput, win32InstallCtrlCGuard } from "./win32"
 import { Flag } from "@opencode-ai/core/flag/flag"
 import semver from "semver"
 import { DialogProvider, useDialog } from "@tui/ui/dialog"
-import { DialogProvider as DialogProviderList } from "@tui/component/dialog-provider"
 import { ErrorComponent } from "@tui/component/error-component"
 import { PluginRouteMissing } from "@tui/component/plugin-route-missing"
 import { ProjectProvider, useProject } from "@tui/context/project"
@@ -34,7 +32,6 @@ import { SyncProvider, useSync } from "@tui/context/sync"
 import { SyncProviderV2 } from "@tui/context/sync-v2"
 import { LocalProvider, useLocal } from "@tui/context/local"
 import { DialogModel } from "@tui/component/dialog-model"
-import { useConnected } from "@tui/component/use-connected"
 import { DialogMcp } from "@tui/component/dialog-mcp"
 import { DialogStatus } from "@tui/component/dialog-status"
 import { DialogThemeList } from "@tui/component/dialog-theme-list"
@@ -103,7 +100,6 @@ const appBindingCommands = [
   "agent.cycle.reverse",
   "variant.cycle",
   "variant.list",
-  "provider.connect",
   "console.org.switch",
   "opencode.status",
   "theme.switch",
@@ -436,18 +432,6 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
     })
   })
 
-  createEffect(
-    on(
-      () => sync.status === "complete" && sync.data.provider.length === 0,
-      (isEmpty, wasEmpty) => {
-        // only trigger when we transition into an empty-provider state
-        if (!isEmpty || wasEmpty) return
-        dialog.replace(() => <DialogProviderList />)
-      },
-    ),
-  )
-
-  const connected = useConnected()
   const currentWorktreeWorkspace = createMemo(() => {
     const workspaceID = project.workspace.current()
     if (!workspaceID) return
@@ -613,16 +597,6 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
         run: () => {
           local.agent.move(-1)
         },
-      },
-      {
-        name: "provider.connect",
-        title: "Connect provider",
-        suggested: !connected(),
-        slashName: "connect",
-        run: () => {
-          dialog.replace(() => <DialogProviderList />)
-        },
-        category: "Provider",
       },
       ...(sync.data.console_state.switchableOrgCount > 1
         ? [

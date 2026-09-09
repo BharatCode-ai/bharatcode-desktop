@@ -1,17 +1,42 @@
 import type { DesktopMenuAction } from "@opencode-ai/app/desktop-menu"
 import type { CapabilitySnapshot } from "../main/capabilities"
+import type { WslConfigurationUpdate, WslSnapshot } from "../main/wsl-contract"
 
-export type InitStep = { phase: "server_waiting" } | { phase: "sqlite_waiting" } | { phase: "done" }
+export type { WslConfigurationUpdate, WslSnapshot } from "../main/wsl-contract"
+
+export type InitStep =
+  | { phase: "recovery_waiting" }
+  | { phase: "server_waiting" }
+  | { phase: "sqlite_waiting" }
+  | { phase: "done" }
 
 export type ServerReadyData = {
   url: string
-  username: string | null
-  password: string | null
+  sidecarID: string
 }
 
 export type SqliteMigrationProgress = { type: "InProgress"; value: number } | { type: "Done" }
 
-export type WslConfig = { enabled: boolean }
+export type RecoverySource = { id: string; label: string; contentFingerprint: string }
+export type RecoveryStatus =
+  | { state: "ready" }
+  | { state: "choose-source"; sources: readonly RecoverySource[] }
+  | { state: "retry"; operationID: string }
+  | { state: "start-fresh"; reason: "no-source" | "ambiguous" | "interrupted" | "invalid-marker" }
+  | {
+      state: "marker-repair"
+      diagnosis: "missing" | "invalid" | "unreadable" | "permission-invalid" | "schema-mismatch"
+      inferredVersion?: string
+    }
+  | { state: "blocked"; reason: "corrupt" | "incompatible" | "destination-mutated" }
+export type RecoveryAction =
+  | { type: "choose-source"; id: string; contentFingerprint: string }
+  | { type: "retry"; operationID: string }
+  | { type: "start-fresh"; confirmed: true }
+  | { type: "repair-marker"; confirmed: true }
+
+/** @deprecated The legacy boolean WSL contract has no callable preload API. */
+export type WslConfig = never
 
 export type LinuxDisplayBackend = "wayland" | "auto"
 export type TitlebarTheme = {
@@ -21,34 +46,28 @@ export type WindowConfig = {
   updaterEnabled: boolean
 }
 
-export type BharatCodeAuthState = {
-  authenticated: boolean
-  configured: boolean
-  credentialsPath: string
-  configPath: string
-}
-
 export type BharatCodeSignInOptions = {
-  forceAccountSelection?: boolean
+  selectAccount?: boolean
 }
 
-export type BharatCodeAccountState = "signed_out" | "signed_in" | "needs_sign_in" | "connection_issue"
+export type BharatCodeAccountState =
+  | "signed_out"
+  | "signed_in"
+  | "needs_sign_in"
+  | "connection_issue"
+  | "authorizing"
+  | "refreshing"
+  | "switching"
 
-export type BharatCodeConnectionStatus = {
-  ok: boolean
-  endpoint: string
-  kind?: "auth" | "http" | "network" | "service" | "unknown"
-  status?: number
-  message?: string
-}
-
-export type BharatCodeAccountStatus = BharatCodeAuthState & {
+export type BharatCodeAccountStatus = {
+  revision?: number
   state: BharatCodeAccountState
+  authenticated: boolean
   checkedAt: string
   email?: string
+  name?: string
   expiresAt?: number
   message?: string
-  connection?: BharatCodeConnectionStatus
 }
 
 export type FatalRendererError = {
@@ -72,6 +91,8 @@ export type DictationTranscription = {
 }
 
 export type ElectronAPI = {
+  inspectRecovery: () => Promise<RecoveryStatus>
+  runRecovery: (action: RecoveryAction) => Promise<RecoveryStatus>
   killSidecar: () => Promise<void>
   installCli: () => Promise<string>
   awaitInitialization: (onStep: (step: InitStep) => void) => Promise<ServerReadyData>
@@ -79,13 +100,13 @@ export type ElectronAPI = {
   consumeInitialDeepLinks: () => Promise<string[]>
   getDefaultServerUrl: () => Promise<string | null>
   setDefaultServerUrl: (url: string | null) => Promise<void>
-  getWslConfig: () => Promise<WslConfig>
-  setWslConfig: (config: WslConfig) => Promise<void>
+  getWslSnapshot: () => Promise<WslSnapshot>
+  configureWsl: (update: WslConfigurationUpdate) => Promise<WslSnapshot>
+  retryWsl: () => Promise<WslSnapshot>
   getDisplayBackend: () => Promise<LinuxDisplayBackend | null>
   setDisplayBackend: (backend: LinuxDisplayBackend | null) => Promise<void>
   parseMarkdownCommand: (markdown: string) => Promise<string>
   checkAppExists: (appName: string) => Promise<boolean>
-  wslPath: (path: string, mode: "windows" | "linux" | null) => Promise<string>
   resolveAppPath: (appName: string) => Promise<string | null>
   storeGet: (name: string, key: string) => Promise<string | null>
   storeSet: (name: string, key: string, value: string) => Promise<void>
@@ -98,7 +119,6 @@ export type ElectronAPI = {
   onSqliteMigrationProgress: (cb: (progress: SqliteMigrationProgress) => void) => () => void
   onMenuCommand: (cb: (id: string) => void) => () => void
   onDeepLink: (cb: (urls: string[]) => void) => () => void
-  onBharatCodeSignInUrl: (cb: (url: string) => void) => () => void
 
   openDirectoryPicker: (opts?: {
     multiple?: boolean
@@ -136,10 +156,12 @@ export type ElectronAPI = {
   setBackgroundColor: (color: string) => Promise<void>
   exportDebugLogs: () => Promise<string>
   recordFatalRendererError: (error: FatalRendererError) => Promise<void>
-  getBharatCodeAuthState: () => Promise<BharatCodeAuthState>
-  getBharatCodeAccountStatus: () => Promise<BharatCodeAccountStatus>
-  refreshBharatCodeAccountStatus: () => Promise<BharatCodeAccountStatus>
-  signInToBharatCode: (options?: BharatCodeSignInOptions) => Promise<BharatCodeAuthState>
+  getAccountStatus: () => Promise<BharatCodeAccountStatus>
+  onAccountStatusChanged: (cb: (status: BharatCodeAccountStatus) => void) => () => void
+  beginSignIn: (options?: BharatCodeSignInOptions) => Promise<BharatCodeAccountStatus>
+  completeSignIn: () => Promise<BharatCodeAccountStatus>
+  logout: () => Promise<BharatCodeAccountStatus>
+  refreshAccountStatus: () => Promise<BharatCodeAccountStatus>
   transcribeDictation: (audio: DictationAudioInput) => Promise<DictationTranscription>
   getCapabilitySnapshot: () => Promise<CapabilitySnapshot>
   installCapability: (id: string) => Promise<CapabilitySnapshot>

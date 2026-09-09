@@ -274,7 +274,7 @@ function setEnvScoped(key: string, value: string) {
 }
 
 describe("provider HttpApi", () => {
-  it.instance.skip(
+  it.instance(
     "returns public v2 provider not found errors",
     Effect.gen(function* () {
       const instance = yield* TestInstance
@@ -288,14 +288,14 @@ describe("provider HttpApi", () => {
       expect(yield* Effect.promise(() => response.json())).toEqual({
         _tag: "ProviderNotFoundError",
         providerID: "missing",
-        message: "Provider not found: missing",
+        message: "BharatCode supports only provider 'bharatcode'.",
       })
     }),
     projectOptions,
   )
 
   it.instance(
-    "serves OAuth authorize response shapes",
+    "keeps legacy provider authorization unavailable",
     Effect.gen(function* () {
       const instance = yield* TestInstance
       yield* writeProviderAuthPlugin(instance.directory)
@@ -308,11 +308,14 @@ describe("provider HttpApi", () => {
         method: 0,
         headers,
       })
-      // method 0 (api-key style) — authorize() resolves with no further
-      // redirect; #26474 changed the wire format to JSON `null` so clients
-      // can `.json()` parse uniformly instead of getting an empty body
-      // that throws.
-      expect(api).toEqual({ status: 200, body: "null" })
+      expect(api.status).toBe(400)
+      expect(JSON.parse(api.body)).toEqual({
+        name: "BadRequest",
+        data: {
+          providerID,
+          message: "BharatCode accounts are managed through `bharatcode auth`; provider connections are unavailable.",
+        },
+      })
 
       const oauth = yield* requestAuthorize({
         app: server,
@@ -320,18 +323,15 @@ describe("provider HttpApi", () => {
         method: 1,
         headers,
       })
-      expect(JSON.parse(oauth.body)).toEqual({
-        url: oauthURL,
-        method: "code",
-        instructions: oauthInstructions,
-      })
+      expect(oauth.status).toBe(400)
+      expect(JSON.parse(oauth.body)).toEqual(JSON.parse(api.body))
     }),
     projectOptions,
     30000,
   )
 
   it.instance(
-    "returns declared provider auth validation errors",
+    "rejects provider auth inputs before plugin validation",
     Effect.gen(function* () {
       const instance = yield* TestInstance
       yield* writeProviderAuthValidationPlugin(instance.directory)
@@ -345,8 +345,11 @@ describe("provider HttpApi", () => {
 
       expect(response.status).toBe(400)
       expect(JSON.parse(response.body)).toEqual({
-        name: "ProviderAuthValidationFailed",
-        data: { field: "token", message: "Token must be ok" },
+        name: "BadRequest",
+        data: {
+          providerID: "test-oauth-validation",
+          message: "BharatCode accounts are managed through `bharatcode auth`; provider connections are unavailable.",
+        },
       })
     }),
     projectOptions,
@@ -354,7 +357,7 @@ describe("provider HttpApi", () => {
   )
 
   it.instance(
-    "returns declared provider auth callback errors",
+    "rejects provider auth callbacks",
     Effect.gen(function* () {
       const instance = yield* TestInstance
       const response = yield* requestCallback({
@@ -366,8 +369,11 @@ describe("provider HttpApi", () => {
 
       expect(response.status).toBe(400)
       expect(JSON.parse(response.body)).toEqual({
-        name: "ProviderAuthOauthMissing",
-        data: { providerID },
+        name: "BadRequest",
+        data: {
+          providerID,
+          message: "BharatCode accounts are managed through `bharatcode auth`; provider connections are unavailable.",
+        },
       })
     }),
     projectOptions,
@@ -375,7 +381,7 @@ describe("provider HttpApi", () => {
   )
 
   it.instance(
-    "serves provider lists when auth loaders add runtime fetch options",
+    "does not expose provider loaders or other-provider models",
     Effect.gen(function* () {
       const instance = yield* TestInstance
       yield* writeFunctionOptionsPlugin(instance.directory)
@@ -398,14 +404,19 @@ describe("provider HttpApi", () => {
       const configBody = yield* Effect.promise(() => configResponse.json())
       expect(hasProviderWithFetch(providerBody, "all")).toBe(false)
       expect(hasProviderWithFetch(configBody, "providers")).toBe(false)
-      expect(hasNonZeroModelCost(providerBody, "all", "google")).toBe(true)
-      expect(hasNonZeroModelCost(configBody, "providers", "google")).toBe(true)
+      expect(providerList(providerBody, "all").map((item) => (isRecord(item) ? item.id : undefined))).toEqual([
+        "bharatcode",
+      ])
+      expect(providerList(configBody, "providers").map((item) => (isRecord(item) ? item.id : undefined))).toEqual([
+        "bharatcode",
+      ])
+      expect(providerByID(providerBody, "all", "bharatcode")).toMatchObject({ models: {} })
     }),
     projectOptions,
   )
 
   it.instance(
-    "keeps provider.models hook input mutations out of provider state",
+    "does not execute provider model hooks in shipped composition",
     Effect.gen(function* () {
       const instance = yield* TestInstance
       yield* writeProviderModelsMutationPlugin(instance.directory)
@@ -423,7 +434,12 @@ describe("provider HttpApi", () => {
       const configBody = yield* Effect.promise(() => configResponse.json())
       expect(hasProviderMutationMarker(providerBody, "all", "google")).toBe(false)
       expect(hasProviderMutationMarker(configBody, "providers", "google")).toBe(false)
-      expect(hasNonZeroModelCost(providerBody, "all", "google")).toBe(true)
+      expect(providerList(providerBody, "all").map((item) => (isRecord(item) ? item.id : undefined))).toEqual([
+        "bharatcode",
+      ])
+      expect(providerList(configBody, "providers").map((item) => (isRecord(item) ? item.id : undefined))).toEqual([
+        "bharatcode",
+      ])
     }),
     projectOptions,
   )

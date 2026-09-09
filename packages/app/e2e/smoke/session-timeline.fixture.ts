@@ -26,6 +26,8 @@ const targetID = "ses_smoke_target"
 const directory = "C:/OpenCode/SmokeProject"
 const projectID = "proj_smoke_timeline"
 const model = { providerID: "opencode", modelID: "claude-opus-4-6", variant: "max" }
+const sanitizerPayload =
+  '<p data-sanitizer-safe="true">safe</p><script>globalThis.compromised=true</script><img src="x" onerror="globalThis.compromised=true"><a href="javascript:globalThis.compromised=true">unsafe</a>'
 
 type MessageInfo = Record<string, unknown> & { id: string; role: "user" | "assistant" }
 type MessagePart = Record<string, unknown> & { id: string; type: string; text?: string; tool?: string }
@@ -219,6 +221,7 @@ function turn(index: number): Message[] {
     ...(index % 17 === 0
       ? [toolPart(index, 12, "task", { description: "Inspect generated fixture", subagent_type: "explore" }, 160)]
       : []),
+    ...(index === 71 ? [{ id: id("prt_text_security", index), type: "text", text: sanitizerPayload }] : []),
   ]
   return [user, assistantMessage(targetID, index, user.info.id, parts)]
 }

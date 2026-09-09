@@ -4,9 +4,9 @@ type BharatCodeProviderConnectMode = "desktop_oauth" | "legacy_guidance" | "prov
 
 export function bharatCodeProviderConnectMode(
   providerID: string,
-  platform: Pick<Platform, "signInToBharatCode">,
+  platform: Pick<Platform, "beginSignIn">,
 ): BharatCodeProviderConnectMode {
   if (providerID !== "bharatcode") return "provider_auth"
-  if (platform.signInToBharatCode) return "desktop_oauth"
+  if (platform.beginSignIn) return "desktop_oauth"
   return "legacy_guidance"
 }

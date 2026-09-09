@@ -1,7 +1,9 @@
 import { contextBridge, ipcRenderer } from "electron"
-import type { ElectronAPI, InitStep, SqliteMigrationProgress } from "./types"
+import type { BharatCodeAccountStatus, ElectronAPI, InitStep, SqliteMigrationProgress } from "./types"
 
 const api: ElectronAPI = {
+  inspectRecovery: () => ipcRenderer.invoke("recovery:inspect"),
+  runRecovery: (action) => ipcRenderer.invoke("recovery:run", action),
   killSidecar: () => ipcRenderer.invoke("kill-sidecar"),
   installCli: () => ipcRenderer.invoke("install-cli"),
   awaitInitialization: (onStep) => {
@@ -15,13 +17,13 @@ const api: ElectronAPI = {
   consumeInitialDeepLinks: () => ipcRenderer.invoke("consume-initial-deep-links"),
   getDefaultServerUrl: () => ipcRenderer.invoke("get-default-server-url"),
   setDefaultServerUrl: (url) => ipcRenderer.invoke("set-default-server-url", url),
-  getWslConfig: () => ipcRenderer.invoke("get-wsl-config"),
-  setWslConfig: (config) => ipcRenderer.invoke("set-wsl-config", config),
+  getWslSnapshot: () => ipcRenderer.invoke("wsl:get-snapshot"),
+  configureWsl: (update) => ipcRenderer.invoke("wsl:configure", update),
+  retryWsl: () => ipcRenderer.invoke("wsl:retry"),
   getDisplayBackend: () => ipcRenderer.invoke("get-display-backend"),
   setDisplayBackend: (backend) => ipcRenderer.invoke("set-display-backend", backend),
   parseMarkdownCommand: (markdown) => ipcRenderer.invoke("parse-markdown", markdown),
   checkAppExists: (appName) => ipcRenderer.invoke("check-app-exists", appName),
-  wslPath: (path, mode) => ipcRenderer.invoke("wsl-path", path, mode),
   resolveAppPath: (appName) => ipcRenderer.invoke("resolve-app-path", appName),
   storeGet: (name, key) => ipcRenderer.invoke("store-get", name, key),
   storeSet: (name, key, value) => ipcRenderer.invoke("store-set", name, key, value),
@@ -45,11 +47,6 @@ const api: ElectronAPI = {
     const handler = (_: unknown, urls: string[]) => cb(urls)
     ipcRenderer.on("deep-link", handler)
     return () => ipcRenderer.removeListener("deep-link", handler)
-  },
-  onBharatCodeSignInUrl: (cb) => {
-    const handler = (_: unknown, url: string) => cb(url)
-    ipcRenderer.on("bharatcode-sign-in-url", handler)
-    return () => ipcRenderer.removeListener("bharatcode-sign-in-url", handler)
   },
 
   openDirectoryPicker: (opts) => ipcRenderer.invoke("open-directory-picker", opts),
@@ -86,10 +83,16 @@ const api: ElectronAPI = {
   setBackgroundColor: (color: string) => ipcRenderer.invoke("set-background-color", color),
   exportDebugLogs: () => ipcRenderer.invoke("export-debug-logs"),
   recordFatalRendererError: (error) => ipcRenderer.invoke("record-fatal-renderer-error", error),
-  getBharatCodeAuthState: () => ipcRenderer.invoke("get-bharatcode-auth-state"),
-  getBharatCodeAccountStatus: () => ipcRenderer.invoke("get-bharatcode-account-status"),
-  refreshBharatCodeAccountStatus: () => ipcRenderer.invoke("refresh-bharatcode-account-status"),
-  signInToBharatCode: (options) => ipcRenderer.invoke("sign-in-to-bharatcode", options),
+  getAccountStatus: () => ipcRenderer.invoke("get-account-status"),
+  onAccountStatusChanged: (cb) => {
+    const handler = (_: unknown, status: BharatCodeAccountStatus) => cb(status)
+    ipcRenderer.on("account-status-changed", handler)
+    return () => ipcRenderer.removeListener("account-status-changed", handler)
+  },
+  beginSignIn: (options) => ipcRenderer.invoke("begin-sign-in", options),
+  completeSignIn: () => ipcRenderer.invoke("complete-sign-in"),
+  logout: () => ipcRenderer.invoke("logout"),
+  refreshAccountStatus: () => ipcRenderer.invoke("refresh-account-status"),
   transcribeDictation: (audio) => ipcRenderer.invoke("transcribe-dictation", audio),
   getCapabilitySnapshot: () => ipcRenderer.invoke("capabilities:get-snapshot"),
   installCapability: (id) => ipcRenderer.invoke("capabilities:install", id),

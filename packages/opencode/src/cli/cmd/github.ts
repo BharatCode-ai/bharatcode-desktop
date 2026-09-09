@@ -33,7 +33,7 @@ import { Git } from "@/git"
 import { setTimeout as sleep } from "node:timers/promises"
 import { Process } from "@/util/process"
 import { parseGitHubRemote } from "@/util/repository"
-import { Effect } from "effect"
+import { Effect, Option } from "effect"
 
 type GitHubAuthor = {
   login: string
@@ -195,7 +195,8 @@ export const GithubInstallCommand = effectCmd({
     const maybeCtx = yield* InstanceRef
     if (!maybeCtx) return yield* Effect.die("InstanceRef not provided")
     const ctx = maybeCtx
-    const modelsDev = yield* ModelsDev.Service
+    const modelsDev = Option.getOrUndefined(yield* Effect.serviceOption(ModelsDev.Service))
+    if (!modelsDev) return yield* Effect.die("ModelsDev is unavailable in the shipped BharatCode runtime")
     const gitSvc = yield* Git.Service
     yield* Effect.promise(async () => {
       {

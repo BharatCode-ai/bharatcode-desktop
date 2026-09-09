@@ -20,6 +20,7 @@ import { useProject } from "@tui/context/project"
 import { useSync } from "@tui/context/sync"
 import { useEvent } from "@tui/context/event"
 import { SplitBorder } from "@tui/component/border"
+import { AccessDenial } from "@tui/component/access-denial"
 import { Spinner } from "@tui/component/spinner"
 import { generateSubtleSyntax, selectedForeground, useTheme } from "@tui/context/theme"
 import { BoxRenderable, ScrollBoxRenderable, addDefaultParsers, TextAttributes, RGBA } from "@opentui/core"
@@ -1457,7 +1458,7 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
           customBorderChars={SplitBorder.customBorderChars}
           borderColor={theme.error}
         >
-          <text fg={theme.textMuted}>{props.message.error?.data.message}</text>
+          <AccessDenial message={String(props.message.error?.data.message ?? "")} fg={theme.textMuted} />
         </box>
       </Show>
       <Switch>

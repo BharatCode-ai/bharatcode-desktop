@@ -5,17 +5,20 @@ import { Effect } from "effect"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import { InstanceHttpApi } from "../api"
 import { markInstanceForDisposal } from "../lifecycle"
+import { ProductPolicy } from "@/product/policy"
 
 export const configHandlers = HttpApiBuilder.group(InstanceHttpApi, "config", (handlers) =>
   Effect.gen(function* () {
     const providerSvc = yield* Provider.Service
     const configSvc = yield* Config.Service
+    const policy = yield* ProductPolicy.Service
 
     const get = Effect.fn("ConfigHttpApi.get")(function* () {
       return yield* configSvc.get()
     })
 
     const update = Effect.fn("ConfigHttpApi.update")(function* (ctx) {
+      yield* policy.assertConfig(ctx.payload)
       yield* configSvc.update(ctx.payload)
       yield* markInstanceForDisposal(yield* InstanceState.context)
       return ctx.payload

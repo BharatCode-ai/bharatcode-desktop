@@ -12,6 +12,7 @@ export const files = Effect.fn("ConfigPaths.projectFiles")(function* (
   directory: string,
   worktree?: string,
 ) {
+  if (name === "tui") return []
   const afs = yield* AppFileSystem.Service
   return (yield* afs.up({
     targets: [`${name}.jsonc`, `${name}.json`],
@@ -24,19 +25,19 @@ export const directories = Effect.fn("ConfigPaths.directories")(function* (direc
   const afs = yield* AppFileSystem.Service
   return unique([
     Global.Path.config,
-    ...(!Flag.OPENCODE_DISABLE_PROJECT_CONFIG
+    ...(!Flag.BHARATCODE_DISABLE_PROJECT_CONFIG
       ? yield* afs.up({
-          targets: [".opencode"],
+          targets: [".bharatcode"],
           start: directory,
           stop: worktree,
         })
       : []),
     ...(yield* afs.up({
-      targets: [".opencode"],
+      targets: [".bharatcode"],
       start: Global.Path.home,
       stop: Global.Path.home,
     })),
-    ...(Flag.OPENCODE_CONFIG_DIR ? [Flag.OPENCODE_CONFIG_DIR] : []),
+    ...(Flag.BHARATCODE_CONFIG_DIR ? [Flag.BHARATCODE_CONFIG_DIR] : []),
   ])
 })
 

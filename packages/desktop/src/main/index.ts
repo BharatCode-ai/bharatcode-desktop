@@ -4,23 +4,18 @@ import { existsSync, mkdirSync, rmSync } from "node:fs"
 import * as http from "node:http"
 import { createServer } from "node:net"
 import { homedir, tmpdir } from "node:os"
-import { dirname, join } from "node:path"
+import { dirname, join, resolve } from "node:path"
 import { getCACertificates, setDefaultCACertificates } from "node:tls"
 import { fileURLToPath } from "node:url"
 import type { Event } from "electron"
-import { app, BrowserWindow, shell } from "electron"
+import { app, BrowserWindow, dialog, shell } from "electron"
 
 import contextMenu from "electron-context-menu"
 
-import {
-  ensureBharatCodePlugin,
-  getBharatCodeAccountStatus,
-  getBharatCodeAuthState,
-  handleBharatCodeAuthCallback,
-  resolveBundledBharatCodePluginPath,
-  resolveDesktopResourcesPath,
-  signInToBharatCode,
-} from "./bharatcode-auth"
+import { createBharatCodeAccountClient } from "./bharatcode-auth"
+import { createAccountSession } from "./account-session"
+import { createDeepLinkEvents } from "./deep-link-events"
+import { createSidecarAuthorizationPolicy, type SidecarAuthorizationPolicy } from "./sidecar-auth"
 import { BRANDING, appIdForChannel, productNameForChannel } from "./branding"
 import {
   ensureCapabilityRuntime,
@@ -29,22 +24,21 @@ import {
   setStoredCapabilityEnabled,
   uninstallStoredCapability,
 } from "./capabilities"
-import type { InitStep, ServerReadyData, SqliteMigrationProgress, WslConfig } from "../preload/types"
-import { checkAppExists, resolveAppPath, wslPath } from "./apps"
+import type { InitStep, ServerReadyData, SqliteMigrationProgress } from "../preload/types"
+import { checkAppExists, resolveAppPath } from "./apps"
 import { CHANNEL, UPDATER_ENABLED } from "./constants"
 import { transcribeDictationAudio } from "./dictation"
 import { registerIpcHandlers, sendDeepLinks, sendMenuCommand, sendSqliteMigrationProgress } from "./ipc"
-import { openExternalUrl } from "./external-browser"
 import { exportDebugLogs, initCrashReporter, initLogging, startNetLog, write as writeLog } from "./logging"
 import { parseMarkdown } from "./markdown"
 import { createMenu } from "./menu"
 import {
   getDefaultServerUrl,
-  getWslConfig,
   preferAppEnv,
   setDefaultServerUrl,
-  setWslConfig,
   spawnLocalServer,
+  spawnWslServer,
+  translateWslProjectPath,
   type SidecarListener,
 } from "./server"
 import {
@@ -59,6 +53,20 @@ import { migrate } from "./migrate"
 import { getStore } from "./store"
 import { checkUpdate, checkForUpdates, installUpdate, setupAutoUpdater } from "./updater"
 import { Deferred, Effect, Fiber } from "effect"
+import { bundledRecoveryExecutable, createStartupRecovery } from "./startup-recovery"
+import { reportStartupFailure } from "./startup-failure"
+import { awaitInitialization } from "./initialization"
+import { openExternalUrl } from "./external-browser"
+import { createWslService } from "./wsl-distro"
+import {
+  configureWslForControlledRelaunch,
+  WslLifecycleFailure,
+  classifyWslLaunchFailure,
+  createWslLifecycle,
+  retainWslAuthorizationWhileRunning,
+  rewriteWslProjectDeepLinks,
+} from "./wsl-lifecycle"
+import { completeWslAcceptanceOutput, resolveWslAcceptanceInvocation, runPackagedWslAcceptance } from "./wsl-acceptance"
 
 const TEST_ONBOARDING = process.env.BHARATCODE_TEST_ONBOARDING === "1" || process.env.OPENCODE_TEST_ONBOARDING === "1"
 const jsCallStackFeature = "DocumentPolicyIncludeJSCallStacksInCrashReports"
@@ -66,11 +74,23 @@ const jsCallStackFeature = "DocumentPolicyIncludeJSCallStacksInCrashReports"
 let logger: ReturnType<typeof initLogging>
 let mainWindow: BrowserWindow | null = null
 let server: SidecarListener | null = null
+let sidecarAuthorization: SidecarAuthorizationPolicy | undefined
+let accountClient: ReturnType<typeof createAccountSession> | undefined
+let wslLifecycle: ReturnType<typeof createWslLifecycle> | undefined
+let selectedWslDisplayName: string | undefined
+const pendingAccountCallbacks: string[] = []
 
 const initEmitter = new EventEmitter()
 let initStep: InitStep = { phase: "server_waiting" }
 
 const pendingDeepLinks: string[] = []
+const WSL_SELECTION_KEY = "wslSelectionV1"
+const wslService = createWslService({
+  platform: process.platform,
+  env: process.env,
+  readState: () => getStore().get(WSL_SELECTION_KEY),
+  writeState: (value) => getStore().set(WSL_SELECTION_KEY, value),
+})
 
 function useEnvProxy() {
   try {
@@ -81,27 +101,45 @@ function useEnvProxy() {
   }
 }
 
-function emitDeepLinks(urls: string[]) {
-  if (urls.length === 0) return
-  pendingDeepLinks.push(...urls)
-  if (mainWindow) sendDeepLinks(mainWindow, urls)
-}
-
-function handleIncomingDeepLinks(urls: string[]) {
-  for (const url of urls) {
-    void handleBharatCodeAuthCallback(url)
-      .then((handled) => {
-        if (!handled) emitDeepLinks([url])
-      })
-      .catch((error) => {
-        logger.warn("failed to handle BharatCode auth callback", error)
-      })
+async function revalidateWslSelection() {
+  const snapshot = await wslService.snapshot()
+  if (!snapshot.enabled) throw new WslLifecycleFailure("selection-required")
+  if (snapshot.status.phase === "error") throw new WslLifecycleFailure(snapshot.status.code)
+  if (snapshot.status.phase !== "ready" || !snapshot.selectedDisplayName) {
+    throw new WslLifecycleFailure("selection-invalid")
   }
+  selectedWslDisplayName = snapshot.selectedDisplayName
 }
 
-function supportedDeepLinks(argv: string[]) {
-  return argv.filter((arg: string) => arg.startsWith(`${BRANDING.protocol}://`))
+async function rendererWslSnapshot() {
+  const snapshot = await wslService.snapshot()
+  return wslLifecycle?.projectSnapshot(snapshot) ?? snapshot
 }
+
+async function translateProjectPaths(paths: readonly string[]) {
+  const snapshot = await wslService.snapshot()
+  if (!snapshot.enabled) return [...paths]
+  if (!wslLifecycle) throw new WslLifecycleFailure("path-translation")
+  return wslLifecycle.translateProjectPaths(paths, (path) => {
+    if (!selectedWslDisplayName) throw new WslLifecycleFailure("selection-invalid")
+    return translateWslProjectPath(path, { selectedDisplayName: selectedWslDisplayName, hostEnv: process.env })
+  })
+}
+
+async function emitDeepLinks(urls: string[]) {
+  if (urls.length === 0) return
+  const translated = await rewriteWslProjectDeepLinks(urls, translateProjectPaths)
+  pendingDeepLinks.push(...translated)
+  if (mainWindow) sendDeepLinks(mainWindow, translated)
+}
+
+const deepLinkEvents = createDeepLinkEvents({
+  protocol: BRANDING.protocol,
+  pending: pendingAccountCallbacks,
+  client: () => accountClient,
+  forward: emitDeepLinks,
+  log: (event) => logger.log(event),
+})
 
 function setInitStep(step: InitStep) {
   initStep = step
@@ -110,10 +148,28 @@ function setInitStep(step: InitStep) {
 }
 
 async function killSidecar() {
+  sidecarAuthorization?.invalidate()
+  sidecarAuthorization = undefined
+  accountClient?.dispose()
+  accountClient = undefined
   if (!server) return
   const current = server
   server = null
   await current.stop()
+}
+
+async function relaunchDesktop() {
+  try {
+    await killSidecar()
+  } finally {
+    app.relaunch()
+    app.exit(0)
+  }
+}
+
+function requireAccountClient() {
+  if (!accountClient) throw new Error("The BharatCode account runtime is unavailable.")
+  return accountClient
 }
 
 function ensureLoopbackNoProxy() {
@@ -139,15 +195,8 @@ function ensureLoopbackNoProxy() {
 const mainBundleDir = dirname(fileURLToPath(import.meta.url))
 
 function desktopResourcesPath() {
-  return resolveDesktopResourcesPath({
-    packaged: app.isPackaged,
-    processResourcesPath: process.resourcesPath,
-    mainBundleDir,
-  })
-}
-
-function desktopBharatCodePluginPath() {
-  return resolveBundledBharatCodePluginPath(desktopResourcesPath())
+  if (app.isPackaged) return process.resourcesPath
+  return resolve(mainBundleDir, "..", "..", "resources")
 }
 
 function syncCapabilityRuntime() {
@@ -224,13 +273,12 @@ const main = Effect.gen(function* () {
   }
 
   preferAppEnv(app.getPath("userData"))
+  const startupRecovery = createStartupRecovery({
+    executable: bundledRecoveryExecutable(desktopResourcesPath()),
+  })
 
   app.on("second-instance", (_event: Event, argv: string[]) => {
-    const urls = supportedDeepLinks(argv)
-    if (urls.length) {
-      logger.log("deep link received via second-instance", { urls })
-      handleIncomingDeepLinks(urls)
-    }
+    void deepLinkEvents.secondInstance(argv).catch(() => logger.warn("Desktop deep-link handling failed."))
     if (mainWindow) {
       mainWindow.show()
       mainWindow.focus()
@@ -238,9 +286,7 @@ const main = Effect.gen(function* () {
   })
 
   app.on("open-url", (event: Event, url: string) => {
-    event.preventDefault()
-    logger.log("deep link received via open-url", { url })
-    handleIncomingDeepLinks([url])
+    void deepLinkEvents.openUrl(event, url).catch(() => logger.warn("Desktop deep-link handling failed."))
   })
 
   app.on("before-quit", () => {
@@ -260,10 +306,7 @@ const main = Effect.gen(function* () {
   })
 
   setRelaunchHandler(() => {
-    void killSidecar().finally(() => {
-      app.relaunch()
-      app.exit(0)
-    })
+    void relaunchDesktop()
   })
 
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
@@ -271,56 +314,72 @@ const main = Effect.gen(function* () {
       void killSidecar().finally(() => app.exit(0))
     })
   }
+  process.on("exit", () => wslLifecycle?.closeInput())
 
-  const serverReady = Deferred.makeUnsafe<ServerReadyData>()
+  const serverReady = Deferred.makeUnsafe<ServerReadyData, unknown>()
+  const initializationDone = Deferred.makeUnsafe<void, unknown>()
   const loadingComplete = Deferred.makeUnsafe<void>()
+  let initializationSucceeded = false
+  let overlay: BrowserWindow | null = null
 
   registerIpcHandlers({
+    inspectRecovery: () => startupRecovery.inspect(),
+    runRecovery: (action) => startupRecovery.run(action),
     killSidecar: () => killSidecar(),
-    awaitInitialization: Effect.fnUntraced(
-      function* (sendStep) {
-        sendStep(initStep)
-        const listener = (step: InitStep) => sendStep(step)
-        initEmitter.on("step", listener)
-        try {
-          logger.log("awaiting server ready")
-          const res = yield* Deferred.await(serverReady)
-          logger.log("server ready", { url: res.url })
-          return res
-        } finally {
-          initEmitter.off("step", listener)
-        }
-      },
-      (e) => Effect.runPromise(e),
-    ),
+    awaitInitialization: (send, signal) =>
+      awaitInitialization({
+        current: () => initStep,
+        subscribe: (listener) => {
+          initEmitter.on("step", listener)
+          return () => {
+            initEmitter.off("step", listener)
+          }
+        },
+        server: Effect.runPromise(Deferred.await(serverReady)),
+        terminal: Effect.runPromise(Deferred.await(initializationDone)),
+        send,
+        signal,
+      }),
     getWindowConfig: () => ({ updaterEnabled: UPDATER_ENABLED }),
     consumeInitialDeepLinks: () => pendingDeepLinks.splice(0),
     getDefaultServerUrl: () => getDefaultServerUrl(),
     setDefaultServerUrl: (url) => setDefaultServerUrl(url),
-    getWslConfig: () => Promise.resolve(getWslConfig()),
-    setWslConfig: (config: WslConfig) => setWslConfig(config),
+    getWslSnapshot: () => rendererWslSnapshot(),
+    configureWsl: (update) =>
+      configureWslForControlledRelaunch(update, {
+        snapshot: rendererWslSnapshot,
+        configure: wslService.configure,
+        relaunch: relaunchDesktop,
+      }),
+    retryWsl: async () => {
+      const snapshot = await wslService.retry()
+      if (snapshot.enabled && snapshot.status.phase === "ready" && wslLifecycle?.status().phase === "error") {
+        await wslLifecycle.retry()
+      }
+      return wslLifecycle?.projectSnapshot(snapshot) ?? snapshot
+    },
+    translateProjectPaths,
     getDisplayBackend: async () => null,
     setDisplayBackend: async () => undefined,
     parseMarkdown: async (markdown) => parseMarkdown(markdown),
     checkAppExists: (appName) => checkAppExists(appName),
-    wslPath: async (path, mode) => wslPath(path, mode),
     resolveAppPath: async (appName) => resolveAppPath(appName),
-    loadingWindowComplete: () => Deferred.doneUnsafe(loadingComplete, Effect.void),
+    loadingWindowComplete: (senderID) => {
+      if (initializationSucceeded && overlay?.webContents.id === senderID) {
+        Deferred.doneUnsafe(loadingComplete, Effect.void)
+      }
+    },
     runUpdater: async (alertOnFail) => checkForUpdates(alertOnFail, killSidecar),
     checkUpdate: async () => checkUpdate(),
     installUpdate: async () => installUpdate(killSidecar),
     setBackgroundColor: (color) => setBackgroundColor(color),
     exportDebugLogs: () => exportDebugLogs(),
     recordFatalRendererError: (error) => writeLog("renderer", "fatal renderer error", { ...error }, "error"),
-    getBharatCodeAuthState: () => getBharatCodeAuthState(),
-    getBharatCodeAccountStatus: () => getBharatCodeAccountStatus(),
-    refreshBharatCodeAccountStatus: () => getBharatCodeAccountStatus({ refresh: true, checkConnection: true }),
-    signInToBharatCode: (options) =>
-      signInToBharatCode({
-        ...options,
-        openExternal: (url) => openExternalUrl(url, { openExternal: (target) => shell.openExternal(target) }),
-        pluginSpec: desktopBharatCodePluginPath(),
-      }),
+    getAccountStatus: () => requireAccountClient().getAccountStatus(),
+    beginSignIn: (options) => requireAccountClient().beginSignIn({ selectAccount: options?.selectAccount === true }),
+    completeSignIn: () => requireAccountClient().getAccountStatus(),
+    logout: () => requireAccountClient().logout(),
+    refreshAccountStatus: () => requireAccountClient().refreshAccountStatus(),
     transcribeDictation: (audio) => transcribeDictationAudio(audio),
     getCapabilitySnapshot: () => capabilitySnapshot(),
     installCapability: async (id) => {
@@ -339,14 +398,15 @@ const main = Effect.gen(function* () {
   })
 
   yield* Effect.promise(() => app.whenReady())
+  registerRendererProtocol()
 
-  yield* Effect.promise(() => ensureBharatCodePlugin({ pluginSpec: desktopBharatCodePluginPath() })).pipe(
-    Effect.catch((error) =>
-      Effect.sync(() => {
-        logger.warn("failed to configure BharatCode provider plugin", error)
-      }),
-    ),
-  )
+  const recoveryStatus = yield* Effect.promise(() => startupRecovery.inspect())
+  if (recoveryStatus.state !== "ready") {
+    setInitStep({ phase: "recovery_waiting" })
+    overlay = createLoadingWindow()
+    yield* Effect.promise(() => startupRecovery.waitUntilReady(recoveryStatus))
+    setInitStep({ phase: "server_waiting" })
+  }
 
   yield* Effect.promise(() => syncCapabilityRuntime()).pipe(
     Effect.catch((error) =>
@@ -358,7 +418,6 @@ const main = Effect.gen(function* () {
 
   if (!TEST_ONBOARDING) migrate()
   app.setAsDefaultProtocolClient(BRANDING.protocol)
-  registerRendererProtocol()
   setDockIcon()
   setupAutoUpdater()
   yield* Effect.promise(() => startNetLog()).pipe(
@@ -376,8 +435,6 @@ const main = Effect.gen(function* () {
     const base = xdg && xdg.length > 0 ? xdg : join(homedir(), ".local", "share")
     return !existsSync(join(base, "opencode", "opencode.db"))
   })()
-  let overlay: BrowserWindow | null = null
-
   const port = yield* Effect.gen(function* () {
     const fromEnv = process.env.OPENCODE_PORT
     if (fromEnv) {
@@ -404,6 +461,45 @@ const main = Effect.gen(function* () {
   const hostname = "127.0.0.1"
   const url = `http://${hostname}:${port}`
   const password = randomUUID()
+  const sidecarID = randomUUID()
+  accountClient = createAccountSession({
+    client: createBharatCodeAccountClient({
+      getConnection: async () => ({ url, username: "bharatcode", password }),
+    }),
+    openBrowser: (url) => openExternalUrl(url, { openExternal: (value) => shell.openExternal(value) }),
+    changed: (status) => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("account-status-changed", status)
+    },
+  })
+  wslLifecycle = createWslLifecycle({
+    revalidate: revalidateWslSelection,
+    startOwned: async () => {
+      if (!selectedWslDisplayName) throw new WslLifecycleFailure("selection-invalid")
+      if (process.arch !== "x64" && process.arch !== "arm64") {
+        throw new WslLifecycleFailure("prerequisite-missing")
+      }
+      try {
+        const result = await spawnWslServer(hostname, port, password, {
+          selectedDisplayName: selectedWslDisplayName,
+          resourcesPath: process.resourcesPath,
+          version: app.getVersion(),
+          arch: process.arch,
+          channel: CHANNEL,
+          hostEnv: process.env,
+          onSqliteProgress: (progress) => initEmitter.emit("sqlite", progress),
+          onStderr: (message) => writeLog("server", "stderr", { message }, "warn"),
+        })
+        sidecarAuthorization?.invalidate()
+        sidecarAuthorization = result.authorization
+        return result.owned
+      } catch (error) {
+        throw classifyWslLaunchFailure(error)
+      }
+    },
+    onStatus: (status) => {
+      sidecarAuthorization = retainWslAuthorizationWhileRunning(status, sidecarAuthorization)
+    },
+  })
 
   const loadingTask = yield* Effect.gen(function* () {
     logger.log("sidecar connection started", { url })
@@ -418,26 +514,35 @@ const main = Effect.gen(function* () {
     useEnvProxy()
 
     logger.log("spawning sidecar", { url })
-    const { listener, health } = yield* Effect.promise(() =>
-      spawnLocalServer(hostname, port, password, {
+    const wslSnapshot = yield* Effect.promise(() => wslService.snapshot())
+    const spawned = yield* Effect.promise(async () => {
+      if (wslSnapshot.enabled) {
+        await wslLifecycle!.start()
+        return {
+          listener: { stop: () => wslLifecycle!.stop() },
+          health: { wait: Promise.resolve() },
+        }
+      }
+      sidecarAuthorization = createSidecarAuthorizationPolicy({ origin: url, username: "bharatcode", password })
+      return spawnLocalServer(hostname, port, password, {
         needsMigration,
         userDataPath: app.getPath("userData"),
         onSqliteProgress: (progress) => initEmitter.emit("sqlite", progress),
         onStdout: (message) => writeLog("server", "stdout", { message }),
         onStderr: (message) => writeLog("server", "stderr", { message }, "warn"),
         onExit: (code) => writeLog("utility", "sidecar exited", { code }, "warn"),
-      }),
-    )
+      })
+    })
+    const { listener, health } = spawned
     server = listener
     yield* Deferred.succeed(serverReady, {
       url,
-      username: "opencode",
-      password,
+      sidecarID,
     })
 
     yield* Effect.promise(() => health.wait).pipe(
       Effect.timeout("30 seconds"),
-      Effect.catch((e) =>
+      Effect.tapCause((e) =>
         Effect.sync(() => {
           logger.error("sidecar health check failed", e.toString())
         }),
@@ -460,12 +565,25 @@ const main = Effect.gen(function* () {
     }
   }
 
-  yield* Fiber.await(loadingTask)
+  yield* Fiber.join(loadingTask).pipe(
+    Effect.catchCause((cause) =>
+      Effect.gen(function* () {
+        yield* Deferred.failCause(serverReady, cause)
+        yield* Deferred.failCause(initializationDone, cause)
+        return yield* Effect.failCause(cause)
+      }),
+    ),
+  )
+  initializationSucceeded = true
   setInitStep({ phase: "done" })
+  yield* Deferred.succeed(initializationDone, undefined)
 
   if (overlay) yield* Deferred.await(loadingComplete)
 
-  mainWindow = createMainWindow()
+  void deepLinkEvents.flush().catch(() => logger.warn("Desktop pending callback handling failed."))
+
+  mainWindow = createMainWindow(() => sidecarAuthorization)
+  mainWindow.on("closed", () => accountClient?.cancelSignIn())
   if (mainWindow) {
     createMenu({
       trigger: (id) => {
@@ -476,10 +594,7 @@ const main = Effect.gen(function* () {
         void checkForUpdates(true, killSidecar)
       },
       relaunch: () => {
-        void killSidecar().finally(() => {
-          app.relaunch()
-          app.exit(0)
-        })
+        void relaunchDesktop()
       },
     })
   }
@@ -487,4 +602,40 @@ const main = Effect.gen(function* () {
   overlay?.close()
 })
 
-Effect.runFork(main)
+let dispatch: ReturnType<typeof resolveWslAcceptanceInvocation> | { readonly kind: "rejected" }
+try {
+  dispatch = resolveWslAcceptanceInvocation(process.argv.slice(1), {
+    packaged: app.isPackaged,
+    platform: process.platform,
+  })
+} catch {
+  process.stderr.write("Packaged WSL acceptance invocation rejected\n")
+  app.exit(1)
+  dispatch = { kind: "rejected" }
+}
+
+if (dispatch.kind === "acceptance") {
+  void runPackagedWslAcceptance(dispatch.input).then(
+    (record) => {
+      completeWslAcceptanceOutput(record, process.stdout, (code) => {
+        if (code !== 0) process.stderr.write("Packaged WSL acceptance output failed\n")
+        app.exit(code)
+      })
+    },
+    () => {
+      process.stderr.write("Packaged WSL acceptance failed\n")
+      app.exit(1)
+    },
+  )
+} else if (dispatch.kind === "ordinary") {
+  void Effect.runPromise(main).catch((error) =>
+    reportStartupFailure(
+      {
+        log: (failure) => logger?.error("desktop startup failed", failure),
+        showError: (title, message) => dialog.showErrorBox(title, message),
+        exit: (code) => app.exit(code),
+      },
+      error,
+    ),
+  )
+}

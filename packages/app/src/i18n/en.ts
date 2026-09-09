@@ -531,6 +531,10 @@ export const dict = {
   "notification.action.goToSession": "Go to session",
 
   "notification.session.responseReady.title": "Response ready",
+  "session.startup.restoreFailed.title": "Could not reopen your last conversation",
+  "session.startup.restoreFailed.description":
+    "Your saved conversation hasn't been changed. Try again, or open a project to continue.",
+  "session.startup.retry": "Retry",
   "notification.session.error.title": "Session error",
   "notification.session.error.fallbackDescription": "An error occurred",
 

@@ -5,6 +5,8 @@ import * as Observability from "@opencode-ai/core/effect/observability"
 import { AppFileSystem } from "@opencode-ai/core/filesystem"
 import { Bus } from "@/bus"
 import { Auth } from "@/auth"
+import { BharatCodeAccount } from "@/bharatcode/account"
+import { BharatCodeCatalog } from "@/bharatcode/catalog"
 import { Account } from "@/account/account"
 import { Config } from "@/config/config"
 import { Git } from "@/git"
@@ -14,7 +16,6 @@ import { FileWatcher } from "@/file/watcher"
 import { Storage } from "@/storage/storage"
 import { Snapshot } from "@/snapshot"
 import { Plugin } from "@/plugin"
-import { ModelsDev } from "@opencode-ai/core/models-dev"
 import { Provider } from "@/provider/provider"
 import { ProviderAuth } from "@/provider/auth"
 import { Agent } from "@/agent/agent"
@@ -58,12 +59,15 @@ import { DataMigration } from "@/data-migration"
 import { BackgroundJob } from "@/background/job"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { RuntimeFlags } from "@/effect/runtime-flags"
+import { ProductPolicy } from "@/product/policy"
 
 export const AppLayer = Layer.mergeAll(
   Npm.defaultLayer,
   AppFileSystem.defaultLayer,
   Bus.defaultLayer,
   Auth.defaultLayer,
+  BharatCodeAccount.defaultLayer,
+  BharatCodeCatalog.defaultLayer,
   Account.defaultLayer,
   Config.defaultLayer,
   Git.defaultLayer,
@@ -73,7 +77,6 @@ export const AppLayer = Layer.mergeAll(
   Storage.defaultLayer,
   Snapshot.defaultLayer,
   Plugin.defaultLayer,
-  ModelsDev.defaultLayer,
   Provider.defaultLayer,
   ProviderAuth.defaultLayer,
   Agent.defaultLayer,
@@ -86,6 +89,7 @@ export const AppLayer = Layer.mergeAll(
   SessionStatus.defaultLayer,
   BackgroundJob.defaultLayer,
   RuntimeFlags.defaultLayer,
+  ProductPolicy.defaultLayer,
   SessionRunState.defaultLayer,
   SessionProcessor.defaultLayer,
   SessionCompaction.defaultLayer,

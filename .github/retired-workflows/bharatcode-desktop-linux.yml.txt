@@ -1,3 +1,4 @@
+# Retired: use build candidate -> manual acceptance -> publish tested candidate.
 name: BharatCode Desktop Linux
 
 on:

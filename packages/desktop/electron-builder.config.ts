@@ -1,11 +1,11 @@
 import { execFile } from "node:child_process"
-import { access, mkdtemp, readdir, rm } from "node:fs/promises"
+import { access, mkdtemp, open, readFile, readdir, rm, stat } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
 
-import type { Configuration } from "electron-builder"
+import { Arch, type Configuration } from "electron-builder"
 import {
   BRANDING,
   type Channel,
@@ -14,9 +14,16 @@ import {
   packageNameForChannel,
   productNameForChannel,
 } from "./src/main/branding"
+import {
+  recoveryCliFilename,
+  requireRecoveryCliPlatform,
+  validateRecoveryCliHeader,
+} from "./scripts/recovery-cli-contract"
+import { verifyWslArtifact, wslRuntimeFilename, type WslRuntimeArch } from "./src/main/wsl-artifact"
 
 const execFileAsync = promisify(execFile)
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
+const desktopDir = path.dirname(fileURLToPath(import.meta.url))
 const signScript = path.join(rootDir, "script", "sign-windows.ps1")
 const execBuffer = 10 * 1024 * 1024
 
@@ -135,11 +142,9 @@ async function notarizeMac(context: MacAfterSignContext) {
 
   try {
     console.log(`Preparing ${path.basename(appPath)} for Apple notarization`)
-    await runMacTool(
-      "ditto",
-      ["-c", "-k", "--sequesterRsrc", "--keepParent", path.basename(appPath), zipPath],
-      { cwd: path.dirname(appPath) },
-    )
+    await runMacTool("ditto", ["-c", "-k", "--sequesterRsrc", "--keepParent", path.basename(appPath), zipPath], {
+      cwd: path.dirname(appPath),
+    })
 
     console.log("Submitting BharatCode macOS app to Apple notarization service")
     const submitResult = await runMacTool(
@@ -147,7 +152,10 @@ async function notarizeMac(context: MacAfterSignContext) {
       ["notarytool", "submit", zipPath, ...authArgs, "--no-wait", "--output-format", "json"],
       { timeoutMs: submitTimeoutMs },
     )
-    const submission = JSON.parse((submitResult.stdout || submitResult.output).trim()) as { id?: string; status?: string }
+    const submission = JSON.parse((submitResult.stdout || submitResult.output).trim()) as {
+      id?: string
+      status?: string
+    }
     if (!submission.id) throw new Error(`Apple notarization did not return a submission id: ${submitResult.output}`)
 
     while (Date.now() - started < timeoutMs) {
@@ -181,7 +189,9 @@ async function notarizeMac(context: MacAfterSignContext) {
           "--output-format",
           "json",
         ])
-        throw new Error(`Apple notarization ${info.status.toLowerCase()} submission ${submission.id}:\n${logResult.output}`)
+        throw new Error(
+          `Apple notarization ${info.status.toLowerCase()} submission ${submission.id}:\n${logResult.output}`,
+        )
       }
 
       await new Promise((resolve) => setTimeout(resolve, 30_000))
@@ -203,14 +213,78 @@ function updateChannelForChannel(channel: Channel) {
 
 const allowUnsignedMac = process.env.BHARATCODE_ALLOW_UNSIGNED_MAC === "1"
 
+function requiredWslBuildEnv(name: string) {
+  const value = process.env[name]?.trim()
+  if (!value) throw new Error(`Missing required WSL runtime build environment variable: ${name}`)
+  return value
+}
+
+const verifyWslBeforePack: NonNullable<Configuration["beforePack"]> = async (context) => {
+  if (context.electronPlatformName !== "win32") return
+  const arch: WslRuntimeArch = (() => {
+    if (context.arch === Arch.x64) return "x64"
+    if (context.arch === Arch.arm64) return "arm64"
+    throw new Error("Windows WSL runtime packaging supports only x64 or arm64")
+  })()
+  const packageJson = JSON.parse(await readFile(path.join(desktopDir, "package.json"), "utf8")) as { version?: unknown }
+  if (typeof packageJson.version !== "string") throw new Error("Desktop package version is missing")
+  const resourceDir = path.join(desktopDir, "resources", "wsl-runtime")
+  await verifyWslArtifact({
+    runtimePath: path.join(resourceDir, wslRuntimeFilename(arch)),
+    manifestPath: path.join(resourceDir, "manifest.json"),
+    expectedSourceSha: requiredWslBuildEnv("INTEGRATED_HEAD"),
+    expectedVersion: packageJson.version,
+    expectedArch: arch,
+  })
+}
+
+export function recoveryCliExtraResource(platform = process.platform) {
+  const filename = recoveryCliFilename(platform)
+  return { from: `resources/${filename}`, to: filename }
+}
+
+export function packagedRecoveryCliPath(context: {
+  appOutDir: string
+  electronPlatformName?: string
+  packager?: { appInfo?: { productFilename?: string } }
+}) {
+  const platform = requireRecoveryCliPlatform(context.electronPlatformName ?? "")
+  const filename = recoveryCliFilename(platform)
+  if (platform !== "darwin") return path.join(context.appOutDir, "resources", filename)
+  const product = context.packager?.appInfo?.productFilename
+  if (!product) throw new Error("Packaged recovery CLI macOS product filename is missing")
+  return path.join(context.appOutDir, `${product}.app`, "Contents", "Resources", filename)
+}
+
+export const verifyRecoveryCliAfterPack: NonNullable<Configuration["afterPack"]> = async (context) => {
+  const platform = requireRecoveryCliPlatform(context.electronPlatformName)
+  const target = packagedRecoveryCliPath(context)
+  const info = await stat(target).catch(() => undefined)
+  if (!info?.isFile()) throw new Error(`Packaged recovery CLI is missing: ${target}`)
+  if (platform !== "win32" && (info.mode & 0o111) === 0) {
+    throw new Error(`Packaged recovery CLI is not executable: ${target}`)
+  }
+  const handle = await open(target, "r")
+  const header = Buffer.alloc(4096)
+  let bytesRead = 0
+  try {
+    bytesRead = (await handle.read(header, 0, header.length, 0)).bytesRead
+  } finally {
+    await handle.close()
+  }
+  validateRecoveryCliHeader(platform, header.subarray(0, bytesRead))
+}
+
 const getBase = (): Configuration => ({
+  beforePack: verifyWslBeforePack,
+  afterPack: verifyRecoveryCliAfterPack,
   afterSign: process.platform === "darwin" && !allowUnsignedMac ? notarizeMac : undefined,
   artifactName: "bharatcode-desktop-${os}-${arch}.${ext}",
   directories: {
     output: "dist",
     buildResources: "resources",
   },
-  files: ["out/**/*", "resources/**/*"],
+  files: ["out/**/*", "resources/**/*", "!resources/bharatcode-opencode-cli*"],
   extraResources: [
     {
       from: "native/",
@@ -227,6 +301,7 @@ const getBase = (): Configuration => ({
       to: "capabilities",
       filter: ["**/*"],
     },
+    recoveryCliExtraResource(),
   ],
   mac: {
     category: "public.app-category.developer-tools",
@@ -247,6 +322,13 @@ const getBase = (): Configuration => ({
     schemes: [BRANDING.protocol],
   },
   win: {
+    extraResources: [
+      {
+        from: "resources/wsl-runtime",
+        to: "wsl-runtime",
+        filter: ["manifest.json", "bharatcode-runtime-linux-x64-glibc", "bharatcode-runtime-linux-arm64-glibc"],
+      },
+    ],
     icon: `resources/icons/icon.ico`,
     signtoolOptions: {
       sign: signWindows,

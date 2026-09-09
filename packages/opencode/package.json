@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
-  "version": "1.15.10",
-  "name": "opencode",
+  "version": "1.15.29",
+  "name": "bharatcode",
   "type": "module",
   "license": "MIT",
   "private": true,
@@ -19,7 +19,7 @@
     "db": "bun drizzle-kit"
   },
   "bin": {
-    "opencode": "./bin/opencode"
+    "bharatcode": "./bin/bharatcode.mjs"
   },
   "exports": {
     "./*": "./src/*.ts"
@@ -29,6 +29,16 @@
       "bun": "./src/storage/db.bun.ts",
       "node": "./src/storage/db.node.ts",
       "default": "./src/storage/db.bun.ts"
+    },
+    "#auth-lock-db": {
+      "bun": "./src/auth/auth-lock-db.bun.ts",
+      "node": "./src/auth/auth-lock-db.node.ts",
+      "default": "./src/auth/auth-lock-db.bun.ts"
+    },
+    "#storage-sqlite": {
+      "bun": "./src/storage/storage-sqlite.bun.ts",
+      "node": "./src/storage/storage-sqlite.node.ts",
+      "default": "./src/storage/storage-sqlite.bun.ts"
     },
     "#pty": {
       "bun": "./src/pty/pty.bun.ts",
@@ -144,7 +154,7 @@
     "immer": "11.1.4",
     "jsonc-parser": "3.3.1",
     "mime-types": "3.0.2",
-    "minimatch": "10.0.3",
+    "minimatch": "10.2.5",
     "npm-package-arg": "13.0.2",
     "open": "10.1.2",
     "opencode-gitlab-auth": "2.0.1",

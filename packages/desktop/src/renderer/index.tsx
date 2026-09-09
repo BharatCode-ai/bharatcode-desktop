@@ -5,6 +5,7 @@ import {
   ACCEPTED_FILE_TYPES,
   AppBaseProviders,
   AppInterface,
+  createAccountStatusResource,
   handleNotificationClick,
   loadLocaleDict,
   normalizeLocale,
@@ -80,27 +81,6 @@ const createPlatform = (): Platform => {
     return undefined
   })()
 
-  const isWslEnabled = async () => {
-    if (os !== "windows") return false
-    return window.api
-      .getWslConfig()
-      .then((config) => config.enabled)
-      .catch(() => false)
-  }
-
-  const wslHome = async () => {
-    if (!(await isWslEnabled())) return undefined
-    return window.api.wslPath("~", "windows").catch(() => undefined)
-  }
-
-  const handleWslPicker = async <T extends string | string[]>(result: T | null): Promise<T | null> => {
-    if (!result || !(await isWslEnabled())) return result
-    if (Array.isArray(result)) {
-      return Promise.all(result.map((path) => window.api.wslPath(path, "linux").catch(() => path))) as any
-    }
-    return window.api.wslPath(result, "linux").catch(() => result) as any
-  }
-
   const runDesktopMenuAction: Platform["runDesktopMenuAction"] = (action) => {
     switch (action) {
       case "view.resetZoom":
@@ -150,31 +130,26 @@ const createPlatform = (): Platform => {
     version: pkg.version,
 
     async openDirectoryPickerDialog(opts) {
-      const defaultPath = await wslHome()
-      const result = await window.api.openDirectoryPicker({
+      return window.api.openDirectoryPicker({
         multiple: opts?.multiple ?? false,
         title: opts?.title ?? t("desktop.dialog.chooseFolder"),
-        defaultPath,
       })
-      return await handleWslPicker(result)
     },
 
     async openFilePickerDialog(opts) {
-      const result = await window.api.openFilePicker({
+      return window.api.openFilePicker({
         multiple: opts?.multiple ?? false,
         title: opts?.title ?? t("desktop.dialog.chooseFile"),
         accept: opts?.accept ?? ACCEPTED_FILE_TYPES,
         extensions: opts?.extensions ?? ACCEPTED_FILE_EXTENSIONS,
       })
-      return handleWslPicker(result)
     },
 
     async saveFilePickerDialog(opts) {
-      const result = await window.api.saveFilePicker({
+      return window.api.saveFilePicker({
         title: opts?.title ?? t("desktop.dialog.saveFile"),
         defaultPath: opts?.defaultPath,
       })
-      return handleWslPicker(result)
     },
 
     openLink(url: string) {
@@ -183,14 +158,7 @@ const createPlatform = (): Platform => {
     async openPath(path: string, app?: string) {
       if (os === "windows") {
         const resolvedApp = app ? await window.api.resolveAppPath(app).catch(() => null) : null
-        const resolvedPath = await (async () => {
-          if (await isWslEnabled()) {
-            const converted = await window.api.wslPath(path, "windows").catch(() => null)
-            if (converted) return converted
-          }
-          return path
-        })()
-        return window.api.openPath(resolvedPath, resolvedApp ?? undefined)
+        return window.api.openPath(path, resolvedApp ?? undefined)
       }
       return window.api.openPath(path, app)
     },
@@ -247,11 +215,9 @@ const createPlatform = (): Platform => {
       return fetch(input, init)
     },
 
-    getWslEnabled: () => isWslEnabled(),
-
-    setWslEnabled: async (enabled) => {
-      await window.api.setWslConfig({ enabled })
-    },
+    getWslSnapshot: os === "windows" ? () => window.api.getWslSnapshot() : undefined,
+    configureWsl: os === "windows" ? (update) => window.api.configureWsl(update) : undefined,
+    retryWsl: os === "windows" ? () => window.api.retryWsl() : undefined,
 
     getDefaultServer: async () => {
       const url = await window.api.getDefaultServerUrl().catch(() => null)
@@ -296,16 +262,17 @@ const createPlatform = (): Platform => {
 
     transcribeAudio: (audio) => window.api.transcribeDictation(audio),
 
-    getBharatCodeAccountStatus: () => window.api.getBharatCodeAccountStatus(),
+    getAccountStatus: () => window.api.getAccountStatus(),
 
-    refreshBharatCodeAccountStatus: () => window.api.refreshBharatCodeAccountStatus(),
+    onAccountStatusChanged: (cb) => window.api.onAccountStatusChanged(cb),
 
-    signInToBharatCode: (options) => {
-      const removeListener = options?.onBrowserUrl ? window.api.onBharatCodeSignInUrl(options.onBrowserUrl) : undefined
-      return window.api
-        .signInToBharatCode({ forceAccountSelection: options?.forceAccountSelection })
-        .finally(() => removeListener?.())
-    },
+    refreshAccountStatus: () => window.api.refreshAccountStatus(),
+
+    beginSignIn: (options) => window.api.beginSignIn({ selectAccount: options?.selectAccount }),
+
+    completeSignIn: () => window.api.completeSignIn(),
+
+    logout: () => window.api.logout(),
 
     getCapabilitySnapshot: () => window.api.getCapabilitySnapshot(),
 
@@ -320,47 +287,28 @@ const createPlatform = (): Platform => {
 }
 
 function BharatCodeAuthGate(props: ParentProps) {
-  const [auth, { refetch }] = createResource(() => window.api.getBharatCodeAuthState())
+  const [auth, { mutate }] = createAccountStatusResource(window.api)
   const [signingIn, setSigningIn] = createSignal(false)
   const [error, setError] = createSignal<string | null>(null)
-  const [pendingSignInUrl, setPendingSignInUrl] = createSignal<string | null>(null)
-  const [copiedSignInUrl, setCopiedSignInUrl] = createSignal(false)
-  const ready = () => auth()?.authenticated && auth()?.configured
+  const ready = () => auth()?.authenticated === true
+  const pending = () => signingIn() || ["authorizing", "switching", "refreshing"].includes(auth()?.state ?? "")
 
   async function signIn() {
     setSigningIn(true)
     setError(null)
-    setPendingSignInUrl(null)
-    setCopiedSignInUrl(false)
-    const removeListener = window.api.onBharatCodeSignInUrl(setPendingSignInUrl)
     try {
-      const next = await window.api.signInToBharatCode()
-      if (next.authenticated && next.configured) {
-        setPendingSignInUrl(null)
-        setCopiedSignInUrl(false)
-        window.api.relaunch()
-        return
-      }
-      await refetch()
-      setError("BharatCode sign-in finished, but the local app config was not updated. Restart and sign in again.")
+      mutate(await window.api.beginSignIn())
+      if (!ready()) setError("BharatCode sign-in has not completed. Try again.")
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
-      removeListener()
       setSigningIn(false)
     }
   }
 
-  async function copyPendingSignInUrl() {
-    const url = pendingSignInUrl()
-    if (!url) return
-    await navigator.clipboard.writeText(url)
-    setCopiedSignInUrl(true)
-  }
-
   return (
     <Show
-      when={!auth.loading && ready()}
+      when={ready()}
       fallback={
         <div class="w-screen h-screen bg-background-base text-text-strong flex items-center justify-center px-6">
           <div class="w-full max-w-md flex flex-col gap-5">
@@ -376,35 +324,15 @@ function BharatCodeAuthGate(props: ParentProps) {
               type="button"
               size="large"
               variant="primary"
-              disabled={auth.loading || signingIn()}
+              disabled={(!auth() && auth.loading) || pending()}
               onClick={() => void signIn()}
             >
-              {signingIn() ? "Waiting for browser sign-in..." : "Continue with BharatCode"}
+              {pending() ? "Waiting for browser sign-in..." : "Continue with BharatCode"}
             </Button>
-            <Show when={pendingSignInUrl()}>
-              {(url) => (
-                <div class="flex flex-col gap-2 rounded-md border border-border-weak-base bg-background-muted p-3">
-                  <div class="text-12-regular text-text-base">{t("settings.account.signInFallback.description")}</div>
-                  <div class="flex min-w-0 items-center gap-2">
-                    <code class="min-w-0 flex-1 truncate rounded-sm bg-background-base px-2 py-1 text-11-regular text-text-weak">
-                      {url()}
-                    </code>
-                    <Button type="button" size="large" variant="secondary" onClick={() => void copyPendingSignInUrl()}>
-                      {copiedSignInUrl()
-                        ? t("settings.account.action.copied")
-                        : t("settings.account.action.copySignInUrl")}
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </Show>
-            <Show when={error()}>
+            <Show when={error() || auth()?.message}>
               {(message) => <div class="text-12-regular text-text-danger-base whitespace-pre-wrap">{message()}</div>}
             </Show>
-            <div class="text-12-regular text-text-weak">
-              BharatCode opens your browser for OAuth and stores the resulting session locally in
-              ~/.bharatcode/credentials.json.
-            </div>
+            <div class="text-12-regular text-text-weak">BharatCode opens your browser for secure account sign-in.</div>
           </div>
         </div>
       }
@@ -437,7 +365,7 @@ render(() => {
 
   const [windowCount] = createResource(() => window.api.getWindowCount())
 
-  // Fetch sidecar credentials (available immediately, before health check)
+  // Fetch the public sidecar identity; Electron main authorizes exact-origin requests.
   const [sidecar] = createResource(() => window.api.awaitInitialization(() => undefined))
 
   const [defaultServer] = createResource(() =>
@@ -456,8 +384,6 @@ render(() => {
       variant: "base",
       http: {
         url: data.url,
-        username: data.username ?? undefined,
-        password: data.password ?? undefined,
       },
     }
     return [server] as ServerConnection.Any[]

@@ -8,6 +8,7 @@ interface ImportMeta {
 }
 
 declare module "virtual:opencode-server" {
+  export const ensureGlobalDirectories: typeof import("@opencode-ai/core/global").ensure
   export namespace Server {
     export const listen: typeof import("../../../opencode/dist/types/src/node").Server.listen
     export type Listener = import("../../../opencode/dist/types/src/node").Server.Listener

@@ -19,9 +19,10 @@ import { getBharatCodeShareBaseUrl, validateBharatCodeShareUrl } from "./url"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { SHARE_NEXT_ENABLED } from "@/product/feature-gates"
 
 const log = Log.create({ service: "share-next" })
-const disabled = process.env["OPENCODE_DISABLE_SHARE"] === "true" || process.env["OPENCODE_DISABLE_SHARE"] === "1"
+const disabled = !SHARE_NEXT_ENABLED
 const BHARATCODE_SUPABASE_URL = "https://evgvlcaxfpwupaiwzqqm.supabase.co"
 const BHARATCODE_NATIVE_CLIENT_ID = "4cad332a-232f-4ef2-9363-12fea4420635"
 const TOKEN_REFRESH_SKEW_SECONDS = 300
@@ -45,6 +46,14 @@ const ShareSchema = Schema.Struct({
   secret: Schema.String,
 })
 export type Share = typeof ShareSchema.Type
+
+export class UnavailableError extends Schema.TaggedErrorClass<UnavailableError>()("BharatCodeShareNextUnavailable", {
+  message: Schema.String,
+}) {}
+
+function unavailable() {
+  return new UnavailableError({ message: "BharatCode Share is not available in this beta." })
+}
 
 type BharatCodeCredentials = {
   access_token?: string
@@ -300,6 +309,7 @@ export const layer = Layer.effect(
     )
 
     const request = Effect.fn("ShareNext.request")(function* () {
+      if (disabled) return yield* Effect.fail(unavailable())
       const headers: Record<string, string> = {}
       const baseUrl = yield* Effect.try({
         try: getBharatCodeShareBaseUrl,
@@ -389,11 +399,12 @@ export const layer = Layer.effect(
     })
 
     const url = Effect.fn("ShareNext.url")(function* () {
+      if (disabled) return yield* Effect.fail(unavailable())
       return (yield* request()).baseUrl
     })
 
     const create = Effect.fn("ShareNext.create")(function* (sessionID: SessionID) {
-      if (disabled) return { id: "", url: "", secret: "" }
+      if (disabled) return yield* Effect.fail(unavailable())
       log.info("creating share", { sessionID })
       const req = yield* request()
       const result = yield* HttpClientRequest.post(`${req.baseUrl}${req.api.create}`).pipe(
@@ -432,7 +443,7 @@ export const layer = Layer.effect(
     })
 
     const remove = Effect.fn("ShareNext.remove")(function* (sessionID: SessionID) {
-      if (disabled) return
+      if (disabled) return yield* Effect.fail(unavailable())
       log.info("removing share", { sessionID })
       const s = yield* InstanceState.get(state)
       const share = yield* getCached(sessionID)

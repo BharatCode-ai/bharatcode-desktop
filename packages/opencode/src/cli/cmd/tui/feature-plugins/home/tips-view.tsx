@@ -68,7 +68,7 @@ function parse(tip: string): TipPart[] {
   return parts
 }
 
-const NO_MODELS_TIP = "Run {highlight}/connect{/highlight} to add an AI provider and start coding"
+const NO_MODELS_TIP = "Sign in to {highlight}BharatCode{/highlight} to load the approved coding model"
 const NO_MODELS_PARTS = parse(NO_MODELS_TIP)
 
 function shortcutText(value: string) {
@@ -185,7 +185,6 @@ const TIPS: Tip[] = [
   (shortcuts) => `Use ${commandText("/export", shortcuts.sessionExport())} to save the conversation as Markdown`,
   (shortcuts) => press(shortcuts.messagesCopy(), "to copy the assistant's last message to clipboard"),
   (shortcuts) => press(shortcuts.commandList(), "to see all available actions and commands"),
-  "Run {highlight}/connect{/highlight} to add API keys for 75+ supported LLM providers",
   (shortcuts) => `The leader key is ${shortcutText(shortcuts.leader())}; combine with other keys for quick actions`,
   (shortcuts) => press(shortcuts.modelCycleRecent(), "to quickly switch between recently used models"),
   (shortcuts) => press(shortcuts.sessionSidebarToggle(), "in a session to show or hide the sidebar panel"),
@@ -275,7 +274,6 @@ const TIPS: Tip[] = [
       ? `Toggle username display in chat via the command palette (${shortcutText(shortcuts.commandList())})`
       : "Toggle username display in chat via the command palette",
   "Run {highlight}docker run -it --rm ghcr.io/anomalyco/opencode{/highlight} for containerized use",
-  "Use {highlight}/connect{/highlight} with OpenCode Zen for curated, tested models",
   "Commit your project's {highlight}AGENTS.md{/highlight} file to Git for team sharing",
   "Use {highlight}/review{/highlight} to review uncommitted changes, branches, or PRs",
   (shortcuts) => `Use ${commandText("/help", shortcuts.helpShow())} to show the help dialog`,

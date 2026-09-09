@@ -24,7 +24,7 @@ interface RemovalTargets {
 
 export const UninstallCommand = {
   command: "uninstall",
-  describe: "uninstall opencode and remove all related files",
+  describe: "uninstall BharatCode and remove all related files",
   builder: (yargs: Argv) =>
     yargs
       .option("keep-config", {
@@ -93,6 +93,9 @@ async function collectRemovalTargets(args: UninstallArgs, method: Installation.M
     { path: Global.Path.cache, label: "Cache", keep: false },
     { path: Global.Path.config, label: "Config", keep: args.keepConfig },
     { path: Global.Path.state, label: "State", keep: false },
+    ...(Global.Path.recovery === Global.Path.state
+      ? []
+      : [{ path: Global.Path.recovery, label: "Recovery state", keep: false }]),
   ]
 
   const shellConfig = method === "curl" ? await getShellConfigFile() : null

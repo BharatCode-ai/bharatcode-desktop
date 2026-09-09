@@ -28,6 +28,22 @@ export const Flag = {
   OPENCODE_SERVER_PASSWORD: process.env["OPENCODE_SERVER_PASSWORD"],
   OPENCODE_SERVER_USERNAME: process.env["OPENCODE_SERVER_USERNAME"],
 
+  get BHARATCODE_CONFIG() {
+    return process.env["BHARATCODE_CONFIG"]
+  },
+  get BHARATCODE_CONFIG_CONTENT() {
+    return process.env["BHARATCODE_CONFIG_CONTENT"]
+  },
+  get BHARATCODE_CONFIG_DIR() {
+    return process.env["BHARATCODE_CONFIG_DIR"]
+  },
+  get BHARATCODE_TUI_CONFIG() {
+    return process.env["BHARATCODE_TUI_CONFIG"]
+  },
+  get BHARATCODE_DISABLE_PROJECT_CONFIG() {
+    return truthy("BHARATCODE_DISABLE_PROJECT_CONFIG")
+  },
+
   // Experimental
   OPENCODE_EXPERIMENTAL_FILEWATCHER: Config.boolean("OPENCODE_EXPERIMENTAL_FILEWATCHER").pipe(
     Config.withDefault(false),

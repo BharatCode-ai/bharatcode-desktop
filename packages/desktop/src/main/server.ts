@@ -1,5 +1,8 @@
+import { execFile } from "node:child_process"
+import { readFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
+import { promisify } from "node:util"
 import { app, utilityProcess } from "electron"
 import type { Details } from "electron"
 import { DEFAULT_SERVER_URL_KEY, WSL_ENABLED_KEY } from "./constants"
@@ -7,6 +10,10 @@ import { getUserShell, loadShellEnv } from "./shell-env"
 import { getLogger } from "./logging"
 import { getStore } from "./store"
 import type { SqliteMigrationProgress } from "../preload/types"
+import { parseWslRuntimeManifest, wslRuntimeFilename, type WslRuntimeArch } from "./wsl-artifact"
+import { trustedWindowsExecutables } from "./wsl-distro"
+import { createWslPathTranslator } from "./wsl-path"
+import { resolveWslLaunchIdentity, startWslRuntime } from "./wsl-runtime"
 
 export type WslConfig = { enabled: boolean }
 
@@ -23,6 +30,7 @@ export type SidecarListener = { stop: () => Promise<void> }
 const SIDECAR_SERVICE_NAME = "opencode server"
 const SIDECAR_START_STALL_TIMEOUT = 60_000
 const SIDECAR_STOP_TIMEOUT = 6_000
+const execFileAsync = promisify(execFile)
 
 type SpawnLocalServerOptions = {
   needsMigration: boolean
@@ -79,7 +87,7 @@ export async function spawnLocalServer(
   const sidecar = join(dirname(fileURLToPath(import.meta.url)), "sidecar.js")
   const child = utilityProcess.fork(sidecar, [], {
     cwd: process.cwd(),
-    env: createSidecarEnv(),
+    env: createSidecarEnv(password),
     serviceName: SIDECAR_SERVICE_NAME,
     stdio: "pipe",
   })
@@ -154,7 +162,6 @@ export async function spawnLocalServer(
       type: "start",
       hostname,
       port,
-      password,
       userDataPath: options.userDataPath,
       needsMigration: options.needsMigration,
     })
@@ -174,7 +181,7 @@ export async function spawnLocalServer(
     const ready = async () => {
       while (true) {
         await new Promise((resolve) => setTimeout(resolve, 100))
-        if (await checkHealth(url, password)) {
+        if (await checkHealth(url, "bharatcode", password)) {
           healthy = true
           return
         }
@@ -205,7 +212,84 @@ export async function spawnLocalServer(
   }
 }
 
-export async function checkHealth(url: string, password?: string | null): Promise<boolean> {
+export async function spawnWslServer(
+  hostname: "127.0.0.1",
+  port: number,
+  password: string,
+  options: {
+    selectedDisplayName: string
+    resourcesPath: string
+    version: string
+    arch: WslRuntimeArch
+    channel: string
+    hostEnv: Readonly<Record<string, string | undefined>>
+    healthCheck?: typeof checkHealth
+    onSqliteProgress?: (progress: SqliteMigrationProgress) => void
+    onStderr?: (message: string) => void
+  },
+) {
+  const wslExecutable = trustedWindowsExecutables(options.hostEnv).wsl
+  const execute = createWslExecute()
+  const selected = await resolveWslLaunchIdentity({
+    wslExecutable,
+    selectedDisplayName: options.selectedDisplayName,
+    execute,
+  })
+  const resourceDirectory = join(options.resourcesPath, "wsl-runtime")
+  const manifestPath = join(resourceDirectory, "manifest.json")
+  const manifest = parseWslRuntimeManifest(JSON.parse(await readFile(manifestPath, "utf8")))
+  const runtime = await startWslRuntime({
+    wslExecutable,
+    execute,
+    selectedDisplayName: options.selectedDisplayName,
+    selectedUser: selected.user,
+    selectedUid: selected.uid,
+    home: selected.home,
+    channel: options.channel,
+    port,
+    startedAtMs: Date.now(),
+    password,
+    runtimePath: join(resourceDirectory, wslRuntimeFilename(options.arch)),
+    runtimeWindowsPath: join(resourceDirectory, wslRuntimeFilename(options.arch)),
+    manifestPath,
+    expectedSourceSha: manifest.source_sha,
+    expectedVersion: options.version,
+    expectedArch: options.arch,
+    hostEnv: options.hostEnv,
+    healthCheck: options.healthCheck ?? checkHealth,
+    onSqliteProgress: options.onSqliteProgress,
+    onStderr: options.onStderr,
+  })
+  return {
+    listener: { stop: runtime.stop },
+    health: { wait: Promise.resolve() },
+    authorization: runtime.authorization,
+    identity: runtime.identity,
+    selectedIdentity: selected,
+    owned: {
+      stop: runtime.stop,
+      closeInput: runtime.closeInput,
+      exited: runtime.exited,
+    },
+  }
+}
+
+export function translateWslProjectPath(
+  path: string,
+  options: {
+    selectedDisplayName: string
+    hostEnv: Readonly<Record<string, string | undefined>>
+  },
+) {
+  const wslExecutable = trustedWindowsExecutables(options.hostEnv).wsl
+  return createWslPathTranslator({
+    wslExecutable,
+    selectedDisplayName: options.selectedDisplayName,
+    execute: createWslExecute(),
+  }).translate(path, "linux")
+}
+
+export async function checkHealth(url: string, username?: string | null, password?: string | null): Promise<boolean> {
   let healthUrl: URL
   try {
     healthUrl = new URL("/global/health", url)
@@ -215,7 +299,7 @@ export async function checkHealth(url: string, password?: string | null): Promis
 
   const headers = new Headers()
   if (password) {
-    const auth = Buffer.from(`opencode:${password}`).toString("base64")
+    const auth = Buffer.from(`${username ?? "bharatcode"}:${password}`).toString("base64")
     headers.set("authorization", `Basic ${auth}`)
   }
 
@@ -223,6 +307,7 @@ export async function checkHealth(url: string, password?: string | null): Promis
     const res = await fetch(healthUrl, {
       method: "GET",
       headers,
+      redirect: "error",
       signal: AbortSignal.timeout(3000),
     })
     return res.ok
@@ -231,13 +316,27 @@ export async function checkHealth(url: string, password?: string | null): Promis
   }
 }
 
-function createSidecarEnv(): Record<string, string> {
+function createSidecarEnv(password: string): Record<string, string> {
   const env = Object.fromEntries(
     Object.entries(process.env).flatMap(([key, value]) => (value === undefined ? [] : [[key, String(value)]])),
   )
   delete env.DEBUG
   if (process.platform === "linux") delete env.LD_PRELOAD
+  env.BHARATCODE_SERVER_USERNAME = "bharatcode"
+  env.BHARATCODE_SERVER_PASSWORD = password
   return env
+}
+
+function createWslExecute() {
+  return async (executable: string, args: readonly string[]) => {
+    const result = await execFileAsync(executable, [...args], {
+      encoding: "utf8",
+      windowsHide: true,
+      shell: false,
+      maxBuffer: 1024 * 1024,
+    })
+    return { stdout: result.stdout, stderr: result.stderr }
+  }
 }
 
 function delay(ms: number) {
