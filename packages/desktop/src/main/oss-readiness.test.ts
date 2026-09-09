@@ -10,13 +10,10 @@ async function readRepoFile(path: string) {
 
 describe("Desktop OSS readiness", () => {
   test("does not expose a public dev release dispatch path", async () => {
-    const workflow = await readRepoFile(".github/workflows/bharatcode-desktop-windows.yml")
-
-    const dispatchOptions = workflow.match(/workflow_dispatch:[\s\S]*?tag:/)?.[0] ?? ""
-    expect(dispatchOptions).toContain("- beta")
-    expect(dispatchOptions).toContain("- prod")
-    expect(dispatchOptions).not.toContain("- dev")
-    expect(workflow).toContain("DEV builds are local-only and must not publish release assets.")
+    const workflow = await readRepoFile(".github/workflows/bharatcode-next-beta-candidate.yml")
+    expect(workflow).toContain("BHARATCODE_CHANNEL: beta")
+    expect(workflow).not.toContain("gh release create")
+    expect(workflow).not.toContain("contents: write")
   })
 
   test("uses public-safe ownership and workflow language", async () => {
@@ -30,20 +27,13 @@ describe("Desktop OSS readiness", () => {
   })
 
   test("has a public Linux release workflow for AppImage and Debian packages", async () => {
-    const workflow = await readRepoFile(".github/workflows/bharatcode-desktop-linux.yml")
-
-    const dispatchOptions = workflow.match(/workflow_dispatch:[\s\S]*?tag:/)?.[0] ?? ""
-    expect(dispatchOptions).toContain("- beta")
-    expect(dispatchOptions).toContain("- prod")
-    expect(dispatchOptions).not.toContain("- dev")
-    expect(workflow).toContain("Refusing to publish dev-channel Linux artifacts.")
+    const workflow = await readRepoFile(".github/workflows/bharatcode-next-beta-candidate.yml")
+    const publish = await readRepoFile(".github/workflows/bharatcode-publish-tested-candidate.yml")
     expect(workflow).toContain("electron-builder --linux AppImage deb")
-    expect(workflow).toContain("packages/desktop/dist/*.AppImage")
-    expect(workflow).toContain("packages/desktop/dist/*.deb")
-    expect(workflow).toContain("packages/desktop/dist/*-linux.yml")
-    expect(workflow).toContain("packages/desktop/dist/latest-linux.yml")
-    expect(workflow).toContain("cp packages/desktop/dist/beta-linux.yml packages/desktop/dist/latest-linux.yml")
-    expect(workflow).toContain("Upload Linux packages to GitHub Release")
+    expect(workflow).toContain("bharatcode-desktop-next-beta-linux-x64.AppImage")
+    expect(workflow).toContain("bharatcode-desktop-next-beta-linux-x64.deb")
+    expect(publish).toContain("inputs.manual_acceptance_confirmed")
+    expect(publish).toContain("gh release upload")
   })
 
   test("makes Desktop first-run primary and classifies retained support areas", async () => {

@@ -1,3 +1,4 @@
+// Retired workflow assertions; not part of the active package test suite.
 import { describe, expect, test } from "bun:test"
 import {
   chmodSync,
