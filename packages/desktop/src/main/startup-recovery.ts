@@ -42,7 +42,13 @@ export function createStartupRecovery(input: { executable: string; invoke?: Invo
     }
     return result
   }
-  const inspect = () => execute(invoke, input.executable, ["recovery", "status", "--json"]).then(settle)
+  const inspect = () =>
+    execute(invoke, input.executable, [
+      "recovery",
+      "status",
+      "--json",
+      ...(process.platform === "darwin" ? ["--initialize"] : []),
+    ]).then(settle)
   const run = (value: RecoveryAction) => {
     const action = parseRecoveryAction(value)
     const key = JSON.stringify(action)

@@ -3,7 +3,7 @@ import { Database } from "bun:sqlite"
 export class StorageSQLite {
   readonly #database: Database
 
-  constructor(file: string, options?: { readonly?: boolean; create?: boolean }) {
+  constructor(file: string, options?: { readonly?: boolean; readwrite?: boolean; create?: boolean }) {
     this.#database = new Database(file, options)
   }
 

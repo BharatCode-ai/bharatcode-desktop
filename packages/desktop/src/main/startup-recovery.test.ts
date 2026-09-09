@@ -33,7 +33,7 @@ describe("Desktop startup recovery", () => {
     })
 
     expect(calls).toEqual([
-      ["recovery", "status", "--json"],
+      ["recovery", "status", "--json", ...(process.platform === "darwin" ? ["--initialize"] : [])],
       ["recovery", "choose-source", "--id", "legacy-1", "--content-fingerprint", "a".repeat(64), "--json"],
     ])
     expect(calls.flat().join(" ")).not.toMatch(/\/home|auth\.json|bharatcode\.db|credential/i)

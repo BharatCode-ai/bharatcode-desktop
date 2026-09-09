@@ -6,6 +6,7 @@ import path from "node:path"
 import type { Argv } from "yargs"
 
 import { Database } from "@/storage/db"
+import { withInitializedWalFiles } from "@/storage/wal-initialization"
 import {
   diagnoseSchemaMarker,
   repairSchemaMarker,
@@ -38,6 +39,7 @@ export type RecoveryCommandAction =
   | { type: "repair-marker"; confirmed: boolean }
 
 export type RecoveryControllerInput = {
+  initialize?: boolean
   platform: "linux" | "darwin" | "win32"
   home: string
   env: Readonly<Record<string, string | undefined>>
@@ -65,7 +67,12 @@ export function createRecoveryController(input: RecoveryControllerInput) {
         return { state: "ready" }
       }
     }
-    if (await fileExists(input.destination.database)) return inspectMarker(input)
+    if (await fileExists(input.destination.database)) {
+      if (input.initialize && input.platform === "darwin") {
+        return withInitializedWalFiles(input.destination.database, () => inspectMarker(input))
+      }
+      return inspectMarker(input)
+    }
     if (journal?.phase === "complete") {
       return (await completedExpectedDatabase(input, journal.snapshotDigest))
         ? { state: "blocked", reason: "destination-mutated" }
@@ -132,8 +139,9 @@ export function createRecoveryController(input: RecoveryControllerInput) {
   return { inspect, run }
 }
 
-export function createDefaultRecoveryController() {
+export function createDefaultRecoveryController(options: { initialize?: boolean } = {}) {
   return createRecoveryController({
+    initialize: options.initialize,
     platform: process.platform as "linux" | "darwin" | "win32",
     home: Global.Path.home,
     env: process.env,
@@ -189,8 +197,12 @@ export const DoctorCommand = cmd({
 
 const RecoveryStatusCommand = cmd({
   command: "status",
-  builder: (yargs: Argv) => yargs.option("json", { type: "boolean", default: false, hidden: true }),
-  handler: async () => writeResult(await createDefaultRecoveryController().inspect()),
+  builder: (yargs: Argv) =>
+    yargs
+      .option("json", { type: "boolean", default: false, hidden: true })
+      .option("initialize", { type: "boolean", default: false, hidden: true }),
+  handler: async (args: { initialize: boolean }) =>
+    writeResult(await createDefaultRecoveryController({ initialize: args.initialize }).inspect()),
 })
 
 const RecoveryChooseCommand = cmd({

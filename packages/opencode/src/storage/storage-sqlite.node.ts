@@ -3,7 +3,7 @@ import { DatabaseSync } from "node:sqlite"
 export class StorageSQLite {
   readonly #database: DatabaseSync
 
-  constructor(file: string, options?: { readonly?: boolean; create?: boolean }) {
+  constructor(file: string, options?: { readonly?: boolean; readwrite?: boolean; create?: boolean }) {
     this.#database = new DatabaseSync(file, {
       readOnly: options?.readonly === true,
     })

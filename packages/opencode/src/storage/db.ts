@@ -13,6 +13,7 @@ import { Flag } from "@opencode-ai/core/flag/flag"
 import { EffectBridge } from "@/effect/bridge"
 import { init } from "#db"
 import { StorageSQLite } from "#storage-sqlite"
+import { withInitializedWalFiles } from "./wal-initialization"
 import { Effect, Schema } from "effect"
 import {
   diagnoseSchemaMarker,
@@ -141,8 +142,12 @@ export const Client = Object.assign(
       ),
       open: openSchemaDatabase,
     }
-    if (markerGate && existsSync(dbPath) && diagnoseSchemaMarker(markerInput).state !== "healthy") {
-      throw new DatabaseRecoveryRequiredError()
+    if (markerGate && existsSync(dbPath)) {
+      const diagnosis =
+        process.platform === "darwin"
+          ? withInitializedWalFiles(dbPath, () => diagnoseSchemaMarker(markerInput))
+          : diagnoseSchemaMarker(markerInput)
+      if (diagnosis.state !== "healthy") throw new DatabaseRecoveryRequiredError()
     }
 
     const db = init(dbPath)

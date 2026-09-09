@@ -95,7 +95,7 @@ const cli = yargs(args)
     const informationalInvocation = opts.help === true || opts.version === true
     const bypassRecoveryGate = recoveryCommand || informationalInvocation
     if (!bypassRecoveryGate) {
-      const recovery = await createDefaultRecoveryController().inspect()
+      const recovery = await createDefaultRecoveryController({ initialize: true }).inspect()
       if (recovery.state !== "ready") {
         throw new Error("BharatCode recovery is required. Run `bharatcode doctor` before startup.")
       }
