@@ -3,6 +3,7 @@ import { isBharatCodeAuthCallback } from "./bharatcode-auth"
 export function createDeepLinkEvents(options: {
   protocol: string
   pending: string[]
+  ready?: () => boolean
   client: () => { completeSignIn: (url: string) => Promise<unknown> } | undefined
   forward: (urls: string[]) => Promise<void>
   log: (
@@ -18,6 +19,10 @@ export function createDeepLinkEvents(options: {
     await Promise.all(
       urls.map(async (url) => {
         try {
+          if (options.ready && !options.ready()) {
+            options.pending.push(url)
+            return
+          }
           if (!isBharatCodeAuthCallback(url)) {
             await options.forward([url]).catch(() => options.log("desktop project link failed"))
             return

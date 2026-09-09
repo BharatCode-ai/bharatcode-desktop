@@ -27,6 +27,7 @@ import {
 import type { InitStep, ServerReadyData, SqliteMigrationProgress } from "../preload/types"
 import { checkAppExists, resolveAppPath } from "./apps"
 import { CHANNEL, UPDATER_ENABLED } from "./constants"
+import { desktopRelaunchArgs } from "./desktop-relaunch"
 import { transcribeDictationAudio } from "./dictation"
 import { registerIpcHandlers, sendDeepLinks, sendMenuCommand, sendSqliteMigrationProgress } from "./ipc"
 import { exportDebugLogs, initCrashReporter, initLogging, startNetLog, write as writeLog } from "./logging"
@@ -48,6 +49,7 @@ import {
   setRelaunchHandler,
   setBackgroundColor,
   setDockIcon,
+  showWslStartupRecoveryDialog,
 } from "./windows"
 import { migrate } from "./migrate"
 import { getStore } from "./store"
@@ -58,6 +60,7 @@ import { reportStartupFailure } from "./startup-failure"
 import { awaitInitialization } from "./initialization"
 import { openExternalUrl } from "./external-browser"
 import { createWslService } from "./wsl-distro"
+import { recoverWslStartup } from "./wsl-startup-recovery"
 import {
   configureWslForControlledRelaunch,
   WslLifecycleFailure,
@@ -78,7 +81,8 @@ let sidecarAuthorization: SidecarAuthorizationPolicy | undefined
 let accountClient: ReturnType<typeof createAccountSession> | undefined
 let wslLifecycle: ReturnType<typeof createWslLifecycle> | undefined
 let selectedWslDisplayName: string | undefined
-const pendingAccountCallbacks: string[] = []
+const pendingIncomingDeepLinks: string[] = []
+let incomingDeepLinksReady = false
 
 const initEmitter = new EventEmitter()
 let initStep: InitStep = { phase: "server_waiting" }
@@ -135,7 +139,8 @@ async function emitDeepLinks(urls: string[]) {
 
 const deepLinkEvents = createDeepLinkEvents({
   protocol: BRANDING.protocol,
-  pending: pendingAccountCallbacks,
+  pending: pendingIncomingDeepLinks,
+  ready: () => incomingDeepLinksReady,
   client: () => accountClient,
   forward: emitDeepLinks,
   log: (event) => logger.log(event),
@@ -148,6 +153,7 @@ function setInitStep(step: InitStep) {
 }
 
 async function killSidecar() {
+  incomingDeepLinksReady = false
   sidecarAuthorization?.invalidate()
   sidecarAuthorization = undefined
   accountClient?.dispose()
@@ -162,9 +168,15 @@ async function relaunchDesktop() {
   try {
     await killSidecar()
   } finally {
-    app.relaunch()
+    app.relaunch({ args: desktopRelaunchArgs(process.argv, pendingIncomingDeepLinks) })
     app.exit(0)
   }
+  return new Promise<never>(() => undefined)
+}
+
+function quitBeforeStartup(): Promise<never> {
+  app.quit()
+  return new Promise<never>(() => undefined)
 }
 
 function requireAccountClient() {
@@ -272,6 +284,8 @@ const main = Effect.gen(function* () {
     return
   }
 
+  pendingIncomingDeepLinks.push(...process.argv.filter((arg) => arg.startsWith(`${BRANDING.protocol}://`)))
+
   preferAppEnv(app.getPath("userData"))
   const startupRecovery = createStartupRecovery({
     executable: bundledRecoveryExecutable(desktopResourcesPath()),
@@ -321,6 +335,7 @@ const main = Effect.gen(function* () {
   const loadingComplete = Deferred.makeUnsafe<void>()
   let initializationSucceeded = false
   let overlay: BrowserWindow | null = null
+  let wslStartupRecoveryActive = false
 
   registerIpcHandlers({
     inspectRecovery: () => startupRecovery.inspect(),
@@ -517,7 +532,25 @@ const main = Effect.gen(function* () {
     const wslSnapshot = yield* Effect.promise(() => wslService.snapshot())
     const spawned = yield* Effect.promise(async () => {
       if (wslSnapshot.enabled) {
-        await wslLifecycle!.start()
+        await recoverWslStartup({
+          start: () => wslLifecycle!.start(),
+          onRecoveryStart: () => {
+            wslStartupRecoveryActive = true
+            overlay?.destroy()
+            overlay = null
+          },
+          prompt: showWslStartupRecoveryDialog,
+          disableAndRestart: async () => {
+            const current = await wslService.snapshot()
+            const disabled = await wslService.configure({ enabled: false, expectedRevision: current.revision })
+            if (disabled.enabled || disabled.revision !== current.revision + 1) {
+              throw new Error("WSL disable did not reach the exact next revision.")
+            }
+            return relaunchDesktop()
+          },
+          quit: quitBeforeStartup,
+        })
+        wslStartupRecoveryActive = false
         return {
           listener: { stop: () => wslLifecycle!.stop() },
           health: { wait: Promise.resolve() },
@@ -559,7 +592,7 @@ const main = Effect.gen(function* () {
       Effect.as(false),
       Effect.catch(() => Effect.succeed(true)),
     )
-    if (show) {
+    if (show && !wslStartupRecoveryActive) {
       overlay = createLoadingWindow()
       yield* Effect.sleep("1 second")
     }
@@ -580,7 +613,10 @@ const main = Effect.gen(function* () {
 
   if (overlay) yield* Deferred.await(loadingComplete)
 
-  void deepLinkEvents.flush().catch(() => logger.warn("Desktop pending callback handling failed."))
+  incomingDeepLinksReady = true
+  yield* Effect.promise(() =>
+    deepLinkEvents.flush().catch(() => logger.warn("Desktop pending callback handling failed.")),
+  )
 
   mainWindow = createMainWindow(() => sidecarAuthorization)
   mainWindow.on("closed", () => accountClient?.cancelSignIn())

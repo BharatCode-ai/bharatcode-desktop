@@ -16,7 +16,33 @@ included. This is a point-in-time inventory, not an automatically maintained led
   branch. Its files/dependencies are preserved pending deliberate worktree cleanup.
 - No push, force update, remote deletion, or unrelated branch merge occurred.
 
-## Important remote divergence
+## Remote reconciliation
+
+The subsequent normal merge of `origin/dev` at
+`5d2355e5a0b6288a9077fa5338d764051ba2707b` reconciles the divergence below.
+Both histories are retained; no force update or remote publication is involved.
+
+- Retained the remote WSL startup Retry / explicit Disable-and-restart / Quit
+  behavior, cold-start deep-link queuing, renderer-protocol ordering check, and
+  four historical recovery design/plan documents.
+- Adapted deep-link handling to the current payload-free logging and account-session
+  implementation. Queued links wait for healthy startup; OAuth callbacks are not
+  carried into relaunch command-line arguments.
+- Kept current native Windows held-handle credential/marker protection, durable
+  recovery publication, safe log initialization, terminal initialization delivery,
+  dynamic authenticated model catalog, account switching, and session restoration.
+  The alternate older implementations are superseded, not additional features.
+- Kept the Mac WAL fix and simplified batched-release workflows. Historical workflow
+  baseline changes and a silent Windows directory-sync skip were not reintroduced.
+- Recovery CLI packaging changes were already incorporated through equivalent
+  commits. Historical plans remain reference documents, not new execution gates.
+
+Local verification: 90 focused Desktop tests passed (390 assertions), Desktop
+`bun run typecheck` passed, and changed-source formatting/whitespace checks passed.
+Dependencies were installed in the main checkout with the frozen lockfile and
+install scripts disabled. No full CI, native package build, or release was run.
+
+### Pre-reconciliation snapshot
 
 Freshly fetched `origin/dev` is `5d2355e5a0b6288a9077fa5338d764051ba2707b`.
 At the merge, local dev has **96 commits not on origin/dev**, and origin/dev has

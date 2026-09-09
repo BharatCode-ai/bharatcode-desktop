@@ -104,7 +104,42 @@ test("production callback entrypoints and deferred forwarding use the tested bou
   expect(source).toContain("deepLinkEvents.secondInstance(argv)")
   expect(source).toContain("deepLinkEvents.openUrl(event, url)")
   expect(source).toContain("deepLinkEvents.flush()")
+  expect(source).toContain("pendingIncomingDeepLinks.push(...process.argv.filter(")
+  expect(source).toContain("ready: () => incomingDeepLinksReady")
+  expect(source.indexOf("incomingDeepLinksReady = true")).toBeGreaterThan(
+    source.indexOf("yield* Fiber.join(loadingTask)"),
+  )
+  expect(source.indexOf("deepLinkEvents.flush()")).toBeLessThan(source.indexOf("mainWindow = createMainWindow"))
   expect(source).not.toContain('logger.log("deep link received')
   expect(source).not.toContain('logger.warn("failed to handle BharatCode auth callback", error)')
   expect(source).not.toContain('logger.warn("failed to complete BharatCode sign-in", error)')
+})
+
+test("cold-start and recovery-time links wait for healthy initialization even when the account client exists", async () => {
+  let ready = false
+  const project = "bharatcode://project/open?path=fixture"
+  const pending = [callback, project]
+  const seen: string[] = []
+  const events = createDeepLinkEvents({
+    protocol: "bharatcode",
+    pending,
+    ready: () => ready,
+    client: () => ({
+      completeSignIn: async (url) => {
+        seen.push(url)
+      },
+    }),
+    forward: async (urls) => {
+      seen.push(...urls)
+    },
+    log: () => {},
+  })
+  await events.flush()
+  await events.secondInstance([project])
+  expect(seen).toEqual([])
+  expect(pending).toEqual([callback, project, project])
+  ready = true
+  await events.flush()
+  expect(seen).toEqual([callback, project, project])
+  expect(pending).toEqual([])
 })
