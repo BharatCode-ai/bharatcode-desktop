@@ -1,0 +1,197 @@
+name: Build and Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact 40-hex commit SHA to build
+        required: true
+        type: string
+      version:
+        description: Version to publish (e.g., 1.15.30)
+        required: true
+        type: string
+      publish_npm:
+        description: Publish to npm
+        required: true
+        default: true
+        type: boolean
+      publish_github:
+        description: Create GitHub Release
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+env:
+  SOURCE_SHA: ${{ inputs.source_sha }}
+  VERSION: ${{ inputs.version }}
+
+jobs:
+  build-cli:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version-file: package.json
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build CLI
+        run: |
+          cd packages/opencode
+          OPENCODE_VERSION="${{ inputs.version }}" bun run script/build.ts --single
+
+      - name: Upload CLI artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-linux-x64
+          path: packages/opencode/dist/bharatcode-linux-x64/
+
+  build-macos-arm64:
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version-file: package.json
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build CLI
+        run: |
+          cd packages/opencode
+          OPENCODE_VERSION="${{ inputs.version }}" bun run script/build.ts --single
+
+      - name: Upload CLI artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-darwin-arm64
+          path: packages/opencode/dist/bharatcode-darwin-arm64/
+
+  build-macos-x64:
+    runs-on: macos-15-intel
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version-file: package.json
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build CLI
+        run: |
+          cd packages/opencode
+          OPENCODE_VERSION="${{ inputs.version }}" bun run script/build.ts --single
+
+      - name: Upload CLI artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-darwin-x64
+          path: packages/opencode/dist/bharatcode-darwin-x64/
+
+  build-windows:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version-file: package.json
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build CLI
+        run: |
+          cd packages/opencode
+          OPENCODE_VERSION="${{ inputs.version }}" bun run script/build.ts --single
+
+      - name: Upload CLI artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-windows-x64
+          path: packages/opencode/dist/bharatcode-windows-x64/
+
+  publish-npm:
+    needs: [build-cli, build-macos-arm64, build-macos-x64, build-windows]
+    if: inputs.publish_npm
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          # Publish platform-specific packages
+          for dir in artifacts/cli-*/; do
+            if [ -d "$dir" ]; then
+              cd "$dir"
+              npm publish --access public
+              cd -
+            fi
+          done
+
+          # Publish meta package
+          cd packages/opencode
+          npm publish --access public
+
+  create-release:
+    needs: [build-cli, build-macos-arm64, build-macos-x64, build-windows]
+    if: inputs.publish_github
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ inputs.version }}
+          name: Release ${{ inputs.version }}
+          draft: false
+          prerelease: true
+          files: |
+            artifacts/cli-linux-x64/**
+            artifacts/cli-darwin-arm64/**
+            artifacts/cli-darwin-x64/**
+            artifacts/cli-windows-x64/**
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
