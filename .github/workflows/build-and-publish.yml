@@ -128,6 +128,7 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Build CLI
+        shell: bash
         run: |
           cd packages/opencode
           OPENCODE_VERSION="${{ inputs.version }}" bun run script/build.ts --single
