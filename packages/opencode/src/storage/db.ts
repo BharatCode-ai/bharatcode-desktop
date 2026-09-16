@@ -144,7 +144,7 @@ export const Client = Object.assign(
     }
     if (markerGate && existsSync(dbPath)) {
       const diagnosis =
-        process.platform === "darwin"
+        process.platform === "darwin" || process.platform === "linux"
           ? withInitializedWalFiles(dbPath, () => diagnoseSchemaMarker(markerInput))
           : diagnoseSchemaMarker(markerInput)
       if (diagnosis.state !== "healthy") throw new DatabaseRecoveryRequiredError()

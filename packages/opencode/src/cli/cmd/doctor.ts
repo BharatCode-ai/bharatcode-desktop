@@ -68,7 +68,7 @@ export function createRecoveryController(input: RecoveryControllerInput) {
       }
     }
     if (await fileExists(input.destination.database)) {
-      if (input.initialize && input.platform === "darwin") {
+      if (input.initialize && (input.platform === "darwin" || input.platform === "linux")) {
         return withInitializedWalFiles(input.destination.database, () => inspectMarker(input))
       }
       return inspectMarker(input)
