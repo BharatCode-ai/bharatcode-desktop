@@ -19,7 +19,7 @@ import { readMigrationJournal } from "@/migration/journal"
 import { discoverMigrationSources, type MigrationSource } from "@/migration/source"
 import { cmd } from "./cmd"
 
-type SourceChoice = { id: string; label: string; contentFingerprint: string }
+export type SourceChoice = { id: string; label: string; contentFingerprint: string }
 export type RecoveryCommandResult =
   | { state: "ready" }
   | { state: "choose-source"; sources: readonly SourceChoice[] }
@@ -348,6 +348,72 @@ function parseResult(value: unknown): RecoveryCommandResult {
 
 function writeResult(result: RecoveryCommandResult) {
   process.stdout.write(`${JSON.stringify(parseResult(result))}\n`)
+}
+
+/**
+ * Why startup cannot continue, or undefined when it can.
+ *
+ * Only the destination's own integrity blocks startup. States that merely mean
+ * "no usable database yet" are not failures: startup resolves them itself, by
+ * adopting a single unambiguous source or initializing a clean destination.
+ * Blocking on those bricked fresh installs, which report
+ * `start-fresh`/`no-source` with nothing to migrate and nothing to lose.
+ */
+export function startupRecoveryBlocker(result: RecoveryCommandResult): string | undefined {
+  if (result.state === "retry")
+    return `A previous BharatCode migration was interrupted. Finish it with \`bharatcode recovery retry --operation-id ${result.operationID}\`.`
+  if (result.state === "marker-repair")
+    return `BharatCode's database marker needs repair (${result.diagnosis}). Run \`bharatcode doctor repair --confirm\`.`
+  if (result.state === "blocked")
+    return `BharatCode cannot use its database (${result.reason}). Run \`bharatcode doctor\` for details.`
+  return undefined
+}
+
+export type StartupRecovery = {
+  /** Previous-version data adopted without asking, because it was the only candidate. */
+  adopted?: SourceChoice
+  /** Candidates left alone because the choice was ambiguous. */
+  deferredSources: readonly SourceChoice[]
+}
+
+/**
+ * Resolve recovery state before startup.
+ *
+ * A single unambiguous source is adopted silently: there is exactly one
+ * possible answer, so asking only strands the user's data behind a prompt.
+ * Anything ambiguous starts clean and leaves every candidate untouched.
+ */
+export async function ensureStartupRecovery(): Promise<StartupRecovery> {
+  const controller = createDefaultRecoveryController({ initialize: true })
+  const current = await controller.inspect()
+  if (current.state === "ready") return { deferredSources: [] }
+  const blocker = startupRecoveryBlocker(current)
+  if (blocker) throw new Error(blocker)
+
+  const only = current.state === "choose-source" && current.sources.length === 1 ? current.sources[0]! : undefined
+  if (only) {
+    let result = await controller.run({
+      type: "choose-source",
+      id: only.id,
+      contentFingerprint: only.contentFingerprint,
+    })
+    // A concurrent startup may already own the migration; finish it rather than racing.
+    if (result.state === "retry") result = await controller.run({ type: "retry", operationID: result.operationID })
+    if (result.state === "ready") return { adopted: only, deferredSources: [] }
+    throw new Error(
+      startupRecoveryBlocker(result) ??
+        "BharatCode could not import data from a previous version. Run `bharatcode doctor` for details.",
+    )
+  }
+
+  const deferredSources = current.state === "choose-source" ? current.sources : []
+  const started = await controller.run({ type: "start-fresh", confirmed: true })
+  if (started.state !== "ready") {
+    throw new Error(
+      startupRecoveryBlocker(started) ?? "BharatCode could not initialize its data directory. Run `bharatcode doctor`.",
+    )
+  }
+  return { deferredSources }
 }
 
 function openSchemaDatabase(file: string, options: { readonly: boolean }): SchemaDatabase {

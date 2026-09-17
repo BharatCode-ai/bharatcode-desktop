@@ -37,7 +37,7 @@ import { Heap } from "./cli/heap"
 import { drizzle } from "drizzle-orm/bun-sqlite"
 import { ensureProcessMetadata } from "@opencode-ai/core/util/opencode-process"
 import { isRecord } from "@/util/record"
-import { createDefaultRecoveryController, DoctorCommand, RecoveryCommand } from "./cli/cmd/doctor"
+import { DoctorCommand, ensureStartupRecovery, RecoveryCommand } from "./cli/cmd/doctor"
 
 type ParsedCommandContext = {
   getInternalMethods(): { getContext(): { commands: readonly string[] } }
@@ -95,9 +95,15 @@ const cli = yargs(args)
     const informationalInvocation = opts.help === true || opts.version === true
     const bypassRecoveryGate = recoveryCommand || informationalInvocation
     if (!bypassRecoveryGate) {
-      const recovery = await createDefaultRecoveryController({ initialize: true }).inspect()
-      if (recovery.state !== "ready") {
-        throw new Error("BharatCode recovery is required. Run `bharatcode doctor` before startup.")
+      const recovery = await ensureStartupRecovery()
+      if (recovery.adopted) {
+        process.stderr.write(`Imported data from a previous BharatCode version: ${recovery.adopted.label}${EOL}`)
+      }
+      if (recovery.deferredSources.length > 0) {
+        process.stderr.write(
+          `Started with a clean workspace. ${recovery.deferredSources.length} sets of data from previous BharatCode versions were found and left untouched:${EOL}` +
+            recovery.deferredSources.map((source) => `  ${source.label}${EOL}`).join(""),
+        )
       }
     }
     if (bypassRecoveryGate) return
