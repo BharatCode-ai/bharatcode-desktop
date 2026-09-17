@@ -203,7 +203,16 @@ try {
     throw new Error("shared logout did not clear account")
   }
 
-  const allowedExternal = new Set(["https://bharatcode.ai", "https://evgvlcaxfpwupaiwzqqm.supabase.co"])
+  // github.com is the ripgrep release download, which the runtime fetches once
+  // and caches. It is allowed only because the archive is verified against a
+  // SHA-256 pinned in src/file/ripgrep.ts before it is written or executed;
+  // without that pin this belongs on the forbidden list. Every other external
+  // origin is a boundary violation.
+  const allowedExternal = new Set([
+    "https://bharatcode.ai",
+    "https://evgvlcaxfpwupaiwzqqm.supabase.co",
+    "https://github.com",
+  ])
   const forbiddenAttempts = attempts.filter((attempt) => {
     if (attempt.kind === "fetch" || attempt.kind === "authorize") {
       return !allowedExternal.has(new URL(attempt.target).origin)
