@@ -439,7 +439,7 @@ jobs:
           done
           bun install --frozen-lockfile --linker hoisted
           (cd packages/core && bun test test/storage-paths.test.ts)
-          (cd packages/opencode && bun test test/migration/cutover.test.ts test/bharatcode/account.test.ts)
+          (cd packages/opencode && bun test test/migration/cutover.test.ts test/bharatcode/account.test.ts test/cli/doctor.test.ts test/product/lean-migration-recovery.test.ts)
           bun run --cwd packages/desktop typecheck
           bun run --cwd packages/desktop build
 
