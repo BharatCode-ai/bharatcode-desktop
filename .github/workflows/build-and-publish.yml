@@ -123,8 +123,9 @@ jobs:
         run: |
           set -euo pipefail
           npm install -g npm@latest   # trusted publishing needs npm >= 11.5.1
-          meta="out/bharatcode-$VERSION.tgz"
-          for tgz in out/*.tgz; do
+          # Paths must start with ./ - npm parses a bare "a/b" as github:a/b
+          meta="./out/bharatcode-$VERSION.tgz"
+          for tgz in ./out/*.tgz; do
             if [ "$tgz" = "$meta" ]; then continue; fi
             npm publish "$tgz" --access public --provenance --tag "${{ inputs.npm_tag }}"
           done
