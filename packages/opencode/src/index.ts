@@ -38,6 +38,7 @@ import { drizzle } from "drizzle-orm/bun-sqlite"
 import { ensureProcessMetadata } from "@opencode-ai/core/util/opencode-process"
 import { isRecord } from "@/util/record"
 import { DoctorCommand, ensureStartupRecovery, RecoveryCommand } from "./cli/cmd/doctor"
+import { DISTRIBUTION } from "../script/distribution.mjs"
 
 type ParsedCommandContext = {
   getInternalMethods(): { getContext(): { commands: readonly string[] } }
@@ -97,7 +98,14 @@ const cli = yargs(args)
     if (!bypassRecoveryGate) {
       const recovery = await ensureStartupRecovery()
       if (recovery.adopted) {
-        process.stderr.write(`Imported data from a previous BharatCode version: ${recovery.adopted.label}${EOL}`)
+        // Files are copied, but credentials are NOT re-homed: the desktop app
+        // stores an OAuth token set at ~/.bharatcode/credentials.json, while the
+        // CLI reads its own account record. Say what actually happened rather
+        // than implying a working session came across.
+        process.stderr.write(
+          `Carried over files from a previous BharatCode version: ${recovery.adopted.label}${EOL}` +
+            `Sign in with \`${DISTRIBUTION.commandName} auth login\` if you are not already signed in.${EOL}`,
+        )
       }
       if (recovery.deferredSources.length > 0) {
         process.stderr.write(
