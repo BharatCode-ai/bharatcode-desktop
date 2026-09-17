@@ -117,23 +117,9 @@ describe("lean next-beta migration and recovery scenarios 6-7", () => {
       path.join(home, ".cache", "bharatcode-test", "bin"),
     ]
 
-    const blocked = await runCliProcess(env, ["db", "path"])
-    expect(blocked.exit).toBe(1)
-    expect(blocked.stderr).toContain("BharatCode recovery is required")
-    expect(await Promise.all(ordinaryArtifacts.map(entryExists))).toEqual([false, false, false, false])
-
-    for (const invocation of [
-      ["--model", "doctor"],
-      ["-m", "recovery"],
-      ["--", "doctor"],
-      ["run", "--model=--help", "safe"],
-      ["run", "--", "--version"],
-    ]) {
-      const result = await runCliProcess(env, invocation)
-      expect(result.exit).toBe(1)
-      expect(result.stderr).toContain("BharatCode recovery is required")
-      expect(await Promise.all(ordinaryArtifacts.map(entryExists))).toEqual([false, false, false, false])
-    }
+    // An unmigrated destination no longer blocks startup, so this scenario no
+    // longer asserts on the old gate. Startup classification is covered by the
+    // startupRecoveryBlocker unit test in test/cli/doctor.test.ts.
 
     for (const invocation of [["--help"], ["-h"], ["--version"], ["-v"], ["db", "--help"], ["db", "-h"]]) {
       await runCliRaw(env, invocation)

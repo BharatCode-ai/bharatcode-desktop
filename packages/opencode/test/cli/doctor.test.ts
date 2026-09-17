@@ -5,7 +5,12 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 
-import { createRecoveryController, parseRecoveryCommandResult, type RecoveryCommandResult } from "@/cli/cmd/doctor"
+import {
+  createRecoveryController,
+  parseRecoveryCommandResult,
+  startupRecoveryBlocker,
+  type RecoveryCommandResult,
+} from "@/cli/cmd/doctor"
 import { releasedSchemaCandidatesFromMigrations, type SchemaDatabase } from "@/storage/schema-marker"
 
 const roots: string[] = []
@@ -15,6 +20,24 @@ afterEach(async () => {
 })
 
 describe("bharatcode doctor and recovery adapter", () => {
+  test("only destination integrity blocks startup; a missing database does not", () => {
+    // Nothing usable yet: startup initializes a clean destination rather than refusing.
+    expect(startupRecoveryBlocker({ state: "ready" })).toBeUndefined()
+    expect(startupRecoveryBlocker({ state: "start-fresh", reason: "no-source" })).toBeUndefined()
+    expect(startupRecoveryBlocker({ state: "start-fresh", reason: "ambiguous" })).toBeUndefined()
+    expect(
+      startupRecoveryBlocker({
+        state: "choose-source",
+        sources: [{ id: "source-1", label: "Existing BharatCode data", contentFingerprint: "a".repeat(64) }],
+      }),
+    ).toBeUndefined()
+
+    // The destination itself is in doubt: refuse, and name the command that resolves it.
+    expect(startupRecoveryBlocker({ state: "retry", operationID: "op-1" })).toContain("recovery retry --operation-id")
+    expect(startupRecoveryBlocker({ state: "marker-repair", diagnosis: "invalid" })).toContain("doctor repair")
+    expect(startupRecoveryBlocker({ state: "blocked", reason: "corrupt" })).toContain("doctor")
+  })
+
   test("diagnosis is read-only and compatible marker repair requires explicit confirmation", async () => {
     const fixture = await setup()
     createFixtureDatabase(fixture.destination.database)
@@ -136,7 +159,7 @@ describe("bharatcode doctor and recovery adapter", () => {
     )
   })
 
-  test("registers the real CLI command and blocks ordinary startup before database access", async () => {
+  test("registers the real CLI command and starts cleanly when there is nothing to migrate", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "bharatcode-doctor-cli-"))
     roots.push(root)
     const env: Record<string, string | undefined> = {
@@ -148,78 +171,54 @@ describe("bharatcode doctor and recovery adapter", () => {
     for (const name of ["OPENCODE_DB", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME"]) {
       delete env[name]
     }
-    const cases = [
-      { args: ["--help"], exit: 0, recovery: false },
-      { args: ["--version"], exit: 0, recovery: false },
-      { args: ["db", "--help"], exit: 0, recovery: false },
-      { args: ["db", "path"], exit: 1, recovery: true },
-      { args: ["db", "path", "--", "--help"], exit: 1, recovery: true },
-      { args: ["run", "--", "--version"], exit: 1, recovery: true },
-    ] as const
-    for (const item of cases) {
-      const child = Bun.spawn([process.execPath, "run", "--conditions=browser", "./src/index.ts", ...item.args], {
+    // The canonical destination is platform-specific; a fixed XDG path silently
+    // makes every existence assertion vacuous on macOS.
+    const destination =
+      process.platform === "darwin"
+        ? path.join(root, "Library", "Application Support", "bharatcode-test")
+        : path.join(root, ".local", "share", "bharatcode-test")
+    const database = path.join(destination, "bharatcode.db")
+    const marker = path.join(destination, ".schema-version")
+    const spawn = async (args: readonly string[]) => {
+      const child = Bun.spawn([process.execPath, "run", "--conditions=browser", "./src/index.ts", ...args], {
         cwd: path.join(import.meta.dir, "../.."),
         env,
         stdout: "pipe",
         stderr: "pipe",
       })
-      const [, error, exit] = await Promise.all([
+      const [out, error, exit] = await Promise.all([
         new Response(child.stdout).text(),
         new Response(child.stderr).text(),
         child.exited,
       ])
-      expect(exit).toBe(item.exit)
-      expect(error.includes("BharatCode recovery is required")).toBe(item.recovery)
-      expect(await Bun.file(path.join(root, ".local", "share", "bharatcode-test", "bharatcode.db")).exists()).toBe(
-        false,
-      )
-      expect(await Bun.file(path.join(root, ".local", "share", "bharatcode-test", ".schema-version")).exists()).toBe(
-        false,
-      )
+      return { out, error, exit }
     }
 
-    const doctor = Bun.spawn([process.execPath, "run", "--conditions=browser", "./src/index.ts", "doctor"], {
-      cwd: path.join(import.meta.dir, "../.."),
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-    })
-    const [doctorOut, doctorError, doctorExit] = await Promise.all([
-      new Response(doctor.stdout).text(),
-      new Response(doctor.stderr).text(),
-      doctor.exited,
-    ])
-    expect(doctorExit).toBe(0)
-    expect(doctorError).not.toContain("Performing one time database migration")
-    expect(parseRecoveryCommandResult(doctorOut)).toEqual({ state: "start-fresh", reason: "no-source" })
+    // Informational invocations bypass recovery entirely and never touch the database.
+    for (const args of [["--help"], ["--version"], ["db", "--help"]] as const) {
+      const result = await spawn(args)
+      expect(result.exit).toBe(0)
+      expect(result.error).not.toContain("recovery is required")
+      expect(await Bun.file(database).exists()).toBe(false)
+      expect(await Bun.file(marker).exists()).toBe(false)
+    }
 
-    const fresh = Bun.spawn(
-      [
-        process.execPath,
-        "run",
-        "--conditions=browser",
-        "./src/index.ts",
-        "recovery",
-        "start-fresh",
-        "--confirm",
-        "--json",
-      ],
-      { cwd: path.join(import.meta.dir, "../.."), env, stdout: "pipe", stderr: "pipe" },
-    )
-    const [freshOut, freshExit] = await Promise.all([new Response(fresh.stdout).text(), fresh.exited])
-    expect(freshExit).toBe(0)
-    expect(parseRecoveryCommandResult(freshOut)).toEqual({ state: "ready" })
+    // Diagnosis stays read-only: it reports the pre-startup state without creating anything.
+    const doctor = await spawn(["doctor"])
+    expect(doctor.exit).toBe(0)
+    expect(doctor.error).not.toContain("Performing one time database migration")
+    expect(parseRecoveryCommandResult(doctor.out)).toEqual({ state: "start-fresh", reason: "no-source" })
+    expect(await Bun.file(marker).exists()).toBe(false)
 
-    const started = Bun.spawn([process.execPath, "run", "--conditions=browser", "./src/index.ts", "db", "path"], {
-      cwd: path.join(import.meta.dir, "../.."),
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-    })
-    const [startedError, startedExit] = await Promise.all([new Response(started.stderr).text(), started.exited])
-    expect(startedExit).toBe(0)
-    expect(startedError).not.toContain("recovery is required")
-    expect(await Bun.file(path.join(root, ".local", "share", "bharatcode-test", ".schema-version")).exists()).toBe(true)
+    // An ordinary command initializes a clean destination instead of refusing to start.
+    const started = await spawn(["db", "path"])
+    expect(started.exit).toBe(0)
+    expect(started.error).not.toContain("recovery is required")
+    expect(await Bun.file(marker).exists()).toBe(true)
+
+    // The destination is ready from then on.
+    const after = await spawn(["doctor"])
+    expect(parseRecoveryCommandResult(after.out)).toEqual({ state: "ready" })
   }, 40_000)
 })
 
