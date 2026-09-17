@@ -4,6 +4,8 @@ import os from "node:os"
 
 export const DISTRIBUTION = Object.freeze({
   packageName: "bharatcode",
+  /** Human-readable product name for titles and descriptions. */
+  displayName: "BharatCode",
   commandName: "bharatcode",
   binaryPathEnvironmentVariable: "BHARATCODE_BIN_PATH",
   repository: "BharatCode-ai/bharatcode-desktop",
