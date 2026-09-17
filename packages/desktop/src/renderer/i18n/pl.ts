@@ -1,6 +1,5 @@
 export const dict = {
   "desktop.menu.checkForUpdates": "Sprawdź aktualizacje...",
-  "desktop.menu.installCli": "Zainstaluj CLI...",
   "desktop.menu.reloadWebview": "Przeładuj Webview",
   "desktop.menu.restart": "Restartuj",
 
@@ -20,9 +19,4 @@ export const dict = {
   "desktop.updater.installFailed.title": "Aktualizacja nie powiodła się",
   "desktop.updater.installFailed.message": "Nie udało się zainstalować aktualizacji",
 
-  "desktop.cli.installed.title": "CLI zainstalowane",
-  "desktop.cli.installed.message":
-    "CLI zainstalowane w {{path}}\n\nUruchom ponownie terminal, aby użyć polecenia 'bharatcode'.",
-  "desktop.cli.failed.title": "Instalacja nie powiodła się",
-  "desktop.cli.failed.message": "Nie udało się zainstalować CLI: {{error}}",
 }
