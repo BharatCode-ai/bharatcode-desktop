@@ -17,6 +17,7 @@ import { SnapshotCommand } from "./snapshot"
 import { AgentCommand } from "./agent"
 import { StartupCommand } from "./startup"
 import { V2Command } from "./v2"
+import { DISTRIBUTION } from "../../../../script/distribution.mjs"
 
 export const DebugCommand = cmd({
   command: "debug",
@@ -58,7 +59,7 @@ const InfoCommand = effectCmd({
       : undefined
     const terminal = [termProgram, process.env.TERM].filter((item): item is string => Boolean(item)).join(" / ")
 
-    console.log(`opencode version: ${InstallationVersion}`)
+    console.log(`${DISTRIBUTION.commandName} version: ${InstallationVersion}`)
     console.log(`os: ${os.type()} ${os.release()} ${os.arch()}`)
     console.log(`terminal: ${terminal || "unknown"}`)
     console.log("plugins:")

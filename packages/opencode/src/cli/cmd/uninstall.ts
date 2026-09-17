@@ -3,6 +3,7 @@ import { UI } from "../ui"
 import * as prompts from "@clack/prompts"
 import { Installation } from "../../installation"
 import { Global } from "@opencode-ai/core/global"
+import { DISTRIBUTION } from "../../../script/distribution.mjs"
 import fs from "fs/promises"
 import path from "path"
 import os from "os"
@@ -132,13 +133,13 @@ async function showRemovalSummary(targets: RemovalTargets, method: Installation.
 
   if (method !== "curl" && method !== "unknown") {
     const cmds: Record<string, string> = {
-      npm: "npm uninstall -g opencode-ai",
-      pnpm: "pnpm uninstall -g opencode-ai",
-      bun: "bun remove -g opencode-ai",
-      yarn: "yarn global remove opencode-ai",
-      brew: "brew uninstall opencode",
-      choco: "choco uninstall opencode",
-      scoop: "scoop uninstall opencode",
+      npm: `npm uninstall -g ${DISTRIBUTION.npmPackage}`,
+      pnpm: `pnpm uninstall -g ${DISTRIBUTION.npmPackage}`,
+      bun: `bun remove -g ${DISTRIBUTION.npmPackage}`,
+      yarn: `yarn global remove ${DISTRIBUTION.npmPackage}`,
+      brew: `brew uninstall ${DISTRIBUTION.formulaName}`,
+      choco: `choco uninstall ${DISTRIBUTION.formulaName}`,
+      scoop: `scoop uninstall ${DISTRIBUTION.formulaName}`,
     }
     prompts.log.info(`  ✓ Package: ${cmds[method] || method}`)
   }
@@ -183,19 +184,19 @@ async function executeUninstall(method: Installation.Method, targets: RemovalTar
 
   if (method !== "curl" && method !== "unknown") {
     const cmds: Record<string, string[]> = {
-      npm: ["npm", "uninstall", "-g", "opencode-ai"],
-      pnpm: ["pnpm", "uninstall", "-g", "opencode-ai"],
-      bun: ["bun", "remove", "-g", "opencode-ai"],
-      yarn: ["yarn", "global", "remove", "opencode-ai"],
-      brew: ["brew", "uninstall", "opencode"],
-      choco: ["choco", "uninstall", "opencode"],
-      scoop: ["scoop", "uninstall", "opencode"],
+      npm: ["npm", "uninstall", "-g", DISTRIBUTION.npmPackage],
+      pnpm: ["pnpm", "uninstall", "-g", DISTRIBUTION.npmPackage],
+      bun: ["bun", "remove", "-g", DISTRIBUTION.npmPackage],
+      yarn: ["yarn", "global", "remove", DISTRIBUTION.npmPackage],
+      brew: ["brew", "uninstall", DISTRIBUTION.formulaName],
+      choco: ["choco", "uninstall", DISTRIBUTION.formulaName],
+      scoop: ["scoop", "uninstall", DISTRIBUTION.formulaName],
     }
 
     const cmd = cmds[method]
     if (cmd) {
       spinner.start(`Running ${cmd.join(" ")}...`)
-      const result = await Process.run(method === "choco" ? ["choco", "uninstall", "opencode", "-y", "-r"] : cmd, {
+      const result = await Process.run(method === "choco" ? ["choco", "uninstall", DISTRIBUTION.formulaName, "-y", "-r"] : cmd, {
         nothrow: true,
       })
       if (result.code !== 0) {

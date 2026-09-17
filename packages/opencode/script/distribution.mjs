@@ -4,9 +4,19 @@ import os from "node:os"
 
 export const DISTRIBUTION = Object.freeze({
   packageName: "bharatcode",
+  /** Human-readable product name for titles and descriptions. */
+  displayName: "BharatCode",
   commandName: "bharatcode",
   binaryPathEnvironmentVariable: "BHARATCODE_BIN_PATH",
   repository: "BharatCode-ai/bharatcode-desktop",
+  /** npm package that `upgrade` installs and `uninstall` removes. */
+  npmPackage: "bharatcode",
+  /** Formula/package id for brew, scoop and choco. */
+  formulaName: "bharatcode",
+  /** Tap checked before the core formula. */
+  brewTap: "BharatCode-ai/tap",
+  /** Shell installer used by the curl install method. */
+  installUrl: "https://bharatcode.ai/install",
 })
 
 /** @type {ReadonlyArray<Readonly<{os: string, arch: "arm64" | "x64", abi?: "musl", avx2?: false}>>} */

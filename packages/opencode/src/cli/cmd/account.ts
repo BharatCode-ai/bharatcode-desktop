@@ -7,6 +7,7 @@ import { cmd } from "./cmd"
 import { CliError, effectCmd, fail } from "../effect-cmd"
 import * as Prompt from "../effect/prompt"
 import { UI } from "../ui"
+import { DISTRIBUTION } from "../../../script/distribution.mjs"
 
 export const localLogoutMessage = "Signed out locally. Existing access tokens may remain valid until they expire."
 
@@ -38,7 +39,7 @@ const printStatus = (status: BharatCodeAccount.Status) =>
     for (const line of formatAccountStatus(status)) UI.println(line)
   })
 
-const login = Effect.fn("Cli.account.loginFlow")(function* (selectAccount: boolean) {
+export const login = Effect.fn("Cli.account.loginFlow")(function* (selectAccount: boolean) {
   const account = yield* BharatCodeAccount.Service
   const authorization = yield* account
     .beginAuthorization({
@@ -153,4 +154,36 @@ export const AccountCommand = cmd({
   builder: (yargs) =>
     yargs.command(LoginCommand).command(StatusCommand).command(LogoutCommand).command(ReconnectCommand).demandCommand(),
   async handler() {},
+})
+
+
+/** True when a browser sign-in can actually complete: both ends interactive. */
+export function canPromptForSignIn() {
+  if (process.env.BHARATCODE_NO_AUTO_LOGIN) return false
+  return Boolean(process.stdin.isTTY && process.stdout.isTTY)
+}
+
+/**
+ * Sign in on boot when there is no usable session.
+ *
+ * `accessToken()` already refreshes silently, so a merely-expired token never
+ * reaches here; this only fires when there is no session at all or the refresh
+ * token is spent. Interactive terminals get the same flow as `auth login`.
+ * Non-interactive ones are told what to run: the OAuth callback targets a
+ * loopback server, so a printed URL cannot complete without it.
+ */
+export const ensureSignedIn = Effect.fn("Cli.account.ensureSignedIn")(function* () {
+  const account = yield* BharatCodeAccount.Service
+  const status = yield* account.status().pipe(Effect.mapError(asCliError))
+  if (status.state === "signed-in") return
+
+  if (!canPromptForSignIn()) {
+    // One message, not two: the CliError is what the caller prints.
+    return yield* new CliError({
+      message: `Sign in to BharatCode to continue: ${DISTRIBUTION.commandName} auth login`,
+    })
+  }
+
+  UI.empty()
+  yield* login(false)
 })

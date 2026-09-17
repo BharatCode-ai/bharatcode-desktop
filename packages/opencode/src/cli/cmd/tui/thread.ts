@@ -1,4 +1,6 @@
 import { cmd } from "@/cli/cmd/cmd"
+import { ensureSignedIn } from "@/cli/cmd/account"
+import { AppRuntime } from "@/effect/app-runtime"
 import { Rpc } from "@/util/rpc"
 import { type rpc } from "./worker"
 import path from "path"
@@ -123,6 +125,17 @@ export const TuiThreadCommand = cmd({
 
       if (args.fork && !args.continue && !args.session) {
         UI.error("--fork requires --continue or --session")
+        process.exitCode = 1
+        return
+      }
+
+      // Sign in before the worker spawns. Only the interactive TUI does this:
+      // `run`, `serve`, `acp` and friends must never open a browser or block on
+      // a loopback callback, because scripts and CI invoke them.
+      try {
+        await AppRuntime.runPromise(ensureSignedIn())
+      } catch (e) {
+        UI.error(errorMessage(e))
         process.exitCode = 1
         return
       }
