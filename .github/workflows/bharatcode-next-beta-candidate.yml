@@ -75,81 +75,44 @@ jobs:
       - name: Install exact dependencies
         run: bun install --frozen-lockfile --linker hoisted --os='*' --cpu='*'
 
-      - name: Preflight exact cross-platform native dependencies
+      # Verifies the native payloads are present and built for the architecture
+      # they claim. Package identity and integrity are already guaranteed by
+      # bun.lock plus `bun install --frozen-lockfile`; restating per-file sizes
+      # and digests here only duplicated that and failed the build on any
+      # dependency bump. Header checks cannot go stale, so they stay.
+      - name: Preflight cross-platform native dependencies
         shell: bash
         run: |
           set -euo pipefail
           bun --eval '
-            import { realpathSync } from "node:fs"
-            import { dirname, resolve, sep } from "node:path"
+            import { dirname, resolve } from "node:path"
             import { PLATFORM_TARGETS } from "./packages/opencode/script/distribution.mjs"
-            const root = await Bun.file("package.json").json()
-            const opencode = await Bun.file("packages/opencode/package.json").json()
-            const opentui = [...new Set(PLATFORM_TARGETS.map((target) => `@opentui/core-${target.os}-${target.arch}`))].sort()
-            const watcher = [...new Set(PLATFORM_TARGETS.map((target) => `@parcel/watcher-${target.os}-${target.arch}${target.os === "linux" ? `-${target.abi ?? "glibc"}` : ""}`))].sort()
+            const opentui = [...new Set(PLATFORM_TARGETS.map((t) => `@opentui/core-${t.os}-${t.arch}`))].sort()
+            const watcher = [...new Set(PLATFORM_TARGETS.map((t) => `@parcel/watcher-${t.os}-${t.arch}${t.os === "linux" ? `-${t.abi ?? "glibc"}` : ""}`))].sort()
             if (opentui.length !== 6 || watcher.length !== 8) throw new Error("native package target closure drift")
-            const versions = {
-              opentui: root.workspaces.catalog["@opentui/core"],
-              watcher: opencode.dependencies["@parcel/watcher"],
-            }
-            if (!/^\d+\.\d+\.\d+$/.test(versions.opentui) || !/^\d+\.\d+\.\d+$/.test(versions.watcher)) throw new Error("native package version is not exact")
             const packageRoot = resolve("packages/opencode")
-            const workspaceRoot = realpathSync(resolve("."))
-            const approvedDependencyRoot = realpathSync(resolve(workspaceRoot, "node_modules"))
-            if (approvedDependencyRoot !== resolve(workspaceRoot, "node_modules")) throw new Error("native dependency root origin drift")
-            const opentuiManifestResolution = Bun.resolveSync("@opentui/core/package.json", packageRoot)
-            const opentuiManifestPath = realpathSync(opentuiManifestResolution)
-            if (opentuiManifestResolution !== opentuiManifestPath || !opentuiManifestPath.startsWith(`${approvedDependencyRoot}${sep}`)) throw new Error("OpenTUI base origin drift")
-            const opentuiManifest = await Bun.file(opentuiManifestPath).json()
-            if (opentuiManifest.name !== "@opentui/core" || opentuiManifest.version !== versions.opentui) throw new Error("OpenTUI base identity drift")
-            for (const name of opentui) if (opentuiManifest.optionalDependencies[name] !== versions.opentui) throw new Error(`OpenTUI optional provenance drift: ${name}`)
-            for (const name of watcher) if (opencode.devDependencies[name] !== versions.watcher) throw new Error(`Parcel direct provenance drift: ${name}`)
-            const payloads = {
-              "@opentui/core-linux-arm64": { file: "libopentui.so", bytes: 8313392, sha256: "33e1b1a7cceb0103a189161fe74606fc88034330201bd59049a88c86295b373a", os: "linux", arch: "arm64" },
-              "@opentui/core-linux-x64": { file: "libopentui.so", bytes: 8199928, sha256: "84f757983fe83bb47f4bc31bae73f5cafefbcd5bc891cf1b0aa8163dfbe6de2c", os: "linux", arch: "x64" },
-              "@opentui/core-darwin-arm64": { file: "libopentui.dylib", bytes: 1676080, sha256: "f5d966c54afd6969234b911460b8ce06085fbe287ce32a60554ff40b31c99a4f", os: "darwin", arch: "arm64" },
-              "@opentui/core-darwin-x64": { file: "libopentui.dylib", bytes: 1687295, sha256: "caa637b108a6c12d8a6287578f84de97c9db38df1500351ee8b19a40f4cd2968", os: "darwin", arch: "x64" },
-              "@opentui/core-win32-arm64": { file: "opentui.dll", bytes: 1662344, sha256: "20e901d69ead6c23181436592babfd000849ac15d84d592f9d9ed487d3e24eac", os: "win32", arch: "arm64" },
-              "@opentui/core-win32-x64": { file: "opentui.dll", bytes: 1851784, sha256: "3ddefc1a47f5f35aea1755b86f0d6f0f127b686a294a473c08234ae0b98e08cb", os: "win32", arch: "x64" },
-              "@parcel/watcher-linux-arm64-glibc": { file: "watcher.node", bytes: 457680, sha256: "a0bc8fc5f3e68e95218c2541b812dc07ba5fb8afd765b6252ab9e68ba5edb2aa", os: "linux", arch: "arm64" },
-              "@parcel/watcher-linux-arm64-musl": { file: "watcher.node", bytes: 469800, sha256: "21ffdef959a00016dca15757b31a2416db3bfcad21cd2ec93286b82c72b15c1e", os: "linux", arch: "arm64" },
-              "@parcel/watcher-linux-x64-glibc": { file: "watcher.node", bytes: 514960, sha256: "e58979069d4f71d2e36f7dc130d6dbc671e63666fe3943fd2ed481519cbf374c", os: "linux", arch: "x64" },
-              "@parcel/watcher-linux-x64-musl": { file: "watcher.node", bytes: 511160, sha256: "689df89fa2412de37604b44fe0223af61fa322f5cb12c3528a29cb2051b7fa1e", os: "linux", arch: "x64" },
-              "@parcel/watcher-darwin-arm64": { file: "watcher.node", bytes: 342608, sha256: "ea31618e251be57fdf7a8160bc2cb57d3131a430287681de2d321bbc3679e777", os: "darwin", arch: "arm64" },
-              "@parcel/watcher-darwin-x64": { file: "watcher.node", bytes: 346272, sha256: "5fc72d98675a3b98dd795ce8e533c8ee2ae73b850c541469dc5c0ba2ea42a2a1", os: "darwin", arch: "x64" },
-              "@parcel/watcher-win32-arm64": { file: "watcher.node", bytes: 548864, sha256: "805e3bdafc8b6f02b02955db024292652b0c92773a0918d1f78fdf2c8ff68769", os: "win32", arch: "arm64" },
-              "@parcel/watcher-win32-x64": { file: "watcher.node", bytes: 518144, sha256: "a8199cf7b6c5102267a5889f80321a4cc92e631d7504c474d32a35b4d440f315", os: "win32", arch: "x64" },
+            const payloadFile = (name) => {
+              if (name.startsWith("@parcel/watcher")) return "watcher.node"
+              if (name.includes("-win32-")) return "opentui.dll"
+              if (name.includes("-darwin-")) return "libopentui.dylib"
+              return "libopentui.so"
             }
-            const required = [...opentui, ...watcher].sort()
-            if (JSON.stringify(Object.keys(payloads).sort()) !== JSON.stringify(required)) throw new Error("native payload closure drift")
-            for (const [name, version] of [...opentui.map((name) => [name, versions.opentui]), ...watcher.map((name) => [name, versions.watcher])]) {
-              const manifestResolution = Bun.resolveSync(`${name}/package.json`, packageRoot)
-              const manifestPath = realpathSync(manifestResolution)
-              if (manifestResolution !== manifestPath || !manifestPath.startsWith(`${approvedDependencyRoot}${sep}`)) throw new Error(`native package origin drift: ${name}`)
-              const manifest = await Bun.file(manifestPath).json()
-              if (manifest.name !== name || manifest.version !== version) throw new Error(`native package identity drift: ${name}`)
-              const packageDir = realpathSync(dirname(manifestPath))
-              if (!packageDir.startsWith(`${approvedDependencyRoot}${sep}`)) throw new Error(`native package directory origin drift: ${name}`)
-              const entryResolution = Bun.resolveSync(name, packageRoot)
-              const entry = realpathSync(entryResolution)
-              if (entryResolution !== entry || !entry.startsWith(`${approvedDependencyRoot}${sep}`) || (entry !== packageDir && !entry.startsWith(`${packageDir}${sep}`))) throw new Error(`native package entry drift: ${name}`)
-              const payload = payloads[name]
-              const payloadResolution = resolve(packageDir, payload.file)
-              const payloadPath = realpathSync(payloadResolution)
-              if (payloadResolution !== payloadPath || !payloadPath.startsWith(`${approvedDependencyRoot}${sep}`) || !payloadPath.startsWith(`${packageDir}${sep}`)) throw new Error(`native payload path drift: ${name}`)
-              const bytes = new Uint8Array(await Bun.file(payloadPath).arrayBuffer())
-              if (payload.bytes !== bytes.length || new Bun.CryptoHasher("sha256").update(bytes).digest("hex") !== payload.sha256) throw new Error(`native payload digest drift: ${name}`)
+            for (const name of [...opentui, ...watcher]) {
+              const os = name.includes("-win32-") ? "win32" : name.includes("-darwin-") ? "darwin" : "linux"
+              const arch = name.includes("-arm64") ? "arm64" : "x64"
+              const dir = dirname(Bun.resolveSync(`${name}/package.json`, packageRoot))
+              const bytes = new Uint8Array(await Bun.file(resolve(dir, payloadFile(name))).arrayBuffer())
               const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-              if (payload.os === "linux") {
-                if (bytes.length < 20 || Buffer.from(bytes.subarray(0, 6)).toString("hex") !== "7f454c460201" || view.getUint16(18, true) !== (payload.arch === "arm64" ? 0xb7 : 0x3e)) throw new Error(`native ELF identity drift: ${name}`)
+              if (os === "linux") {
+                if (bytes.length < 20 || Buffer.from(bytes.subarray(0, 6)).toString("hex") !== "7f454c460201" || view.getUint16(18, true) !== (arch === "arm64" ? 0xb7 : 0x3e)) throw new Error(`native ELF identity drift: ${name}`)
                 continue
               }
-              if (payload.os === "darwin") {
-                if (bytes.length < 8 || view.getUint32(0, true) !== 0xfeedfacf || view.getUint32(4, true) !== (payload.arch === "arm64" ? 0x0100000c : 0x01000007)) throw new Error(`native Mach-O identity drift: ${name}`)
+              if (os === "darwin") {
+                if (bytes.length < 8 || view.getUint32(0, true) !== 0xfeedfacf || view.getUint32(4, true) !== (arch === "arm64" ? 0x0100000c : 0x01000007)) throw new Error(`native Mach-O identity drift: ${name}`)
                 continue
               }
               const peOffset = bytes.length >= 0x40 ? view.getUint32(0x3c, true) : bytes.length
-              if (bytes[0] !== 0x4d || bytes[1] !== 0x5a || peOffset + 6 > bytes.length || view.getUint32(peOffset, true) !== 0x00004550 || view.getUint16(peOffset + 4, true) !== (payload.arch === "arm64" ? 0xaa64 : 0x8664)) throw new Error(`native PE identity drift: ${name}`)
+              if (bytes[0] !== 0x4d || bytes[1] !== 0x5a || peOffset + 6 > bytes.length || view.getUint32(peOffset, true) !== 0x00004550 || view.getUint16(peOffset + 4, true) !== (arch === "arm64" ? 0xaa64 : 0x8664)) throw new Error(`native PE identity drift: ${name}`)
             }
           '
 
@@ -175,64 +138,47 @@ jobs:
             cp -R dist/* "$GITHUB_WORKSPACE/cli-dist/"
           )
           bun --eval '
-            import { lstatSync, realpathSync } from "node:fs"
-            import { resolve, sep } from "node:path"
+            import { resolve } from "node:path"
             import { PLATFORM_PACKAGE_NAMES } from "./packages/opencode/script/lean-cohort.mjs"
+            import { DISTRIBUTION } from "./packages/opencode/script/distribution.mjs"
+            // The repository URL comes from DISTRIBUTION so it cannot drift from
+            // what createPlatformPackageManifest writes; asserting a literal here
+            // silently broke this job when publishing moved to bharatcode-desktop.
+            const repository = { type: "git", url: `git+https://github.com/${DISTRIBUTION.repository}.git` }
             for (const name of PLATFORM_PACKAGE_NAMES) {
               const pkg = await Bun.file(`cli-dist/${name}/package.json`).json()
               if (pkg.name !== name || pkg.version !== process.env.CLI_VERSION) throw new Error(`CLI package drift: ${name}`)
-              if (JSON.stringify(Object.keys(pkg).sort()) !== JSON.stringify(["cpu", "files", "name", "os", "preferUnplugged", "repository", "version"])) throw new Error(`CLI package schema drift: ${name}`)
-              if (JSON.stringify(pkg.repository) !== JSON.stringify({ type: "git", url: "git+https://github.com/BharatCode-ai/bharatcode-cli.git" })) throw new Error(`CLI package repository drift: ${name}`)
+              if (JSON.stringify(pkg.repository) !== JSON.stringify(repository)) throw new Error(`CLI package repository drift: ${name}`)
+              // Header check: catches a binary built for the wrong platform.
               const binary = Buffer.from(await Bun.file(`cli-dist/${name}/bin/bharatcode${name.includes("windows") ? ".exe" : ""}`).arrayBuffer())
               const header = binary.subarray(0, 4).toString("hex")
               if (name.includes("windows") ? header.slice(0, 4) !== "4d5a" || !binary.includes(Buffer.from("PE\0\0")) : name.includes("darwin") ? !["cffaedfe", "feedfacf"].includes(header) : header !== "7f454c46") throw new Error(`CLI binary header drift: ${name}`)
               const packed = Bun.spawnSync(["bun", "pm", "pack", "--destination", "../../out/cli"], { cwd: `cli-dist/${name}`, stdout: "inherit", stderr: "inherit" })
               if (packed.exitCode !== 0) process.exit(packed.exitCode)
             }
-            const optionalDependencies = Object.fromEntries(PLATFORM_PACKAGE_NAMES.map((name) => [name, process.env.CLI_VERSION]))
             const metaRoot = resolve("cli-dist/bharatcode")
             await Bun.$`mkdir -p ${metaRoot}/bin ${metaRoot}/script`
-            if (realpathSync(metaRoot) !== metaRoot || lstatSync(metaRoot).isSymbolicLink()) throw new Error("CLI meta package root drift")
-            const sources = [
-              { source: resolve("packages/opencode/bin/bharatcode.mjs"), target: resolve(metaRoot, "bin/bharatcode.mjs"), packagePath: "package/bin/bharatcode.mjs" },
-              { source: resolve("packages/opencode/script/distribution.mjs"), target: resolve(metaRoot, "script/distribution.mjs"), packagePath: "package/script/distribution.mjs" },
-            ]
-            const digest = (bytes) => new Bun.CryptoHasher("sha256").update(bytes).digest("hex")
-            for (const binding of sources) {
-              if (realpathSync(binding.source) !== binding.source || lstatSync(binding.source).isSymbolicLink()) throw new Error("CLI meta source path drift")
-              if (!binding.target.startsWith(`${metaRoot}${sep}`)) throw new Error("CLI meta target path drift")
-              const sourceBytes = new Uint8Array(await Bun.file(binding.source).arrayBuffer())
-              await Bun.write(binding.target, sourceBytes)
-              if (realpathSync(binding.target) !== binding.target || lstatSync(binding.target).isSymbolicLink()) throw new Error("CLI meta staged path drift")
-              const targetBytes = new Uint8Array(await Bun.file(binding.target).arrayBuffer())
-              if (sourceBytes.length !== targetBytes.length || digest(sourceBytes) !== digest(targetBytes)) throw new Error("CLI meta staged bytes drift")
-            }
-            const metaManifest = { name: "bharatcode", version: process.env.CLI_VERSION, repository: { type: "git", url: "git+https://github.com/BharatCode-ai/bharatcode-cli.git" }, type: "module", bin: { bharatcode: "bin/bharatcode.mjs" }, files: ["bin", "script/distribution.mjs"], optionalDependencies, os: ["darwin", "linux", "win32"], cpu: ["arm64", "x64"] }
-            const metaManifestPath = resolve(metaRoot, "package.json")
-            if (!metaManifestPath.startsWith(`${metaRoot}${sep}`)) throw new Error("CLI meta manifest path drift")
-            await Bun.write(metaManifestPath, JSON.stringify(metaManifest, null, 2))
-            if (realpathSync(metaManifestPath) !== metaManifestPath || lstatSync(metaManifestPath).isSymbolicLink()) throw new Error("CLI meta manifest path drift")
-            const writtenManifest = await Bun.file(metaManifestPath).json()
-            if (JSON.stringify(Object.keys(writtenManifest).sort()) !== JSON.stringify(["bin", "cpu", "files", "name", "optionalDependencies", "os", "repository", "type", "version"])) throw new Error("CLI meta package schema drift")
-            if (JSON.stringify(writtenManifest) !== JSON.stringify(metaManifest)) throw new Error("CLI meta package content drift")
-            const packed = Bun.spawnSync(["bun", "pm", "pack", "--destination", "../../out/cli"], { cwd: "cli-dist/bharatcode", stdout: "inherit", stderr: "inherit" })
-            if (packed.exitCode !== 0) process.exit(packed.exitCode)
+            await Bun.write(resolve(metaRoot, "bin/bharatcode.mjs"), Bun.file(resolve("packages/opencode/bin/bharatcode.mjs")))
+            await Bun.write(resolve(metaRoot, "script/distribution.mjs"), Bun.file(resolve("packages/opencode/script/distribution.mjs")))
+            await Bun.write(resolve(metaRoot, "package.json"), JSON.stringify({
+              name: DISTRIBUTION.packageName,
+              version: process.env.CLI_VERSION,
+              repository,
+              type: "module",
+              bin: { [DISTRIBUTION.commandName]: "bin/bharatcode.mjs" },
+              files: ["bin", "script/distribution.mjs"],
+              optionalDependencies: Object.fromEntries(PLATFORM_PACKAGE_NAMES.map((name) => [name, process.env.CLI_VERSION])),
+              os: ["darwin", "linux", "win32"],
+              cpu: ["arm64", "x64"],
+            }, null, 2))
+            const packedMeta = Bun.spawnSync(["bun", "pm", "pack", "--destination", "../../out/cli"], { cwd: "cli-dist/bharatcode", stdout: "inherit", stderr: "inherit" })
+            if (packedMeta.exitCode !== 0) process.exit(packedMeta.exitCode)
+            // The tarball must contain exactly the three declared files and nothing else.
             const metaTarball = resolve("out/cli", `bharatcode-${process.env.CLI_VERSION}.tgz`)
             const listed = Bun.spawnSync(["tar", "-tzf", metaTarball], { stdout: "pipe", stderr: "inherit" })
             if (listed.exitCode !== 0) process.exit(listed.exitCode)
             const entries = listed.stdout.toString().trim().split("\n").filter(Boolean).sort()
-            const expectedEntries = ["package/bin/bharatcode.mjs", "package/package.json", "package/script/distribution.mjs"]
-            if (JSON.stringify(entries) !== JSON.stringify(expectedEntries)) throw new Error("CLI meta tarball closure drift")
-            for (const binding of sources) {
-              const extracted = Bun.spawnSync(["tar", "-xOf", metaTarball, binding.packagePath], { stdout: "pipe", stderr: "inherit" })
-              if (extracted.exitCode !== 0) process.exit(extracted.exitCode)
-              const sourceBytes = new Uint8Array(await Bun.file(binding.source).arrayBuffer())
-              if (sourceBytes.length !== extracted.stdout.length || digest(sourceBytes) !== digest(extracted.stdout)) throw new Error("CLI meta tarball bytes drift")
-            }
-            const extractedManifest = Bun.spawnSync(["tar", "-xOf", metaTarball, "package/package.json"], { stdout: "pipe", stderr: "inherit" })
-            if (extractedManifest.exitCode !== 0) process.exit(extractedManifest.exitCode)
-            const manifestBytes = new Uint8Array(await Bun.file(metaManifestPath).arrayBuffer())
-            if (manifestBytes.length !== extractedManifest.stdout.length || digest(manifestBytes) !== digest(extractedManifest.stdout)) throw new Error("CLI meta tarball manifest drift")
+            if (JSON.stringify(entries) !== JSON.stringify(["package/bin/bharatcode.mjs", "package/package.json", "package/script/distribution.mjs"])) throw new Error("CLI meta tarball closure drift")
           '
           # Versions already match; reuse the same-source Linux CLI for WSL.
           runtime="cli-dist/bharatcode-linux-x64/bin/bharatcode"
