@@ -92,7 +92,7 @@ export function createPlatformPackageManifest(target, version) {
     version,
     repository: {
       type: "git",
-      url: "git+https://github.com/BharatCode-ai/bharatcode-cli.git",
+      url: `git+https://github.com/${DISTRIBUTION.repository}.git`,
     },
     preferUnplugged: true,
     os: [target.os],
