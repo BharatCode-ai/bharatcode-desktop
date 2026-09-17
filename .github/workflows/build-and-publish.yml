@@ -3,14 +3,16 @@ name: Build and Publish
 on:
   workflow_dispatch:
     inputs:
-      source_sha:
-        description: Exact 40-hex commit SHA to build
-        required: true
-        type: string
       version:
         description: Version to publish (e.g., 1.15.30)
         required: true
         type: string
+      npm_tag:
+        description: npm dist-tag to publish under. Promote to latest separately once verified.
+        required: true
+        default: next
+        type: choice
+        options: [next, latest]
       publish_npm:
         description: Publish to npm
         required: true
@@ -23,180 +25,140 @@ on:
         type: boolean
 
 permissions:
-  contents: write
+  contents: read
 
 env:
-  SOURCE_SHA: ${{ inputs.source_sha }}
   VERSION: ${{ inputs.version }}
 
 jobs:
-  build-cli:
+  # Bun cross-compiles every target, so one Linux runner produces all 12
+  # platform packages. No build matrix, and no --single (which would filter
+  # PLATFORM_TARGETS down to the runner's own platform).
+  build:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
-          ref: dev
-          fetch-depth: 0
+          ref: ${{ github.sha }}
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v1
+        uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Build CLI
+      - name: Build all platform binaries
         run: |
           cd packages/opencode
-          OPENCODE_VERSION="${{ inputs.version }}" bun run script/build.ts --single
+          OPENCODE_VERSION="$VERSION" bun run script/build.ts
 
-      - name: Upload CLI artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: cli-linux-x64
-          path: packages/opencode/dist/bharatcode-linux-x64/
-
-  build-macos-arm64:
-    runs-on: macos-14
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          ref: dev
-          fetch-depth: 0
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v1
-        with:
-          bun-version-file: package.json
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Build CLI
+      - name: Assemble meta package and pack all tarballs
         run: |
           cd packages/opencode
-          OPENCODE_VERSION="${{ inputs.version }}" bun run script/build.ts --single
+          mkdir -p ../../out dist/bharatcode/bin dist/bharatcode/script
+          cp bin/bharatcode.mjs dist/bharatcode/bin/bharatcode.mjs
+          cp script/distribution.mjs dist/bharatcode/script/distribution.mjs
+          bun --eval '
+            const names = [...new Bun.Glob("*/package.json").scanSync({ cwd: "./dist" })]
+              .map((p) => p.split("/")[0])
+              .filter((n) => n !== "bharatcode")
+              .sort()
+            if (names.length !== 12) throw new Error(`expected 12 platform packages, built ${names.length}: ${names}`)
+            const version = process.env.VERSION
+            await Bun.write("./dist/bharatcode/package.json", JSON.stringify({
+              name: "bharatcode",
+              version,
+              repository: { type: "git", url: "git+https://github.com/BharatCode-ai/bharatcode-desktop.git" },
+              type: "module",
+              bin: { bharatcode: "bin/bharatcode.mjs" },
+              files: ["bin", "script/distribution.mjs"],
+              optionalDependencies: Object.fromEntries(names.map((n) => [n, version])),
+              os: ["darwin", "linux", "win32"],
+              cpu: ["arm64", "x64"],
+            }, null, 2))
+          '
+          # Platform packages first, meta last - publish order depends on it.
+          for dir in dist/*/; do
+            name=$(basename "$dir")
+            if [ "$name" = "bharatcode" ]; then continue; fi
+            chmod -R 755 "$dir"
+            (cd "$dir" && bun pm pack --destination ../../../../out)
+          done
+          (cd dist/bharatcode && bun pm pack --destination ../../../../out)
+          ls -la ../../out
 
-      - name: Upload CLI artifacts
+      - name: Upload tarballs
         uses: actions/upload-artifact@v4
         with:
-          name: cli-darwin-arm64
-          path: packages/opencode/dist/bharatcode-darwin-arm64/
+          name: npm-tarballs
+          path: out/*.tgz
+          if-no-files-found: error
 
-  build-macos-x64:
-    runs-on: macos-15-intel
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          ref: dev
-          fetch-depth: 0
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v1
-        with:
-          bun-version-file: package.json
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Build CLI
-        run: |
-          cd packages/opencode
-          OPENCODE_VERSION="${{ inputs.version }}" bun run script/build.ts --single
-
-      - name: Upload CLI artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: cli-darwin-x64
-          path: packages/opencode/dist/bharatcode-darwin-x64/
-
-  build-windows:
-    runs-on: windows-2022
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          ref: dev
-          fetch-depth: 0
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v1
-        with:
-          bun-version-file: package.json
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Build CLI
-        shell: bash
-        run: |
-          cd packages/opencode
-          OPENCODE_VERSION="${{ inputs.version }}" bun run script/build.ts --single
-
-      - name: Upload CLI artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: cli-windows-x64
-          path: packages/opencode/dist/bharatcode-windows-x64/
-
+  # Trusted publishing (OIDC): no NPM_TOKEN. Requires a trusted publisher
+  # registered on npmjs.com for this repo + this workflow filename, per package.
   publish-npm:
-    needs: [build-cli, build-macos-arm64, build-macos-x64, build-windows]
+    needs: build
     if: inputs.publish_npm
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
     steps:
-      - name: Download all artifacts
+      - name: Download tarballs
         uses: actions/download-artifact@v4
         with:
-          path: artifacts/
+          name: npm-tarballs
+          path: out/
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
           registry-url: 'https://registry.npmjs.org'
 
-      - name: Publish to npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish platform packages, then meta
         run: |
-          # Publish platform-specific packages
-          for dir in artifacts/cli-*/; do
-            if [ -d "$dir" ]; then
-              cd "$dir"
-              npm publish --access public
-              cd -
-            fi
+          set -euo pipefail
+          npm install -g npm@latest   # trusted publishing needs npm >= 11.5.1
+          meta="out/bharatcode-$VERSION.tgz"
+          for tgz in out/*.tgz; do
+            if [ "$tgz" = "$meta" ]; then continue; fi
+            npm publish "$tgz" --access public --provenance --tag "${{ inputs.npm_tag }}"
           done
+          npm publish "$meta" --access public --provenance --tag "${{ inputs.npm_tag }}"
 
-          # Publish meta package
-          cd packages/opencode
-          npm publish --access public
-
+  # Draft first, attach assets, then publish. Immutable releases seal a release
+  # on publish, so assets must be attached while it is still a draft.
   create-release:
-    needs: [build-cli, build-macos-arm64, build-macos-x64, build-windows]
+    needs: build
     if: inputs.publish_github
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     steps:
-      - name: Download all artifacts
+      - name: Download tarballs
         uses: actions/download-artifact@v4
         with:
-          path: artifacts/
+          name: npm-tarballs
+          path: out/
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: v${{ inputs.version }}
-          name: Release ${{ inputs.version }}
-          draft: false
-          prerelease: true
-          files: |
-            artifacts/cli-linux-x64/**
-            artifacts/cli-darwin-arm64/**
-            artifacts/cli-darwin-x64/**
-            artifacts/cli-windows-x64/**
+      - name: Create draft release with assets
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "v$VERSION" out/*.tgz \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Release $VERSION" \
+            --generate-notes \
+            --prerelease \
+            --draft
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "v$VERSION" --repo "$GITHUB_REPOSITORY" --draft=false
