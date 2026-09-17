@@ -107,15 +107,11 @@ describe("lean next-beta migration and recovery scenarios 6-7", () => {
     ])
     const sourceBytes = await Promise.all([sourceLog, sourceRecord, sourceConfiguration].map((file) => readFile(file)))
     const env = childEnvironment(home)
-    const destinationData = path.join(home, ".local", "share", "bharatcode-test")
-    const destinationConfig = path.join(home, ".config", "bharatcode-test")
-    const destinationState = path.join(home, ".local", "state", "bharatcode-test")
-    const ordinaryArtifacts = [
-      destinationData,
-      destinationConfig,
-      path.join(destinationState, "log"),
-      path.join(home, ".cache", "bharatcode-test", "bin"),
-    ]
+    const layout = canonicalLayout(home)
+    const destinationData = layout.data
+    const destinationConfig = layout.config
+    const destinationState = layout.recovery
+    const ordinaryArtifacts = [destinationData, destinationConfig, layout.log, layout.cacheBin]
 
     // An unmigrated destination no longer blocks startup, so this scenario no
     // longer asserts on the old gate. Startup classification is covered by the
@@ -151,7 +147,7 @@ describe("lean next-beta migration and recovery scenarios 6-7", () => {
     expect(await readFile(path.join(destinationData, "log", "beta.log"))).toEqual(sourceBytes[0]!)
     expect(await readFile(path.join(destinationData, "legacy-record.txt"))).toEqual(sourceBytes[1]!)
     expect(await readFile(path.join(destinationConfig, "bharatcode.json"))).toEqual(sourceBytes[2]!)
-    expect(await entryExists(path.join(destinationState, "log"))).toBe(false)
+    expect(await entryExists(layout.log)).toBe(false)
     expect(await entryExists(path.join(destinationData, "repos"))).toBe(false)
     expect(parseRecoveryCommandResult(await runCliRaw(env, ["recovery", "status", "--json"]))).toEqual({
       state: "ready",
@@ -162,10 +158,10 @@ describe("lean next-beta migration and recovery scenarios 6-7", () => {
     expect(await runCli(env, ["recovery", "retry", "--operation-id", journal.operationID, "--json"])).toEqual({
       state: "ready",
     })
-    expect(await entryExists(path.join(destinationState, "log"))).toBe(false)
+    expect(await entryExists(layout.log)).toBe(false)
 
     expect((await runCliRaw(env, ["--pure", "db", "path"])).trim()).toBe(path.join(destinationData, "bharatcode.db"))
-    expect(await entryExists(path.join(destinationState, "log"))).toBe(true)
+    expect(await entryExists(layout.log)).toBe(true)
     expect(await entryExists(path.join(destinationData, "repos"))).toBe(true)
     expect(await Promise.all([sourceLog, sourceRecord, sourceConfiguration].map((file) => readFile(file)))).toEqual(
       sourceBytes,
@@ -325,10 +321,10 @@ describe("lean next-beta migration and recovery scenarios 6-7", () => {
       state: "ready",
     })
     const sourceConfig = path.join(fixture.home, ".config", "opencode", "opencode.json")
-    const canonicalConfig = path.join(fixture.home, ".config", "bharatcode-test", "bharatcode.json")
+    const canonicalConfig = path.join(canonicalLayout(fixture.home).config, "bharatcode.json")
     expect(await Bun.file(sourceConfig).exists()).toBe(true)
     expect(await Bun.file(canonicalConfig).exists()).toBe(true)
-    expect(await Bun.file(path.join(fixture.home, ".config", "bharatcode-test", "opencode.json")).exists()).toBe(false)
+    expect(await Bun.file(path.join(canonicalLayout(fixture.home).config, "opencode.json")).exists()).toBe(false)
 
     const commandProject = path.join(fixture.root, "debug-config-project")
     await mkdir(commandProject, { recursive: true })
@@ -505,6 +501,35 @@ function openSchema(file: string, options: { readonly: boolean }): SchemaDatabas
   return {
     rows: (sql) => database.query(sql).all() as Record<string, unknown>[],
     close: () => database.close(),
+  }
+}
+
+/**
+ * The canonical destination layout for a given home.
+ *
+ * childEnvironment() clears the XDG variables, so on macOS these resolve to the
+ * platform directories, not `~/.local/share` and `~/.config`. Hardcoding the
+ * XDG paths made every existence assertion below pass vacuously on macOS.
+ * The non-darwin branch is exactly what this suite used before.
+ */
+function canonicalLayout(home: string, channel = "bharatcode-test") {
+  if (process.platform === "darwin") {
+    const support = path.join(home, "Library", "Application Support")
+    return {
+      data: path.join(support, channel),
+      config: path.join(home, "Library", "Preferences", channel),
+      recovery: path.join(support, `${channel}-recovery`),
+      log: path.join(home, "Library", "Logs", channel),
+      cacheBin: path.join(home, "Library", "Caches", channel, "bin"),
+    }
+  }
+  const state = path.join(home, ".local", "state", channel)
+  return {
+    data: path.join(home, ".local", "share", channel),
+    config: path.join(home, ".config", channel),
+    recovery: state,
+    log: path.join(state, "log"),
+    cacheBin: path.join(home, ".cache", channel, "bin"),
   }
 }
 
