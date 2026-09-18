@@ -29,6 +29,14 @@ await writeFile(join(project, "bharatcode.json"), JSON.stringify({ share: "disab
 const originalFetch = globalThis.fetch
 const api = createBharatCodeApiFixture()
 const attempts: RecordedAttempt[] = []
+// Share reaches its own backend for the base URL and Supabase for the token
+// refresh. github.com is the ripgrep release download, which the runtime
+// fetches once and caches; it is allowed only because the archive is verified
+// against a SHA-256 pinned in src/file/ripgrep.ts before it is written or
+// executed. Every other external origin is a boundary violation.
+const SHARE_BASE_ORIGIN = "https://bharatcode.ai"
+const SUPABASE_ORIGIN = "https://evgvlcaxfpwupaiwzqqm.supabase.co"
+const RIPGREP_ORIGIN = "https://github.com"
 globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
   const request = new Request(input, init)
   const url = new URL(request.url)
@@ -191,9 +199,17 @@ try {
   if (afterRestart.length !== beforeRestart.length) throw new Error("session continuity failed across sidecar restart")
 
   attempts.push({ kind: "schema", target: join(project, "bharatcode.json"), surface: "runtime" })
-  const beforeShare = attempts.length
+  // Count only fetches to share's own origins, not the length of the whole
+  // array: the one-time ripgrep download is a background fetch that can land
+  // inside this window and has nothing to do with share.
+  const shareReach = () =>
+    attempts.filter(
+      (attempt) =>
+        attempt.kind === "fetch" && [SHARE_BASE_ORIGIN, SUPABASE_ORIGIN].includes(new URL(attempt.target).origin),
+    ).length
+  const beforeShare = shareReach()
   const shareExit = await Effect.runPromiseExit(ShareNext.use.url().pipe(Effect.provide(ShareNext.defaultLayer)))
-  if (Exit.isSuccess(shareExit) || attempts.length !== beforeShare) {
+  if (Exit.isSuccess(shareExit) || shareReach() !== beforeShare) {
     throw new Error("ShareNext resolved a target while disabled")
   }
 
@@ -203,16 +219,7 @@ try {
     throw new Error("shared logout did not clear account")
   }
 
-  // github.com is the ripgrep release download, which the runtime fetches once
-  // and caches. It is allowed only because the archive is verified against a
-  // SHA-256 pinned in src/file/ripgrep.ts before it is written or executed;
-  // without that pin this belongs on the forbidden list. Every other external
-  // origin is a boundary violation.
-  const allowedExternal = new Set([
-    "https://bharatcode.ai",
-    "https://evgvlcaxfpwupaiwzqqm.supabase.co",
-    "https://github.com",
-  ])
+  const allowedExternal = new Set([SHARE_BASE_ORIGIN, SUPABASE_ORIGIN, RIPGREP_ORIGIN])
   const forbiddenAttempts = attempts.filter((attempt) => {
     if (attempt.kind === "fetch" || attempt.kind === "authorize") {
       return !allowedExternal.has(new URL(attempt.target).origin)
