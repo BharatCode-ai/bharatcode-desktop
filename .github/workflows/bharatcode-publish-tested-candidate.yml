@@ -51,6 +51,9 @@ jobs:
     permissions:
       contents: write
       actions: read
+      # Reading repos/{repo}/immutable-releases needs the Administration
+      # permission; without it the precondition 403s and the publish never runs.
+      administration: read
     steps:
       - name: Check operator approval and build identity
         env:
