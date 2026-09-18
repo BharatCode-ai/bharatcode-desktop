@@ -165,12 +165,14 @@ if (process.argv[2] === "stage") {
     throw new Error("Release file set mismatch")
   for (const asset of state.assets) {
     const actual = await hash(join(root, asset.name))
-    if (
-      asset.size !== actual.bytes ||
-      asset.digest !== `sha256:${actual.sha256}` ||
+    // A draft has no git tag yet, so GitHub serves its assets from an
+    // untagged-<id> path. Size and digest still pin the bytes; the tagged URL
+    // is only meaningful once the release is published.
+    const urlMismatch =
+      !draft &&
       asset.browser_download_url !==
         `https://github.com/${repository}/releases/download/${state.tag_name}/${asset.name}`
-    ) {
+    if (asset.size !== actual.bytes || asset.digest !== `sha256:${actual.sha256}` || urlMismatch) {
       throw new Error(`Published file mismatch: ${asset.name}`)
     }
   }

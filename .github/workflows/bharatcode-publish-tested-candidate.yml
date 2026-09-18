@@ -144,6 +144,12 @@ jobs:
           gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --target "$SOURCE_SHA" \
             --title "BharatCode $RELEASE_TAG" --notes-file "$RUNNER_TEMP/release-notes.md" --draft --prerelease
           gh release upload "$RELEASE_TAG" release-assets/* --repo "$GITHUB_REPOSITORY"
+          # A draft carries a tag_name but creates no git ref, so it can only be
+          # addressed by id until it is published.
+          release_id="$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+            --jq "[.[] | select(.tag_name == \"$RELEASE_TAG\" and .draft == true)] | first | .id")"
+          [[ "$release_id" =~ ^[1-9][0-9]*$ ]]
+          echo "RELEASE_ID=$release_id" >> "$GITHUB_ENV"
 
       - name: Verify draft hashes, then publish those same files
         env:
@@ -151,9 +157,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > release-state.json
+          # /releases/tags/{tag} returns published releases only - a draft 404s there.
+          gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" > release-state.json
           bun packages/desktop/scripts/batch-release.mjs check-release draft
-          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease=true
+          gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --method PATCH \
+            -F draft=false -F prerelease=true > /dev/null
           gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > release-state.json
           bun packages/desktop/scripts/batch-release.mjs check-release published
           jq -r '.assets[].browser_download_url' release-state.json > "$RUNNER_TEMP/release-urls.txt"
