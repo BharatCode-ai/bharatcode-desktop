@@ -51,9 +51,6 @@ jobs:
     permissions:
       contents: write
       actions: read
-      # Reading repos/{repo}/immutable-releases needs the Administration
-      # permission; without it the precondition 403s and the publish never runs.
-      administration: read
     steps:
       - name: Check operator approval and build identity
         env:
@@ -122,7 +119,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gh api "repos/$GITHUB_REPOSITORY/immutable-releases" -H "X-GitHub-Api-Version: 2026-03-10" | jq -e '.enabled == true'
+          # The immutable-releases setting is deliberately not asserted here.
+          # Reading it needs the Administration permission, which GITHUB_TOKEN
+          # cannot be granted: `permissions:` has no `administration` key, and
+          # adding one makes the whole workflow unparseable. The guarantees that
+          # do not depend on it are kept below and after upload: refuse an
+          # existing release, refuse an existing tag, and verify asset hashes
+          # both as a draft and once published.
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo 'Release already exists. Refusing overwrite; investigate or abandon the candidate.' >&2; exit 1
           fi
