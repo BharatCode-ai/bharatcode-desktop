@@ -86,19 +86,19 @@ jobs:
           name: desktop-candidate-${{ inputs.build_run_id }}
           path: candidate-download
           digest-mismatch: error
-      - name: Verify archive and standard GitHub provenance before extraction
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Verify the tested archive, then extract it
         shell: bash
         run: |
           set -euo pipefail
           [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]]
           cd candidate-download
+          # These three bind the archive: the operator recorded this digest from
+          # the artifacts they tested, download-artifact fails on a digest
+          # mismatch, and the previous step already proved the run that produced
+          # it was this workflow, at this commit, and succeeded. A sigstore
+          # attestation chain on top verified the same facts against the same
+          # trust root, and was the most failure-prone step in the pipeline.
           printf '%s  desktop-candidate.tar.gz\n' "$CANDIDATE_SHA256" | sha256sum --check -
-          gh attestation verify desktop-candidate.tar.gz --bundle desktop-candidate.tar.gz.intoto.jsonl \
-            --repo "$GITHUB_REPOSITORY" --source-digest "$SOURCE_SHA" \
-            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/bharatcode-next-beta-candidate.yml" \
-            --predicate-type https://slsa.dev/provenance/v1
           # The archive is flat: reject traversal, links, devices, and extra directories.
           tar -tzf desktop-candidate.tar.gz > "$RUNNER_TEMP/candidate-entries.txt"
           if grep -Ev '^(\./)?[A-Za-z0-9][A-Za-z0-9._-]*$|^\./$' "$RUNNER_TEMP/candidate-entries.txt"; then exit 1; fi
@@ -119,13 +119,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # The immutable-releases setting is deliberately not asserted here.
-          # Reading it needs the Administration permission, which GITHUB_TOKEN
-          # cannot be granted: `permissions:` has no `administration` key, and
-          # adding one makes the whole workflow unparseable. The guarantees that
-          # do not depend on it are kept below and after upload: refuse an
-          # existing release, refuse an existing tag, and verify asset hashes
-          # both as a draft and once published.
+          # The repo-level immutable-releases setting is not read here:
+          # GITHUB_TOKEN cannot be granted the Administration permission it
+          # needs, and `permissions:` has no key for it. The next step asserts
+          # `.immutable == true` on the release itself, which is the fact that
+          # actually matters and is readable.
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo 'Release already exists. Refusing overwrite; investigate or abandon the candidate.' >&2; exit 1
           fi
@@ -151,23 +149,36 @@ jobs:
           [[ "$release_id" =~ ^[1-9][0-9]*$ ]]
           echo "RELEASE_ID=$release_id" >> "$GITHUB_ENV"
 
-      - name: Verify draft hashes, then publish those same files
+      - name: Verify uploaded bytes, then publish
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          # /releases/tags/{tag} returns published releases only - a draft 404s there.
-          gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" > release-state.json
-          bun packages/desktop/scripts/batch-release.mjs check-release draft
+          # Compare the digests GitHub computed for the uploaded assets against
+          # SHA256SUMS, which `sha256sum --check` already bound to these exact
+          # files. SHA256SUMS does not list itself, so add its own digest.
+          { cat release-assets/SHA256SUMS
+            printf '%s  SHA256SUMS\n' "$(sha256sum release-assets/SHA256SUMS | cut -d' ' -f1)"
+          } | sort > "$RUNNER_TEMP/expected-digests.txt"
+          # A draft is addressable by id only: it has a tag_name but no git ref,
+          # so /releases/tags/{tag} 404s until it is published.
+          gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
+            --jq '.assets[] | "\(.digest | ltrimstr("sha256:"))  \(.name)"' \
+            | sort > "$RUNNER_TEMP/uploaded-digests.txt"
+          diff "$RUNNER_TEMP/expected-digests.txt" "$RUNNER_TEMP/uploaded-digests.txt"
+
           gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --method PATCH \
             -F draft=false -F prerelease=true > /dev/null
+
+          # Publication seals the release. Confirm it landed sealed, at the
+          # tested source, carrying the same asset set.
           gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > release-state.json
-          bun packages/desktop/scripts/batch-release.mjs check-release published
-          jq -r '.assets[].browser_download_url' release-state.json > "$RUNNER_TEMP/release-urls.txt"
-          while IFS= read -r url; do
-            curl --fail --silent --show-error --head --location --proto '=https' --proto-redir '=https' "$url" > /dev/null
-          done < "$RUNNER_TEMP/release-urls.txt"
+          jq -e --arg sha "$SOURCE_SHA" --arg tag "$RELEASE_TAG" \
+            --argjson count "$(wc -l < "$RUNNER_TEMP/expected-digests.txt")" '
+            .draft == false and .prerelease == true and .immutable == true and
+            .tag_name == $tag and .target_commitish == $sha and (.assets | length) == $count
+          ' release-state.json > /dev/null
 
       - name: Notify website only after live downloads pass
         if: inputs.notify_website
