@@ -1,6 +1,5 @@
 export const dict = {
   "desktop.menu.checkForUpdates": "업데이트 확인...",
-  "desktop.menu.installCli": "CLI 설치...",
   "desktop.menu.reloadWebview": "Webview 새로고침",
   "desktop.menu.restart": "다시 시작",
 
@@ -19,9 +18,4 @@ export const dict = {
   "desktop.updater.installFailed.title": "업데이트 실패",
   "desktop.updater.installFailed.message": "업데이트를 설치하지 못했습니다",
 
-  "desktop.cli.installed.title": "CLI 설치됨",
-  "desktop.cli.installed.message":
-    "CLI가 {{path}}에 설치되었습니다\n\n터미널을 다시 시작하여 'bharatcode' 명령을 사용하세요.",
-  "desktop.cli.failed.title": "설치 실패",
-  "desktop.cli.failed.message": "CLI 설치 실패: {{error}}",
 }
