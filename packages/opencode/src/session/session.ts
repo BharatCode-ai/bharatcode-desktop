@@ -108,6 +108,7 @@ export function fromRow(row: SessionRow): Info {
     metadata: row.metadata ?? undefined,
     revert,
     permission: row.permission ? [...row.permission] : undefined,
+    goal: row.goal ?? undefined,
     time: {
       created: row.time_created,
       updated: row.time_updated,
@@ -151,6 +152,7 @@ export function toRow(info: Info) {
         }
       : null,
     permission: info.permission,
+    goal: info.goal ?? null,
     time_created: info.time.created,
     time_updated: info.time.updated,
     time_compacting: info.time.compacting,
@@ -206,6 +208,14 @@ const Time = Schema.Struct({
   archived: optional(ArchivedTimestamp),
 })
 
+// Defined in the schema package, because the Updated event carries it and the
+// projector writes it -- one definition, not three.
+export const GoalStatus = SessionV1.SessionGoalStatus
+export type GoalStatus = SessionV1.SessionGoalStatus
+
+export const Goal = SessionV1.SessionGoal
+export type Goal = Types.DeepMutable<SessionV1.SessionGoal>
+
 const Revert = Schema.Struct({
   messageID: MessageID,
   partID: optional(PartID),
@@ -241,6 +251,7 @@ export const Info = Schema.Struct({
   time: Time,
   permission: optional(PermissionV1.Ruleset),
   revert: optional(Revert),
+  goal: optional(Goal),
 }).annotate({ identifier: "Session" })
 export type Info = Types.DeepMutable<Schema.Schema.Type<typeof Info>>
 
@@ -435,6 +446,7 @@ export interface Interface {
     time: number
   }) => Effect.Effect<void>
   readonly setPermission: (input: { sessionID: SessionID; permission: PermissionV1.Ruleset }) => Effect.Effect<void>
+  readonly setGoal: (input: { sessionID: SessionID; goal: Info["goal"] | null }) => Effect.Effect<void>
   readonly setRevert: (input: {
     sessionID: SessionID
     revert: Info["revert"]
@@ -475,12 +487,13 @@ export class Service extends Context.Service<Service, Interface>()("@opencode/Se
 
 export const use = serviceUse(Service)
 
-export type Patch = Omit<Partial<Info>, "time" | "share" | "summary" | "revert" | "permission"> & {
+export type Patch = Omit<Partial<Info>, "time" | "share" | "summary" | "revert" | "permission" | "goal"> & {
   time?: Partial<Info["time"]>
   share?: Partial<NonNullable<Info["share"]>> | null
   summary?: Info["summary"] | null
   revert?: Info["revert"] | null
   permission?: Info["permission"] | null
+  goal?: Info["goal"] | null
 }
 
 const layer: Layer.Layer<
@@ -742,6 +755,7 @@ const layer: Layer.Layer<
           summary: info.summary === null ? undefined : (info.summary ?? current.summary),
           revert: info.revert === null ? undefined : (info.revert ?? current.revert),
           permission: info.permission === null ? undefined : (info.permission ?? current.permission),
+          goal: info.goal === null ? undefined : (info.goal ?? current.goal),
         } as Info
         yield* events.publish(SessionV1.Event.Updated, { sessionID, info: next })
       })
@@ -752,6 +766,13 @@ const layer: Layer.Layer<
 
     const setTitle = Effect.fn("Session.setTitle")(function* (input: { sessionID: SessionID; title: string }) {
       yield* patch(input.sessionID, { title: input.title }).pipe(Effect.orDie)
+    })
+
+    const setGoal = Effect.fn("Session.setGoal")(function* (input: {
+      sessionID: SessionID
+      goal: Info["goal"] | null
+    }) {
+      yield* patch(input.sessionID, { goal: input.goal ?? null, time: { updated: Date.now() } }).pipe(Effect.orDie)
     })
 
     const setArchived = Effect.fn("Session.setArchived")(function* (input: { sessionID: SessionID; time?: number }) {
@@ -915,6 +936,7 @@ const layer: Layer.Layer<
       setMetadata,
       setAgentModel,
       setPermission,
+      setGoal,
       setRevert,
       clearRevert,
       setSummary,

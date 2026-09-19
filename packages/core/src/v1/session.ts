@@ -26,6 +26,8 @@ export {
   ReasoningPart,
   ResourceSource,
   RetryPart,
+  SessionGoal,
+  SessionGoalStatus,
   SessionInfo,
   SnapshotPart,
   StepFinishPart,

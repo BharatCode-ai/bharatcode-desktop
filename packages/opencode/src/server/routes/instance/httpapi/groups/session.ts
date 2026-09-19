@@ -46,10 +46,30 @@ export const MessagesQuery = Schema.Struct({
   before: Schema.optional(Schema.String),
 })
 export const StatusMap = Schema.Record(Schema.String, SessionStatus.Info)
+const GoalSetPayload = Schema.Struct({
+  action: Schema.Literal("set"),
+  text: Schema.String,
+})
+const GoalPausePayload = Schema.Struct({
+  action: Schema.Literal("pause"),
+})
+const GoalResumePayload = Schema.Struct({
+  action: Schema.Literal("resume"),
+})
+const GoalClearPayload = Schema.Struct({
+  action: Schema.Literal("clear"),
+})
+export const GoalUpdatePayload = Schema.Union([
+  GoalSetPayload,
+  GoalPausePayload,
+  GoalResumePayload,
+  GoalClearPayload,
+]).annotate({ identifier: "SessionGoalUpdate" })
 export const UpdatePayload = Schema.Struct({
   title: Schema.optional(Schema.String),
   metadata: Schema.optional(Session.Metadata),
   permission: Schema.optional(PermissionV1.Ruleset),
+  goal: Schema.optional(GoalUpdatePayload),
   time: Schema.optional(
     Schema.Struct({
       archived: Schema.optional(Session.ArchivedTimestamp),
@@ -455,7 +475,7 @@ export const SessionApi = HttpApi.make("session")
   )
   .annotateMerge(
     OpenApi.annotations({
-      title: "opencode experimental HttpApi",
+      title: "BharatCode experimental HttpApi",
       version: "0.0.1",
       description: "Experimental HttpApi surface for selected instance routes.",
     }),

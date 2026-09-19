@@ -1,0 +1,13 @@
+Set or update Goal Mode for this session.
+
+User-provided objective:
+$ARGUMENTS
+
+If the objective is empty, ask the user for the goal they want you to keep working toward.
+
+If the objective is not empty, call `mcp_goal_set` with a concise durable objective that includes:
+- the user's requested outcome
+- any constraints or preferences they gave
+- concrete completion checks
+
+After setting the goal, continue with the first useful step immediately.

@@ -527,6 +527,23 @@ const SessionShare = Schema.Struct({
   url: Schema.String,
 })
 
+export const SessionGoalStatus = Schema.Literals(["active", "paused", "completed", "blocked"]).annotate({
+  identifier: "SessionGoalStatus",
+})
+export type SessionGoalStatus = typeof SessionGoalStatus.Type
+
+export const SessionGoal = Schema.Struct({
+  text: Schema.String,
+  status: SessionGoalStatus,
+  created: NonNegativeInt,
+  updated: NonNegativeInt,
+  accumulated: NonNegativeInt,
+  activeSince: optional(NonNegativeInt),
+  completed: optional(NonNegativeInt),
+  report: optional(Schema.String),
+}).annotate({ identifier: "SessionGoal" })
+export type SessionGoal = typeof SessionGoal.Type
+
 const SessionRevert = Schema.Struct({
   messageID: MessageID,
   partID: optional(PartID),
@@ -565,6 +582,7 @@ export const SessionInfo = Schema.Struct({
   }),
   permission: optional(PermissionV1.Ruleset),
   revert: optional(SessionRevert),
+  goal: optional(SessionGoal),
 }).annotate({ identifier: "Session" })
 export type SessionInfo = typeof SessionInfo.Type
 

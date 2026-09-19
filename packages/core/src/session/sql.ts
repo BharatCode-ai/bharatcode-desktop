@@ -19,6 +19,17 @@ type SessionMessageData = Omit<(typeof SessionMessage.Message)["Encoded"], "type
 type V1MessageData = Omit<SessionV1.Info, "id" | "sessionID">
 type V1PartData = Omit<SessionV1.Part, "id" | "sessionID" | "messageID">
 
+export type SessionGoalData = {
+  text: string
+  status: "active" | "paused" | "completed" | "blocked"
+  created: number
+  updated: number
+  accumulated: number
+  activeSince?: number
+  completed?: number
+  report?: string
+}
+
 export const SessionTable = sqliteTable(
   "session",
   {
@@ -48,6 +59,7 @@ export const SessionTable = sqliteTable(
     tokens_cache_write: integer().notNull().default(0),
     revert: text({ mode: "json" }).$type<Revert.State>(),
     permission: text({ mode: "json" }).$type<PermissionV1.Ruleset>(),
+    goal: text({ mode: "json" }).$type<SessionGoalData>(),
     agent: text(),
     model: text({ mode: "json" }).$type<{
       id: string
