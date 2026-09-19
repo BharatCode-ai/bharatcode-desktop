@@ -1187,7 +1187,13 @@ export function fromBharatCodeCatalogModel(model: BharatCodeCatalog.Model): Mode
         video: output.includes("video"),
         pdf: output.includes("pdf"),
       },
-      interleaved: false,
+      // Mirrors the default the generic catalog path applies below: an
+      // openai-compatible DeepSeek model needs its reasoning replayed as
+      // `reasoning_content` on assistant messages, because the OpenAI wire
+      // format has no slot for the reasoning parts ProviderTransform otherwise
+      // leaves inline. Every BharatCode model is served over
+      // @ai-sdk/openai-compatible, so that half of the condition is implicit.
+      interleaved: model.id.toLowerCase().includes("deepseek") ? { field: "reasoning_content" } : false,
     },
     release_date: "",
     variants: {},
