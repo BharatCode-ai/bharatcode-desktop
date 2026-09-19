@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
-  "version": "1.18.31",
-  "name": "opencode",
+  "version": "1.15.35",
+  "name": "bharatcode",
   "type": "module",
   "license": "MIT",
   "private": true,
@@ -16,7 +16,7 @@
     "dev:temporary": "bun run ./src/temporary.ts"
   },
   "bin": {
-    "opencode": "./bin/opencode"
+    "bharatcode": "./bin/bharatcode.mjs"
   },
   "exports": {
     "./*": "./src/*.ts"
