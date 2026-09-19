@@ -4,6 +4,12 @@ export type Channel = "prod" | "beta" | "dev" | "local" | "test"
 
 export type Input = {
   readonly channel?: string
+  /**
+   * Overrides the directory name derived from the channel. Used to address an
+   * installation that predates the current naming, so the import engine can
+   * still find it.
+   */
+  readonly name?: string
   readonly platform: string
   readonly home: string
   readonly temp: string
@@ -18,9 +24,27 @@ export function normalizeChannel(channel: string | undefined): Channel {
   return "local"
 }
 
+/**
+ * The on-disk directory name for a channel, matching the desktop product name
+ * (productNameForChannel in desktop/src/main/branding.ts). Electron derives its
+ * own paths from productName the same way, so using it here keeps the CLI and
+ * the app pointed at one directory instead of two, and it reads correctly in
+ * Finder and Explorer.
+ */
+/**
+ * Directory names used before the move to the product name. Shipped releases
+ * wrote here, so the import engine still has to be able to find them.
+ */
+export const LEGACY_NAMES = Object.freeze(["bharatcode", "bharatcode-beta", "bharatcode-dev", "bharatcode-local"])
+
+export function displayName(channel: Channel) {
+  if (channel === "prod") return "BharatCode"
+  return `BharatCode ${channel.charAt(0).toUpperCase()}${channel.slice(1)}`
+}
+
 export function resolve(input: Input) {
   const channel = normalizeChannel(input.channel)
-  const name = `bharatcode${channel === "prod" ? "" : `-${channel}`}`
+  const name = input.name ?? displayName(channel)
   const paths = input.platform === "win32" ? path.win32 : path.posix
   const env = input.env ?? {}
   const roots =
@@ -63,7 +87,7 @@ export function resolve(input: Input) {
     // branded sibling solely for the recovery transaction there.
     recovery:
       input.platform === "darwin"
-        ? paths.join(input.home, "Library", "Application Support", `${name}-recovery`)
+        ? paths.join(input.home, "Library", "Application Support", `${name} Recovery`)
         : roots.state,
     tmp: paths.join(input.temp, name),
     bin: paths.join(roots.cache, "bin"),

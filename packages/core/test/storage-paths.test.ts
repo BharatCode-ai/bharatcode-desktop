@@ -21,22 +21,22 @@ describe("BharatCode storage paths", () => {
 
     expect(stable).toEqual({
       channel: "prod",
-      data: "/home/alice/.local/share/bharatcode",
-      cache: "/home/alice/.cache/bharatcode",
-      config: "/home/alice/.config/bharatcode",
-      state: "/home/alice/.local/state/bharatcode",
-      recovery: "/home/alice/.local/state/bharatcode",
-      tmp: "/tmp/bharatcode",
-      bin: "/home/alice/.cache/bharatcode/bin",
-      log: "/home/alice/.local/state/bharatcode/log",
-      repos: "/home/alice/.local/share/bharatcode/repos",
-      storage: "/home/alice/.local/share/bharatcode/storage",
-      auth: "/home/alice/.local/share/bharatcode/auth.json",
-      database: "/home/alice/.local/share/bharatcode/bharatcode.db",
+      data: "/home/alice/.local/share/BharatCode",
+      cache: "/home/alice/.cache/BharatCode",
+      config: "/home/alice/.config/BharatCode",
+      state: "/home/alice/.local/state/BharatCode",
+      recovery: "/home/alice/.local/state/BharatCode",
+      tmp: "/tmp/BharatCode",
+      bin: "/home/alice/.cache/BharatCode/bin",
+      log: "/home/alice/.local/state/BharatCode/log",
+      repos: "/home/alice/.local/share/BharatCode/repos",
+      storage: "/home/alice/.local/share/BharatCode/storage",
+      auth: "/home/alice/.local/share/BharatCode/auth.json",
+      database: "/home/alice/.local/share/BharatCode/bharatcode.db",
     })
-    expect(beta.data).toBe("/home/alice/.local/share/bharatcode-beta")
-    expect(beta.auth).toBe("/home/alice/.local/share/bharatcode-beta/auth.json")
-    expect(beta.database).toBe("/home/alice/.local/share/bharatcode-beta/bharatcode.db")
+    expect(beta.data).toBe("/home/alice/.local/share/BharatCode Beta")
+    expect(beta.auth).toBe("/home/alice/.local/share/BharatCode Beta/auth.json")
+    expect(beta.database).toBe("/home/alice/.local/share/BharatCode Beta/bharatcode.db")
     expect(Object.values(stable).join("\n").toLowerCase()).not.toContain("opencode")
     expect(Object.values(beta).join("\n").toLowerCase()).not.toContain("opencode")
   })
@@ -51,13 +51,13 @@ describe("BharatCode storage paths", () => {
         env: {},
       }),
     ).toMatchObject({
-      data: "/Users/Alice/Library/Application Support/bharatcode",
-      config: "/Users/Alice/Library/Preferences/bharatcode",
-      cache: "/Users/Alice/Library/Caches/bharatcode",
-      state: "/Users/Alice/Library/Application Support/bharatcode/State",
-      recovery: "/Users/Alice/Library/Application Support/bharatcode-recovery",
-      log: "/Users/Alice/Library/Logs/bharatcode",
-      auth: "/Users/Alice/Library/Application Support/bharatcode/auth.json",
+      data: "/Users/Alice/Library/Application Support/BharatCode",
+      config: "/Users/Alice/Library/Preferences/BharatCode",
+      cache: "/Users/Alice/Library/Caches/BharatCode",
+      state: "/Users/Alice/Library/Application Support/BharatCode/State",
+      recovery: "/Users/Alice/Library/Application Support/BharatCode Recovery",
+      log: "/Users/Alice/Library/Logs/BharatCode",
+      auth: "/Users/Alice/Library/Application Support/BharatCode/auth.json",
     })
     expect(
       StoragePaths.resolve({
@@ -69,12 +69,12 @@ describe("BharatCode storage paths", () => {
       }),
     ).toMatchObject({
       channel: "beta",
-      data: "D:\\Local\\bharatcode-beta\\Data",
-      config: "D:\\Roaming\\bharatcode-beta\\Config",
-      cache: "D:\\Local\\bharatcode-beta\\Cache",
-      recovery: "D:\\Local\\bharatcode-beta\\State",
-      auth: "D:\\Local\\bharatcode-beta\\Data\\auth.json",
-      database: "D:\\Local\\bharatcode-beta\\Data\\bharatcode.db",
+      data: "D:\\Local\\BharatCode Beta\\Data",
+      config: "D:\\Roaming\\BharatCode Beta\\Config",
+      cache: "D:\\Local\\BharatCode Beta\\Cache",
+      recovery: "D:\\Local\\BharatCode Beta\\State",
+      auth: "D:\\Local\\BharatCode Beta\\Data\\auth.json",
+      database: "D:\\Local\\BharatCode Beta\\Data\\bharatcode.db",
     })
   })
 

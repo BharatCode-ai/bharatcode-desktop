@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto"
 import { lstat, realpath } from "node:fs/promises"
 import path from "node:path"
+import { StoragePaths } from "@opencode-ai/core/storage-paths"
 
 export type MigrationSource = {
   id: string
@@ -78,7 +79,34 @@ function candidates(input: DiscoveryInput): readonly Candidate[] {
         ? closedRoot(input.env.APPDATA, path.join(input.home, "AppData", "Roaming"), "APPDATA")
         : data
   return [
-    { kind: "bharatcode-current", roots: { data: path.join(data, "bharatcode"), config: path.join(config, "bharatcode") } },
+    // Installations that predate the move to product-name directories. The
+    // layout mirrors StoragePaths, but it is built with the host path module
+    // like every other candidate here -- discovery is exercised for other
+    // platforms from a POSIX host, so switching to path.win32 would produce
+    // roots this module then rejects as non-absolute.
+    ...StoragePaths.LEGACY_NAMES.flatMap((name) => {
+      const roots =
+        input.platform === "darwin"
+          ? {
+              data: path.join(input.home, "Library", "Application Support", name),
+              config: path.join(input.home, "Library", "Preferences", name),
+            }
+          : input.platform === "win32"
+            ? {
+                data: path.join(
+                  closedRoot(input.env.LOCALAPPDATA, path.join(input.home, "AppData", "Local"), "LOCALAPPDATA"),
+                  name,
+                  "Data",
+                ),
+                config: path.join(
+                  closedRoot(input.env.APPDATA, path.join(input.home, "AppData", "Roaming"), "APPDATA"),
+                  name,
+                  "Config",
+                ),
+              }
+            : { data: path.join(data, name), config: path.join(config, name) }
+      return [{ kind: "bharatcode-current" as const, roots }]
+    }),
     { kind: "bharatcode-desktop", roots: { desktop: path.join(input.home, ".bharatcode") } },
     { kind: "opencode-cli", roots: { data: path.join(data, "opencode"), config: path.join(config, "opencode") } },
     { kind: "opencode-desktop", roots: { desktop: path.join(desktop, "ai.opencode.desktop") } },

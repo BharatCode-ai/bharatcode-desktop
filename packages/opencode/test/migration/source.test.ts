@@ -27,6 +27,26 @@ describe("migration source discovery", () => {
     expect(result.every((item) => !("selected" in item))).toBe(true)
   })
 
+  // The data directory moved from "bharatcode-beta" to the product name
+  // "BharatCode Beta". Shipped releases wrote to the old name, so discovery has
+  // to keep finding it or their sessions become unreachable.
+  test.each([
+    ["linux" as const, ".local/share/bharatcode-beta"],
+    ["darwin" as const, "Library/Application Support/bharatcode-beta"],
+  ])("still finds a %s installation written under the pre-rename directory", async (platform, legacy) => {
+    await using tmp = await tmpdir()
+    await mkdir(path.join(tmp.path, legacy), { recursive: true })
+    const result = await discoverMigrationSources({
+      platform,
+      home: tmp.path,
+      env: {},
+      destinationRoots: [path.join(tmp.path, "destination")],
+    })
+
+    expect(result).toHaveLength(1)
+    expect(result[0]!.kind).toBe("bharatcode-current")
+  })
+
   test("uses only closed environment roots and keeps WSL/Linux identity stable", async () => {
     await using tmp = await tmpdir()
     const data = path.join(tmp.path, "xdg-data")

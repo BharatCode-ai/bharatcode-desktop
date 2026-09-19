@@ -7,7 +7,6 @@ import { Global } from "../global"
 import { Flag } from "../flag/flag"
 import { isAbsolute, join } from "path"
 import { DatabaseMigration } from "./migration"
-import { InstallationChannel } from "../installation/version"
 import { makeGlobalNode } from "../effect/app-node"
 
 const makeDatabase = EffectDrizzleSqlite.makeWithDefaults()
@@ -45,13 +44,14 @@ export function path() {
     if (Flag.OPENCODE_DB === ":memory:" || isAbsolute(Flag.OPENCODE_DB)) return Flag.OPENCODE_DB
     return join(Global.Path.data, Flag.OPENCODE_DB)
   }
-  if (
-    ["latest", "beta", "prod"].includes(InstallationChannel) ||
-    process.env.OPENCODE_DISABLE_CHANNEL_DB === "1" ||
-    process.env.OPENCODE_DISABLE_CHANNEL_DB === "true"
-  )
-    return join(Global.Path.data, "opencode.db")
-  return join(Global.Path.data, `opencode-${InstallationChannel.replace(/[^a-zA-Z0-9._-]/g, "-")}.db`)
+  // Global.Path is already channel-scoped by StoragePaths -- the whole data
+  // directory is "BharatCode Beta", not just the filename -- so the database is
+  // simply a file inside it. Upstream scoped by filename instead, which on top
+  // of our directory scoping produced "BharatCode Beta/opencode-beta.db".
+  // OPENCODE_DISABLE_CHANNEL_DB is gone with it: there is no longer a per-file
+  // channel suffix to disable, and pointing two channels at one database is
+  // what the directory scoping exists to prevent.
+  return Global.Path.database
 }
 
 export const node = makeGlobalNode({ service: Service, layer: layerFromPath(path()), deps: [] })
