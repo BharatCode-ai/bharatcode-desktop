@@ -7,6 +7,8 @@ import { ProvidersCommand } from "./cli/cmd/providers"
 import { AgentCommand } from "./cli/cmd/agent"
 import { UpgradeCommand } from "./cli/cmd/upgrade"
 import { UninstallCommand } from "./cli/cmd/uninstall"
+import { MigrateCommand } from "./cli/cmd/migrate"
+import { interruptedImport } from "./cli/cmd/migrate"
 import { ModelsCommand } from "./cli/cmd/models"
 import { UI } from "./cli/ui"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
@@ -90,6 +92,7 @@ const cli = yargs(args)
   .command(AgentCommand)
   .command(UpgradeCommand)
   .command(UninstallCommand)
+  .command(MigrateCommand)
   .command(ServeCommand)
   .command(WebCommand)
   .command(ModelsCommand)
@@ -114,6 +117,19 @@ const cli = yargs(args)
     process.exit(1)
   })
   .strict()
+
+// The data import no longer runs at startup, so an interrupted one would
+// otherwise sit unfinished with nothing pointing at it. On the common path this
+// is a single lstat that misses, so it costs nothing to check here.
+if (!args.includes("migrate")) {
+  const interrupted = await interruptedImport().catch(() => undefined)
+  if (interrupted) {
+    UI.println(
+      UI.Style.TEXT_WARNING_BOLD +
+        `An earlier data import was interrupted at "${interrupted.phase}". Resume it with: bharatcode migrate run --resume`,
+    )
+  }
+}
 
 try {
   if (args.includes("-h") || args.includes("--help")) {
