@@ -1,6 +1,7 @@
 import { Context, Effect, Layer, Schema, Semaphore } from "effect"
 import { serviceUse } from "@opencode-ai/core/effect/service-use"
 import { BharatCodeAccount } from "./account"
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { BharatCodeModel } from "./model"
@@ -369,6 +370,8 @@ export const layerWith = (options: LayerOptions = {}) =>
   )
 
 export const layer = layerWith()
+export const node = LayerNode.make({ service: Service, layer: layer, deps: [BharatCodeAccount.node] })
+
 export const defaultLayer = layer.pipe(Layer.provide(BharatCodeAccount.defaultLayer))
 
 export * as BharatCodeCatalog from "./catalog"

@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto"
 import { Context, Effect, Layer, Schema } from "effect"
 import { Auth } from "@/auth"
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { serviceUse } from "@opencode-ai/core/effect/service-use"
 import { NonNegativeInt } from "@opencode-ai/core/schema"
 
@@ -663,6 +664,8 @@ export const layerWith = (options: LayerOptions = {}) =>
   )
 
 export const layer = layerWith()
+export const node = LayerNode.make({ service: Service, layer: layer, deps: [Auth.node] })
+
 export const defaultLayer = layer.pipe(Layer.provide(Auth.defaultLayer))
 
 export * as BharatCodeAccount from "./account"

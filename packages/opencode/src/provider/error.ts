@@ -1,6 +1,7 @@
 import { APICallError } from "ai"
 import { STATUS_CODES } from "http"
 import { iife } from "@/util/iife"
+import { BharatCodeModel } from "@/bharatcode/model"
 import type { ProviderV2 } from "@opencode-ai/core/provider"
 import { isContextOverflow } from "@opencode-ai/llm"
 
@@ -170,13 +171,35 @@ export type ParsedAPICallError =
     }
 
 export function parseAPICallError(input: { providerID: ProviderV2.ID; error: APICallError }): ParsedAPICallError {
-  const m = message(input.providerID, input.error)
   const body = json(input.error.responseBody)
+  const nested = body?.error && typeof body.error === "object" && !Array.isArray(body.error) ? body.error : undefined
+  const errorCode =
+    nested && "code" in nested && typeof nested.code === "string"
+      ? nested.code
+      : nested && "type" in nested && typeof nested.type === "string"
+        ? nested.type
+        : undefined
+  const serverMessage = nested && typeof nested.message === "string" ? nested.message : undefined
+  const m =
+    BharatCodeModel.apiDenialMessage({
+      providerID: input.providerID,
+      status: input.error.statusCode,
+      errorCode,
+      serverMessage,
+    }) ?? message(input.providerID, input.error)
+  // A plan denial is explained by apiDenialMessage; passing the raw body through
+  // as well would surface the upstream provider's wording alongside ours.
+  const responseBody =
+    input.providerID === "bharatcode" &&
+    errorCode === "model_not_in_plan" &&
+    m === BharatCodeModel.MODEL_ACCESS_DENIED_MESSAGE
+      ? undefined
+      : input.error.responseBody
   if (isContextOverflow(m) || input.error.statusCode === 413 || body?.error?.code === "context_length_exceeded") {
     return {
       type: "context_overflow",
       message: m,
-      responseBody: input.error.responseBody,
+      responseBody,
     }
   }
 
@@ -187,7 +210,7 @@ export function parseAPICallError(input: { providerID: ProviderV2.ID; error: API
     statusCode: input.error.statusCode,
     isRetryable: input.providerID.startsWith("openai") ? isOpenAiErrorRetryable(input.error) : input.error.isRetryable,
     responseHeaders: input.error.responseHeaders,
-    responseBody: input.error.responseBody,
+    responseBody,
     metadata,
   }
 }
