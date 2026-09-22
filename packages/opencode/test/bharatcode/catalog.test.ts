@@ -2,6 +2,12 @@ import { describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
 import { BharatCodeAccount } from "@/bharatcode/account"
 import { BharatCodeCatalog } from "@/bharatcode/catalog"
+import { Auth } from "../../src/auth"
+import {
+  MODEL_SIGN_IN_REQUIRED,
+  MODEL_CATALOG_UNAVAILABLE,
+  MODEL_STORAGE_UNAVAILABLE,
+} from "@opencode-ai/core/util/model-recovery"
 
 const CODING_MODEL_ID = "bharatcode:qwen36-35b-awq-200k"
 
@@ -36,6 +42,24 @@ function run<A, E>(
 }
 
 describe("BharatCode authenticated catalog", () => {
+  test("catalog failures preserve actionable reasons without exposing payloads", () => {
+    const secret = "seeded-token https://private.example/path"
+    expect(BharatCodeCatalog.modelUnavailableReason(new BharatCodeAccount.SignInRequired({ message: secret }))).toBe(
+      MODEL_SIGN_IN_REQUIRED,
+    )
+    expect(
+      BharatCodeCatalog.modelUnavailableReason(
+        new Auth.AuthError({ operation: "read", reason: "permission", message: secret }),
+      ),
+    ).toBe(MODEL_STORAGE_UNAVAILABLE)
+    for (const error of [
+      new BharatCodeAccount.TransportError({ operation: "catalog", message: secret }),
+      new BharatCodeAccount.ServiceError({ operation: "catalog", status: 503, retriable: true, message: secret }),
+      new BharatCodeCatalog.CatalogError({ reason: "contract", message: secret }),
+      new Error(secret),
+    ])
+      expect(BharatCodeCatalog.modelUnavailableReason(error)).toBe(MODEL_CATALOG_UNAVAILABLE)
+  })
   test("keeps only live records and preserves explicit coding limits", async () => {
     const data = {
       object: "list",

@@ -1,4 +1,6 @@
 import { cmd } from "@/cli/cmd/cmd"
+import { ensureSignedIn } from "./account"
+import { AppRuntime } from "../../effect/app-runtime"
 import { Rpc } from "@/util/rpc"
 import { type rpc } from "../tui/worker"
 import path from "path"
@@ -71,12 +73,12 @@ export function resolveThreadDirectory(project?: string, envPWD = process.env.PW
 
 export const TuiThreadCommand = cmd({
   command: "$0 [project]",
-  describe: "start opencode tui",
+  describe: "start BharatCode TUI",
   builder: (yargs) =>
     withNetworkOptions(yargs)
       .positional("project", {
         type: "string",
-        describe: "path to start opencode in",
+        describe: "path to start BharatCode in",
       })
       .option("model", {
         type: "string",
@@ -148,6 +150,16 @@ export const TuiThreadCommand = cmd({
       return
     }
     const noReplay = args.replay === false || args.noReplay === true
+
+    // Only an interactive entrypoint may start browser authorization.
+    // Scripted run/serve/ACP requests retain their non-interactive errors.
+    try {
+      await AppRuntime.runPromise(ensureSignedIn())
+    } catch (error) {
+      UI.error(errorMessage(error))
+      process.exitCode = 1
+      return
+    }
 
     if (args.mini) {
       const network = ["--port", "--hostname", "--mdns", "--no-mdns", "--mdns-domain", "--cors"].find((option) =>

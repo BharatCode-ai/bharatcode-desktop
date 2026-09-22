@@ -2,8 +2,8 @@ import yargs from "yargs"
 import { hideBin } from "yargs/helpers"
 import { RunCommand } from "./cli/cmd/run"
 import { GenerateCommand } from "./cli/cmd/generate"
-import { ConsoleCommand } from "./cli/cmd/account"
-import { ProvidersCommand } from "./cli/cmd/providers"
+import { AccountCommand } from "./cli/cmd/account"
+import { DISTRIBUTION } from "../script/distribution.mjs"
 import { AgentCommand } from "./cli/cmd/agent"
 import { UpgradeCommand } from "./cli/cmd/upgrade"
 import { UninstallCommand } from "./cli/cmd/uninstall"
@@ -36,7 +36,7 @@ const args = hideBin(process.argv)
 
 function show(out: string) {
   const text = out.trimStart()
-  if (!text.startsWith("opencode ")) {
+  if (!text.startsWith(DISTRIBUTION.commandName + " ")) {
     process.stderr.write(UI.logo() + EOL + EOL)
     process.stderr.write(text + EOL)
     return
@@ -46,7 +46,7 @@ function show(out: string) {
 
 const cli = yargs(args)
   .parserConfiguration({ "populate--": true })
-  .scriptName("opencode")
+  .scriptName(DISTRIBUTION.commandName)
   .wrap(100)
   .help("help", "show help")
   .alias("help", "h")
@@ -87,8 +87,7 @@ const cli = yargs(args)
   .command(RunCommand)
   .command(GenerateCommand)
   .command(DebugCommand)
-  .command(ConsoleCommand)
-  .command(ProvidersCommand)
+  .command(AccountCommand)
   .command(AgentCommand)
   .command(UpgradeCommand)
   .command(UninstallCommand)

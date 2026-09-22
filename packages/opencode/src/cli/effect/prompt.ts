@@ -1,5 +1,6 @@
 import * as prompts from "@clack/prompts"
 import { Effect, Option } from "effect"
+export * as Prompt from "./prompt"
 
 export const intro = (msg: string) => Effect.sync(() => prompts.intro(msg))
 export const outro = (msg: string) => Effect.sync(() => prompts.outro(msg))

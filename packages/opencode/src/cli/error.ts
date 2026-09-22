@@ -58,14 +58,16 @@ export function FormatError(input: unknown): string | undefined {
   // ProviderModelNotFoundError: { providerID: string, modelID: string, suggestions?: string[] }
   const providerModelNotFound = configData(input, "ProviderModelNotFoundError")
   if (providerModelNotFound) {
+    const reason = stringField(providerModelNotFound, "reason")?.trim()
+    if (reason) return reason
     const suggestions = Array.isArray(providerModelNotFound.suggestions)
       ? providerModelNotFound.suggestions.filter((x) => typeof x === "string")
       : []
     return [
       `Model not found: ${stringField(providerModelNotFound, "providerID")}/${stringField(providerModelNotFound, "modelID")}`,
       ...(suggestions.length ? ["Did you mean: " + suggestions.join(", ")] : []),
-      `Try: \`opencode models\` to list available models`,
-      `Or check your config (opencode.json) provider/model names`,
+      `Try: \`bharatcode models\` to list available models`,
+      `Or check your config (bharatcode.json) provider/model names`,
     ].join("\n")
   }
 

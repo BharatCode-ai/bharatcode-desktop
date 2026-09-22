@@ -4,6 +4,11 @@ import { FormatError } from "../../src/cli/error"
 import { UI } from "../../src/cli/ui"
 
 describe("cli.error", () => {
+  test("keeps a catalog access failure distinct from an unknown model", () => {
+    const data = { providerID: "bharatcode", modelID: "current-model", reason: "Sign in to BharatCode to load models." }
+    expect(FormatError({ name: "ProviderModelNotFoundError", data })).toBe(data.reason)
+    expect(FormatError({ _tag: "ProviderModelNotFoundError", ...data })).toBe(data.reason)
+  })
   test("formats legacy and tagged config errors the same way", () => {
     const cases = [
       {
@@ -73,8 +78,8 @@ describe("cli.error", () => {
     const expected = [
       "Model not found: anthropic/claude-sonet-4",
       "Did you mean: claude-sonnet-4",
-      "Try: `opencode models` to list available models",
-      "Or check your config (opencode.json) provider/model names",
+      "Try: `bharatcode models` to list available models",
+      "Or check your config (bharatcode.json) provider/model names",
     ].join("\n")
 
     expect(FormatError({ name: "ProviderModelNotFoundError", data })).toBe(expected)

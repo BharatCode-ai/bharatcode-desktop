@@ -5,6 +5,12 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { BharatCodeModel } from "./model"
+import { Auth } from "@/auth"
+import {
+  MODEL_SIGN_IN_REQUIRED,
+  MODEL_CATALOG_UNAVAILABLE,
+  MODEL_STORAGE_UNAVAILABLE,
+} from "@opencode-ai/core/util/model-recovery"
 
 const CATALOG_URL = `${BharatCodeAccount.MODEL_API_BASE_URL}/models`
 const DEFAULT_TTL_MS = 300_000
@@ -86,9 +92,14 @@ function serviceErrorCode(value: Record<string, unknown>) {
 }
 
 export function modelUnavailableReason(error: unknown) {
-  if (!(error instanceof BharatCodeAccount.ServiceError)) return
-  if (!BharatCodeModel.isAccessRequired("bharatcode", error.status, error.errorCode)) return
-  return BharatCodeModel.ACCESS_REQUIRED_MESSAGE
+  if (error instanceof BharatCodeAccount.SignInRequired) return MODEL_SIGN_IN_REQUIRED
+  if (error instanceof Auth.AuthError) return MODEL_STORAGE_UNAVAILABLE
+  if (error instanceof BharatCodeAccount.ServiceError) {
+    if (error.status === 401) return MODEL_SIGN_IN_REQUIRED
+    if (BharatCodeModel.isAccessRequired("bharatcode", error.status, error.errorCode))
+      return BharatCodeModel.ACCESS_REQUIRED_MESSAGE
+  }
+  return MODEL_CATALOG_UNAVAILABLE
 }
 
 function positiveInteger(value: unknown) {
