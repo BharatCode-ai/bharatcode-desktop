@@ -1,4 +1,7 @@
+import { BHARATCODE_ENGLISH } from "./bharatcode"
+
 export const dict: Record<string, string> = {
+  ...BHARATCODE_ENGLISH,
   "desktop.menu.app": "OpenCode",
   "desktop.menu.file": "ཡིག༌སྣོད",
   "desktop.menu.edit": "ཞུན༌དག",

@@ -20,6 +20,18 @@ type SaveFilePickerOptions = { title?: string; defaultPath?: string }
 type PlatformName = "web" | "desktop"
 type DesktopOS = "macos" | "windows" | "linux"
 
+export type BharatCodeSignInOptions = { selectAccount?: boolean }
+export type BharatCodeAccountStatus = {
+  revision?: number
+  state: "signed_out" | "signed_in" | "needs_sign_in" | "connection_issue" | "authorizing" | "refreshing" | "switching"
+  authenticated: boolean
+  checkedAt: string
+  email?: string
+  name?: string
+  expiresAt?: number
+  message?: string
+}
+
 export type FatalRendererErrorLog = {
   error: string
   url: string
@@ -29,6 +41,12 @@ export type FatalRendererErrorLog = {
 }
 
 type PlatformBase = {
+  getAccountStatus?(): Promise<BharatCodeAccountStatus>
+  refreshAccountStatus?(): Promise<BharatCodeAccountStatus>
+  beginSignIn?(input?: BharatCodeSignInOptions): Promise<BharatCodeAccountStatus>
+  cancelSignIn?(): Promise<void>
+  logout?(): Promise<BharatCodeAccountStatus>
+  onAccountStatusChanged?(callback: (status: BharatCodeAccountStatus) => void): () => void
   /** App version */
   version?: string
 

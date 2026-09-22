@@ -1,4 +1,6 @@
-import { DESKTOP_NATIVE_KEYS } from "./desktop-native"
+import { BHARATCODE_ENGLISH } from "./bharatcode"
+
+import { desktopNativeMessages } from "./desktop-native"
 
 const desktop = [
   "OpenCode",
@@ -94,7 +96,8 @@ const desktop = [
 ]
 
 export const dict = {
-  ...Object.fromEntries(DESKTOP_NATIVE_KEYS.map((key, index) => [key, desktop[index]])),
+  ...BHARATCODE_ENGLISH,
+  ...desktopNativeMessages(desktop),
   "command.category.suggested": "Javasolt",
   "command.category.view": "Nézet",
   "command.category.project": "Projekt",

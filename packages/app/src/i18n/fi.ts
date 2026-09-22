@@ -1,4 +1,7 @@
+import { BHARATCODE_ENGLISH } from "./bharatcode"
+
 export const dict = {
+  ...BHARATCODE_ENGLISH,
   "command.category.suggested": "Ehdotetut",
   "command.category.view": "Näytä",
   "command.category.project": "Projekti",

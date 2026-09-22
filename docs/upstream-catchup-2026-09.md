@@ -10,6 +10,61 @@ than resolving 499 overlapping files at once.
 
 ## Where it stands
 
+### Continuation checkpoint — September 22, 2026
+
+The original inventory below is retained as baseline evidence, not a claim that
+the re-fork is complete. All continuation work is local on this branch. No
+Desktop release, installation, protocol registration, or real-profile migration
+has been performed during this continuation.
+
+Completed local themes:
+
+- `6f2d8a7ed9`: CLI account/login/catalog integration, branded distribution
+  identity, and fixed safe model-recovery error classification.
+- `d658994adb`: legacy session Goal actions, HTTP routing and continuation on
+  the new event-sourced session engine; upstream failure handling preserved.
+- `5896f9d324`: main account routes and shipped v2 model/catalog adapters;
+  protected credentials remain server-side and generic upstream composition is
+  preserved for internal tests.
+- `0a689461a6`: main-owned Desktop account flow on the upstream multi-window
+  shell, safe callback logging, private sidecar credentials, health barrier,
+  and development/diagnostic protocol-registration containment.
+- `398d49a7e0`: same-checkout CLI/Node packaging, branded update/storage identity,
+  explicit unsigned Windows and signed/notarized macOS packaging requirements.
+  Building the CLI no longer publishes assets implicitly.
+- Renderer account gate/settings integration: explicit sign-in, retryable
+  connection failures, revision-aware account updates and generic-provider UI
+  isolation. New account copy uses a shared English fallback; existing locale
+  values and positional native-menu translations are preserved.
+
+Verification so far: compiled Linux CLI reports 1.15.35; compiled Node runtime
+passes isolated signed-out/auth-boundary checks; real Node SQLite draft text and
+attachment references survive close/reopen. Renderer App suite passed 734 tests
+before the additional native positional-mapping regression; production frontend
+build and Desktop typecheck pass. The Bun Desktop suite is **not fully green**:
+106 pass, one failure and one error involve Bun 1.3.14's node:sqlite support;
+the corresponding real Node draft persistence smoke passes. These are compiled
+runtime checks, not installed Electron or cross-platform acceptance.
+
+Remaining, in dependency order:
+
+1. Conversation error/recovery UI and Goal ribbon on the new timeline/composer,
+   with production benchmark comparison; audit other retained user features.
+2. BharatCode-only WSL runtime provisioning/security, capabilities, dictation,
+   and final branding/assets. Do not reinstate the legacy startup recovery gate.
+3. Regenerate affected SDKs and reconcile release workflows with exact-source
+   artifacts, no implicit publication, and the current platform signing policy.
+4. Broad affected suites, production UI/browser checks and native package
+   lifecycle verification. Document any baseline failures explicitly before a
+   replacement recommendation.
+
+The first production timeline benchmark could not launch because the matching
+Playwright Chromium binary was absent. Install the pinned browser and obtain a
+baseline before editing timeline/session UI; do not label that failed attempt a
+performance result.
+
+### Original re-fork baseline
+
 12 commits. Every one green at the point it landed: `bun turbo typecheck --force`
 19/19, and the suites for whatever that commit touched.
 

@@ -1,4 +1,4 @@
-import { Component, createSignal, startTransition } from "solid-js"
+import { Component, createSignal, startTransition, Show } from "solid-js"
 import { Dialog } from "@opencode-ai/ui/dialog"
 import { Tabs } from "@opencode-ai/ui/tabs"
 import { Icon } from "@opencode-ai/ui/icon"
@@ -10,12 +10,15 @@ import { SettingsKeybinds } from "./settings-keybinds"
 import { SettingsProviders } from "./settings-providers"
 import { SettingsModels } from "./settings-models"
 import { SettingsServers } from "./settings-servers"
+import { SettingsAccount } from "./settings-account"
 
 export const DialogSettings: Component<{ defaultValue?: string }> = (props) => {
   const language = useLanguage()
   const platform = usePlatform()
   const dialog = useDialog()
-  const [tab, setTab] = createSignal(props.defaultValue ?? "general")
+  const [tab, setTab] = createSignal(
+    props.defaultValue === "providers" && platform.getAccountStatus ? "account" : (props.defaultValue ?? "general"),
+  )
 
   const showProviders = () => {
     void dialog.show(() => <DialogSettings defaultValue="providers" />)
@@ -37,6 +40,12 @@ export const DialogSettings: Component<{ defaultValue?: string }> = (props) => {
                 <div class="flex flex-col gap-1.5">
                   <Tabs.SectionTitle>{language.t("settings.section.desktop")}</Tabs.SectionTitle>
                   <div class="flex flex-col gap-1.5 w-full">
+                    <Show when={platform.getAccountStatus}>
+                      <Tabs.Trigger value="account">
+                        <Icon name="shield" />
+                        {language.t("settings.account.title")}
+                      </Tabs.Trigger>
+                    </Show>
                     <Tabs.Trigger value="general">
                       <Icon name="sliders" />
                       {language.t("settings.tab.general")}
@@ -55,10 +64,12 @@ export const DialogSettings: Component<{ defaultValue?: string }> = (props) => {
                 <div class="flex flex-col gap-1.5">
                   <Tabs.SectionTitle>{language.t("settings.section.server")}</Tabs.SectionTitle>
                   <div class="flex flex-col gap-1.5 w-full">
-                    <Tabs.Trigger value="providers">
-                      <Icon name="providers" />
-                      {language.t("settings.providers.title")}
-                    </Tabs.Trigger>
+                    <Show when={!platform.getAccountStatus}>
+                      <Tabs.Trigger value="providers">
+                        <Icon name="providers" />
+                        {language.t("settings.providers.title")}
+                      </Tabs.Trigger>
+                    </Show>
                     <Tabs.Trigger value="models">
                       <Icon name="models" />
                       {language.t("settings.models.title")}
@@ -76,6 +87,11 @@ export const DialogSettings: Component<{ defaultValue?: string }> = (props) => {
         <Tabs.Content value="general" class="no-scrollbar">
           <SettingsGeneral />
         </Tabs.Content>
+        <Show when={platform.getAccountStatus}>
+          <Tabs.Content value="account" class="no-scrollbar">
+            <SettingsAccount />
+          </Tabs.Content>
+        </Show>
         <Tabs.Content value="shortcuts" class="no-scrollbar">
           <SettingsKeybinds />
         </Tabs.Content>

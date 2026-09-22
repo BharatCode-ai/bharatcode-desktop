@@ -16,7 +16,7 @@ const api: ElectronAPI = {
   beginSignIn: (input) => ipcRenderer.invoke("account-sign-in", input),
   cancelSignIn: () => ipcRenderer.invoke("account-cancel"),
   logout: () => ipcRenderer.invoke("account-logout"),
-  onAccountStatus: (cb) => {
+  onAccountStatusChanged: (cb) => {
     const handler = (_: unknown, status: BharatCodeAccountStatus) => cb(status)
     ipcRenderer.on("account-status-changed", handler)
     return () => ipcRenderer.removeListener("account-status-changed", handler)

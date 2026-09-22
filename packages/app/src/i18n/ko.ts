@@ -1,4 +1,7 @@
+import { BHARATCODE_ENGLISH } from "./bharatcode"
+
 export const dict = {
+  ...BHARATCODE_ENGLISH,
   "command.category.suggested": "추천",
   "command.category.view": "보기",
   "command.category.project": "프로젝트",

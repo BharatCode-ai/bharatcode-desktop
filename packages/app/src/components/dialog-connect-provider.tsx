@@ -38,6 +38,7 @@ import { useSettings } from "@/context/settings"
 import { popularProviders, useProviders } from "@/hooks/use-providers"
 import { CustomProviderForm } from "./dialog-custom-provider"
 import { decode64 } from "@/utils/base64"
+import { SettingsAccount } from "./settings-account"
 
 const CUSTOM_ID = "_custom"
 type ConnectMethod = Extract<IntegrationMethod, { type: "key" | "oauth" }>
@@ -57,6 +58,14 @@ export const DialogConnectProvider: Component<{
   directory?: Accessor<string | undefined>
   controller?: ReturnType<typeof useProviderConnectController>
 }> = (props) => {
+  const platform = usePlatform()
+  if (platform.getAccountStatus) {
+    return (
+      <Dialog size="large">
+        <SettingsAccount />
+      </Dialog>
+    )
+  }
   const fallback = useProviderConnectController()
   const controller = props.controller ?? fallback
   const language = useLanguage()

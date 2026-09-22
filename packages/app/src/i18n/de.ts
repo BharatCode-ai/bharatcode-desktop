@@ -2,7 +2,10 @@ import { dict as en } from "./en"
 
 type Keys = keyof typeof en
 
+import { BHARATCODE_ENGLISH } from "./bharatcode"
+
 export const dict = {
+  ...BHARATCODE_ENGLISH,
   "command.category.suggested": "Vorgeschlagen",
   "command.category.view": "Ansicht",
   "command.category.project": "Projekt",

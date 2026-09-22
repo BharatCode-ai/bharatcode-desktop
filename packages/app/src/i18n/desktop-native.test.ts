@@ -7,12 +7,20 @@ import {
   DESKTOP_NATIVE_LOCALES,
   DESKTOP_NATIVE_LOCALE_TAGS,
   detectDesktopNativeLocale,
+  desktopNativeMessages,
   DESKTOP_NATIVE_MAX_PAYLOAD_BYTES,
   formatDesktopNativeMessage,
   parseDesktopNativeBundle,
 } from "./desktop-native"
 
 describe("desktop native translations", () => {
+  test("keeps positional upstream translations independent of added account messages", () => {
+    const messages = desktopNativeMessages(["App translation", "File translation"])
+    expect(messages["desktop.menu.app"]).toBe("App translation")
+    expect(messages["desktop.menu.file"]).toBe("File translation")
+    expect(messages["desktop.account.error.status"]).toBe(DESKTOP_NATIVE_ENGLISH["desktop.account.error.status"])
+  })
+
   test("uses native language names independent of the active locale", () => {
     expect(DESKTOP_NATIVE_LOCALES.map((locale) => DESKTOP_NATIVE_LABELS[locale])).toEqual([
       "English",

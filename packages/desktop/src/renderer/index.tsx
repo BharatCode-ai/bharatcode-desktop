@@ -23,7 +23,7 @@ import { createEffect, createMemo, createResource, createSignal, onCleanup, Show
 import { render } from "solid-js/web"
 import pkg from "../../package.json"
 import { t } from "./i18n"
-import { initializationData } from "./initialization"
+import { initializationData, initializationReady } from "./initialization"
 import { DesktopFirstLaunchOnboarding } from "./onboarding"
 import { resetZoom, setPinchZoomEnabled, webviewZoom, zoomIn, zoomOut } from "./webview-zoom"
 import { windowFullscreen } from "./window-fullscreen"
@@ -31,6 +31,7 @@ import { availableStartupServer, readyWslConnections } from "./wsl/connections"
 import "./styles.css"
 import { Splash } from "@opencode-ai/ui/logo"
 import { useTheme } from "@opencode-ai/ui/theme/context"
+import { BharatCodeAuthGate } from "./account-gate"
 
 const root = document.getElementById("root")
 if (import.meta.env.DEV && !(root instanceof HTMLElement)) {
@@ -166,6 +167,12 @@ const createPlatform = (windowState: DesktopWindowState): Platform => {
   const wslServersApi = os === "windows" ? window.api.wslServers : undefined
 
   return {
+    getAccountStatus: () => window.api.getAccountStatus(),
+    refreshAccountStatus: () => window.api.refreshAccountStatus(),
+    beginSignIn: (input) => window.api.beginSignIn(input),
+    cancelSignIn: () => window.api.cancelSignIn(),
+    logout: () => window.api.logout(),
+    onAccountStatusChanged: (cb) => window.api.onAccountStatusChanged(cb),
     platform: "desktop",
     os,
     version: pkg.version,
@@ -345,7 +352,7 @@ function DesktopRoot(props: { windowState: DesktopWindowState }) {
     return next satisfies Locale
   }
 
-  // Fetch sidecar credentials (available immediately, before health check)
+  // The main-owned connection barrier completes only after health succeeds.
   const [sidecar] = createResource(() => window.api.awaitInitialization())
 
   const [defaultServer] = createResource(() => platform.getDefaultServer?.())
@@ -377,7 +384,7 @@ function DesktopRoot(props: { windowState: DesktopWindowState }) {
     const wslServers = useWslServers()
     const language = useLanguage()
     const ready = createMemo(
-      () => !defaultServer.loading && !sidecar.loading && !locale.loading && !wslServers.isLoading,
+      () => !defaultServer.loading && initializationReady(sidecar) && !locale.loading && !wslServers.isLoading,
     )
     const servers = createMemo(() => {
       const data = initializationData(sidecar)
@@ -402,24 +409,26 @@ function DesktopRoot(props: { windowState: DesktopWindowState }) {
     )
     return (
       <Show when={ready()} fallback={<LoadingSplash />}>
-        <Show when={effectiveDefaultServer()} keyed>
-          {(key) => (
-            <AppInterface
-              defaultServer={key}
-              servers={servers()}
-              router={router}
-              startup={onboarding.promise}
-              serverScoped={
-                <DesktopFirstLaunchOnboarding
-                  initialUrl={getLastActiveUrl(platform.windowID ?? "browser")}
-                  onLoaded={onboarding.resolve}
-                />
-              }
-            >
-              <Inner />
-            </AppInterface>
-          )}
-        </Show>
+        <BharatCodeAuthGate>
+          <Show when={effectiveDefaultServer()} keyed>
+            {(key) => (
+              <AppInterface
+                defaultServer={key}
+                servers={servers()}
+                router={router}
+                startup={onboarding.promise}
+                serverScoped={
+                  <DesktopFirstLaunchOnboarding
+                    initialUrl={getLastActiveUrl(platform.windowID ?? "browser")}
+                    onLoaded={onboarding.resolve}
+                  />
+                }
+              >
+                <Inner />
+              </AppInterface>
+            )}
+          </Show>
+        </BharatCodeAuthGate>
       </Show>
     )
   }
@@ -428,6 +437,7 @@ function DesktopRoot(props: { windowState: DesktopWindowState }) {
     <PlatformProvider value={platform}>
       <AppBaseProviders
         locale={locale.latest}
+        onThemeApplied={(mode, scheme) => void window.api.setTitlebar({ mode, scheme })}
         onNativeTranslations={(bundle) => void window.api.setNativeTranslations(bundle).catch(() => undefined)}
       >
         <Show when={true}>{(_) => <App />}</Show>

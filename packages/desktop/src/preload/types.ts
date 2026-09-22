@@ -60,7 +60,7 @@ export type ElectronAPI = {
   beginSignIn: (input?: BharatCodeSignInOptions) => Promise<BharatCodeAccountStatus>
   cancelSignIn: () => Promise<void>
   logout: () => Promise<BharatCodeAccountStatus>
-  onAccountStatus: (cb: (status: BharatCodeAccountStatus) => void) => () => void
+  onAccountStatusChanged: (cb: (status: BharatCodeAccountStatus) => void) => () => void
   killSidecar: () => Promise<void>
   awaitInitialization: () => Promise<ServerReadyData>
   wslServers: WslServersAPI
