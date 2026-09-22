@@ -304,13 +304,13 @@ const BASE_DESKTOP_NATIVE_ENGLISH = {
   "desktop.wsl.error.executeDistro": "Cannot execute commands in distro",
   "desktop.wsl.error.installWsl": "WSL installation failed",
   "desktop.wsl.error.installDistro": "Failed to install distro: {{distro}}",
-  "desktop.wsl.error.installOpencode": "OpenCode installation failed",
+  "desktop.wsl.error.installOpencode": "BharatCode installation failed",
   "desktop.wsl.error.alreadyAdded": "{{distro}} is already added",
-  "desktop.wsl.error.opencodeMissing": "opencode is not installed in this distro",
-  "desktop.wsl.error.opencodeCannotRun": "opencode is installed but could not run",
-  "desktop.wsl.error.opencodeNotInstalled": "OpenCode is not installed in {{distro}}",
+  "desktop.wsl.error.opencodeMissing": "BharatCode is not installed in this distro",
+  "desktop.wsl.error.opencodeCannotRun": "BharatCode is installed but could not run",
+  "desktop.wsl.error.opencodeNotInstalled": "BharatCode is not installed in {{distro}}",
   "desktop.wsl.error.updateVersion":
-    "OpenCode update finished but {{distro}} still reports {{installed}}; expected {{expected}}",
+    "BharatCode update finished but {{distro}} still reports {{installed}}; expected {{expected}}",
   "desktop.wsl.error.noVersion": "no version",
   "desktop.wsl.error.serverExited": "WSL server exited after startup (code={{code}} signal={{signal}})",
   "desktop.wsl.error.serverExitedBeforeHealthy":

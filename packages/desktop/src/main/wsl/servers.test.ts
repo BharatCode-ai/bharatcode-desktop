@@ -8,9 +8,40 @@ import {
 } from "./policy"
 import { expectOpencodeVersion, pendingRestartAfterWslInstall, wslServerIdsToStartOnInitialize } from "./startup"
 import { createWslServersController, type WslServerConfig } from "./servers"
+import { wslArgs } from "./runtime"
 
 let persistedServers: WslServerConfig[] = []
 let releaseOpencodeResolve: (() => void) | undefined
+
+test("launch working directory is the verified Linux home, not the Windows app folder", () => {
+  expect(wslArgs(["/runtime", "serve"], "Ubuntu", "fixture", "/home/Fixture Name")).toEqual([
+    "-d",
+    "Ubuntu",
+    "--user",
+    "fixture",
+    "--cd",
+    "/home/Fixture Name",
+    "--",
+    "/runtime",
+    "serve",
+  ])
+  expect(wslArgs(["/bin/true"], "Ubuntu")).toEqual(["-d", "Ubuntu", "--", "/bin/true"])
+})
+
+test("bundled-runtime check does not require curl", async () => {
+  persistedServers = []
+  const checked: string[] = []
+  const controller = createWslServersController("1.15.35", async () => new Promise<never>(() => {}), {
+    ...testControllerOptions(),
+    probeDistro: async (name) => ({ name, canExecute: true, hasBash: true, error: null }),
+    resolveOpencode: async (name) => {
+      checked.push(name)
+      return null
+    },
+  })
+  await controller.probeAddable(["Ubuntu"])
+  expect(checked).toEqual(["Ubuntu"])
+})
 
 test("restart waits for shutdown acknowledgement and does not spawn after failed shutdown", async () => {
   for (const fails of [false, true]) {
@@ -122,7 +153,7 @@ test("starts every configured WSL server on initialization", () => {
 test("rejects an update that did not install the desktop version", () => {
   expect(() => expectOpencodeVersion("1.16.2", "1.16.2")).not.toThrow()
   expect(() => expectOpencodeVersion("1.14.35", "1.16.2")).toThrow(
-    "OpenCode update finished but Debian still reports 1.14.35; expected 1.16.2",
+    "BharatCode update finished but Debian still reports 1.14.35; expected 1.16.2",
   )
 })
 
@@ -144,7 +175,7 @@ test("restarts an existing distro server after updating OpenCode", () => {
 test("clears cached distro probes when removing a WSL server", () => {
   expect(
     clearWslDistroState(
-      { Debian: { name: "Debian", canExecute: true, hasBash: true, hasCurl: true, error: null } },
+      { Debian: { name: "Debian", canExecute: true, hasBash: true, error: null } },
       {
         Debian: {
           distro: "Debian",
@@ -236,7 +267,7 @@ test("probes addable distros in parallel before checking OpenCode", async () => 
     probeDistro: async (distro) => {
       started.push(distro)
       await new Promise<void>((resolve) => release.set(distro, resolve))
-      return { name: distro, canExecute: true, hasBash: true, hasCurl: true, error: null }
+      return { name: distro, canExecute: true, hasBash: true, error: null }
     },
     resolveOpencode: async (distro) => {
       opencode.push(distro)
@@ -266,7 +297,6 @@ test("does not check OpenCode in addable distros that cannot execute commands", 
       name: distro,
       canExecute: distro === "Debian",
       hasBash: distro === "Debian",
-      hasCurl: distro === "Debian",
       error: distro === "Debian" ? null : "Open Ubuntu once to finish setup",
     }),
     resolveOpencode: async (distro) => {

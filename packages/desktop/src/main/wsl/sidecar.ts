@@ -44,6 +44,7 @@ export async function spawnWslSidecar(distro: string, opts: { healthTimeoutMs?: 
       ],
       distro,
       identity.user,
+      identity.home,
     ),
     {
       stdio: ["pipe", "pipe", "pipe"],

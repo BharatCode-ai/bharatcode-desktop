@@ -34,8 +34,14 @@ export type RunWslOptions = {
 const DEFAULT_WSL_TIMEOUT_MS = 20_000
 const DEFAULT_WSL_INSTALL_TIMEOUT_MS = 15 * 60_000
 
-export function wslArgs(args: string[], distro?: string | null, user?: string | null) {
-  return [...(distro ? ["-d", distro] : []), ...(user ? ["--user", user] : []), "--", ...args]
+export function wslArgs(args: string[], distro?: string | null, user?: string | null, cwd?: string) {
+  return [
+    ...(distro ? ["-d", distro] : []),
+    ...(user ? ["--user", user] : []),
+    ...(cwd ? ["--cd", cwd] : []),
+    "--",
+    ...args,
+  ]
 }
 
 export function runWsl(args: string[], opts: RunWslOptions = {}) {
@@ -283,21 +289,16 @@ export async function probeWslDistro(name: string, opts?: RunWslOptions): Promis
       name,
       canExecute: false,
       hasBash: false,
-      hasCurl: false,
       error: summarize(executable.stderr || executable.stdout) || nativeT("desktop.wsl.error.executeDistro"),
     }
   }
 
-  const [bash, curl] = await Promise.all([
-    runWslSh("command -v bash >/dev/null && printf yes || printf no", name, opts),
-    runWslSh("command -v curl >/dev/null && printf yes || printf no", name, opts),
-  ])
+  const bash = await runWslSh("command -v bash >/dev/null && printf yes || printf no", name, opts)
 
   return {
     name,
     canExecute: true,
     hasBash: bash.code === 0 && summarize(bash.stdout) === "yes",
-    hasCurl: curl.code === 0 && summarize(curl.stdout) === "yes",
     error: null,
   }
 }

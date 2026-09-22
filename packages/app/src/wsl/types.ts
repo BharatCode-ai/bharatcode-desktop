@@ -19,7 +19,6 @@ export type WslDistroProbe = {
   name: string
   canExecute: boolean
   hasBash: boolean
-  hasCurl: boolean
   error: string | null
 }
 

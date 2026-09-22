@@ -525,7 +525,7 @@ function opencodeCheck(
 }
 
 function distroProbeReady(probe: WslDistroProbe | undefined) {
-  return !!probe?.canExecute && probe.hasBash && probe.hasCurl
+  return !!probe?.canExecute && probe.hasBash
 }
 
 function startupFailure(code: number | null, signal: NodeJS.Signals | null) {

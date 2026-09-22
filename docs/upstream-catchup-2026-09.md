@@ -258,6 +258,28 @@ Solid export/proxy semantics; they are not the configured suite or a green
 result. Logs are under `/tmp/bc-runtime-account-*`. No live profiles, app install,
 protocol associations or production services were changed.
 
+### WSL prerequisite/working-directory cleanup — September 23, 2026
+
+The bundled-runtime path no longer probes or requires curl. Bash remains required
+for the Linux coding shell. Removed the unused curl field and obsolete missing-
+tools translations; the new missing-shell label uses the existing English fallback.
+WSL setup labels now identify BharatCode rather than advertising installation of
+upstream OpenCode. Internal IPC/type names remain compatibility names.
+
+Production WSL launch now explicitly starts in the verified Linux user's home,
+matching the native smoke's working-directory behavior instead of inheriting the
+Windows application's directory. Added a failing-then-passing argv regression.
+The project picker already uses the selected WSL server's filesystem (not the
+native Windows picker); an explicit WSL policy assertion now covers that choice.
+No new Windows-path translation layer is required for that picker. Installed
+Electron interaction/attachment acceptance remains outstanding.
+
+Focused controller/transport/artifact tests: **37 pass**, 119 assertions,
+including the working-directory assertion. Full App unit suite: **741 pass**,
+3072 assertions. Desktop and App typechecks pass. These are local tests, not a
+new native-installed acceptance run. No live distro installation, profile or
+account changes were made.
+
 ### Original re-fork baseline
 
 12 commits. Every one green at the point it landed: `bun turbo typecheck --force`

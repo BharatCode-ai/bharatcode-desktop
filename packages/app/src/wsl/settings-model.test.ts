@@ -8,6 +8,7 @@ import {
   runAddableProbePlan,
   wslOpencodeAction,
   wslRuntimeRetryable,
+  wslDistroReady,
 } from "./settings-model"
 import type { WslServersState } from "./types"
 
@@ -28,6 +29,15 @@ function readyState(input: Partial<WslServersState> = {}): WslServersState {
 }
 
 describe("WSL server settings presentation", () => {
+  test("bundled runtime does not require the old download tool", () => {
+    const state = readyState({
+      installed: [{ name: "Ubuntu", version: 2, isDefault: true }],
+      distroProbes: { Ubuntu: { name: "Ubuntu", canExecute: true, hasBash: true, error: null } },
+    })
+    expect(wslDistroReady(state, "Ubuntu")).toBe(true)
+    state.distroProbes.Ubuntu.hasBash = false
+    expect(wslDistroReady(state, "Ubuntu")).toBe(false)
+  })
   test("retries only settled unsuccessful runtimes", () => {
     expect(wslRuntimeRetryable({ kind: "starting" })).toBe(false)
     expect(wslRuntimeRetryable({ kind: "ready", url: "http://127.0.0.1:4096", username: null, password: null })).toBe(
@@ -148,7 +158,7 @@ describe("WSL server settings presentation", () => {
         ],
         online: [{ name: "Alpine", label: "Alpine Linux" }],
         distroProbes: {
-          Ubuntu: { name: "Ubuntu", canExecute: true, hasBash: true, hasCurl: true, error: null },
+          Ubuntu: { name: "Ubuntu", canExecute: true, hasBash: true, error: null },
         },
       },
       view: "main",
@@ -186,7 +196,7 @@ describe("WSL server settings presentation", () => {
         installed: [{ name: "Debian", version: 2, isDefault: true }],
         online: [{ name: "Ubuntu", label: "Ubuntu" }],
         distroProbes: {
-          Debian: { name: "Debian", canExecute: true, hasBash: true, hasCurl: true, error: null },
+          Debian: { name: "Debian", canExecute: true, hasBash: true, error: null },
         },
         opencodeChecks: {
           Debian: {
