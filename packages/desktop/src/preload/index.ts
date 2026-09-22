@@ -22,7 +22,6 @@ const api: ElectronAPI = {
     return () => ipcRenderer.removeListener("account-status-changed", handler)
   },
   killSidecar: () => ipcRenderer.invoke("kill-sidecar"),
-  installCli: () => ipcRenderer.invoke("install-cli"),
   awaitInitialization: () => ipcRenderer.invoke("await-initialization"),
   wslServers: {
     getState: () => ipcRenderer.invoke("wsl-servers-get-state"),

@@ -13,6 +13,7 @@ export const BRANDING = {
 }
 
 export function normalizeChannel(raw: string | undefined): Channel {
+  if (raw === "latest") return "prod"
   if (raw === "dev" || raw === "beta" || raw === "prod") return raw
   return "dev"
 }

@@ -62,7 +62,6 @@ export type ElectronAPI = {
   logout: () => Promise<BharatCodeAccountStatus>
   onAccountStatus: (cb: (status: BharatCodeAccountStatus) => void) => () => void
   killSidecar: () => Promise<void>
-  installCli: () => Promise<string>
   awaitInitialization: () => Promise<ServerReadyData>
   wslServers: WslServersAPI
   updater: UpdaterAPI

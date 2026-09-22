@@ -44,7 +44,7 @@ function migrateFile(datPath: string, filename: string) {
   // opencode.settings.dat → the electron settings store ("opencode.settings").
   // All other .dat files keep their full filename as the store name so they match
   // what the renderer passes via IPC (e.g. "default.dat", "opencode.global.dat").
-  const storeName = filename === "opencode.settings.dat" ? "opencode.settings" : filename
+  const storeName = filename === "bharatcode.settings.dat" ? "bharatcode.settings" : filename
   const target = getStore(storeName)
   const migrated: string[] = []
   const skipped: string[] = []

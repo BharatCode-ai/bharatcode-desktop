@@ -9,7 +9,6 @@ import { app } from "electron"
 const execFileAsync = promisify(execFile)
 const root = dirname(fileURLToPath(import.meta.url))
 const stateHome = process.env.XDG_STATE_HOME
-const desktopStateNames = ["ai.opencode.desktop.dev", "ai.opencode.desktop.beta", "ai.opencode.desktop"]
 
 type Logger = {
   log(message: string, meta?: Record<string, unknown>): void
@@ -24,9 +23,9 @@ export async function startBackgroundCli(logger: Logger, shellStateHome?: string
   const version = await run(bundled, ["--version"], logger)
   const binary = app.isPackaged ? await installCli(bundled, version, logger) : bundled
 
-  const candidates = [
-    ...new Set([stateHome, shellStateHome, ...desktopStateNames.map((name) => join(app.getPath("appData"), name))]),
-  ].filter((candidate) => candidate === undefined || existsSync(candidate))
+  // Discover only this channel's state. Another product/channel's daemon is not
+  // a valid substitute for the bundled runtime or its account store.
+  const candidates = [...new Set([shellStateHome ?? stateHome ?? app.getPath("userData")])]
   const discovered = await Promise.all(
     candidates.map(async (candidate) => ({
       stateHome: candidate,
@@ -39,7 +38,7 @@ export async function startBackgroundCli(logger: Logger, shellStateHome?: string
     ...endpoint(found?.url),
   })
 
-  const daemonStateHome = found?.stateHome ?? stateHome
+  const daemonStateHome = found?.stateHome ?? candidates[0]
   const url = await run(binary, ["service", "start"], logger, { stateHome: daemonStateHome })
   const password = await run(binary, ["service", "get", "password"], logger, {
     redact: true,
@@ -121,5 +120,5 @@ function endpoint(url: string | undefined) {
 }
 
 function executableName() {
-  return process.platform === "win32" ? "opencode-cli.exe" : "opencode-cli"
+  return process.platform === "win32" ? "bharatcode-cli.exe" : "bharatcode-cli"
 }

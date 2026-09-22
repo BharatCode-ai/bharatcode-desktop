@@ -59,8 +59,6 @@ async function start(command: StartCommand) {
     listener = await Server.listen({
       port: command.port,
       hostname: command.hostname,
-      username: "opencode",
-      password: command.password,
       cors: ["oc://renderer"],
     })
     parentPort.postMessage({ type: "ready" })

@@ -1,160 +1,91 @@
-import { execFile } from "node:child_process"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import { promisify } from "node:util"
-
 import type { Configuration } from "electron-builder"
+import {
+  BRANDING,
+  appIdForChannel,
+  normalizeChannel,
+  packageNameForChannel,
+  productNameForChannel,
+} from "./src/main/branding"
 
-const execFileAsync = promisify(execFile)
 const packageDir = path.dirname(fileURLToPath(import.meta.url))
-const rootDir = path.resolve(packageDir, "../..")
-const signScript = path.join(rootDir, "script", "sign-windows.ps1")
-// The Electron 42 packaging update briefly installed Linux launchers/icons under
-// "opencode-desktop". Keep that hidden desktop entry around so existing GNOME/KDE
-// pins still resolve after the canonical app id changes back to ai.opencode.desktop.
-const legacyDesktopEntry = path.join(packageDir, "resources", "linux", "opencode-desktop.desktop")
-const legacyDesktopEntryFpm = `${legacyDesktopEntry}=/usr/share/applications/opencode-desktop.desktop`
+const channel = normalizeChannel(process.env.BHARATCODE_CHANNEL ?? process.env.OPENCODE_CHANNEL)
+const appId = appIdForChannel(channel)
+const metainfo = `${path.join(packageDir, "resources", `${appId}.metainfo.xml`)}=/usr/share/metainfo/${appId}.metainfo.xml`
 
-const metainfoFpm = (appId: string) =>
-  `${path.join(packageDir, "resources", `${appId}.metainfo.xml`)}=/usr/share/metainfo/${appId}.metainfo.xml`
-
-async function signWindows(configuration: { path: string }) {
-  if (process.platform !== "win32") return
-  if (process.env.GITHUB_ACTIONS !== "true") return
-
-  await execFileAsync(
-    "pwsh",
-    ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", signScript, configuration.path],
-    { cwd: rootDir },
-  )
+export function assertPackagingPolicy(platform: string, env = process.env, buildChannel = channel) {
+  if (platform === "win32" && env.BHARATCODE_ALLOW_UNSIGNED_WINDOWS !== "1") {
+    throw new Error("Windows beta packaging requires explicit unsigned-policy acknowledgement")
+  }
+  if (platform === "darwin" && buildChannel !== "dev") {
+    if (!env.CSC_LINK && !env.CSC_NAME) throw new Error("macOS release requires Developer ID signing")
+    if (!env.APPLE_API_KEY || !env.APPLE_API_KEY_ID || !env.APPLE_API_ISSUER) {
+      throw new Error("macOS release requires Apple notarization credentials")
+    }
+  }
 }
 
-const channel = (() => {
-  const raw = process.env.OPENCODE_CHANNEL
-  if (raw === "dev" || raw === "beta" || raw === "prod") return raw
-  return "dev"
-})()
-
-const APP_IDS = {
-  dev: "ai.opencode.desktop.dev",
-  beta: "ai.opencode.desktop.beta",
-  prod: "ai.opencode.desktop",
-} as const
-
-const getBase = (appId: string): Configuration => ({
-  artifactName: "opencode-desktop-${os}-${arch}.${ext}",
-  directories: {
-    output: "dist",
-    buildResources: "resources",
-  },
-  // Linux launchers are .desktop files, so this is the desktop file name,
-  // not just the app id. For prod, app id "ai.opencode.desktop" becomes
-  // "ai.opencode.desktop.desktop".
-  // https://developer.gnome.org/documentation/guidelines/maintainer/integrating.html
-  // https://www.electron.build/docs/linux/
-  extraMetadata: {
-    desktopName: `${appId}.desktop`,
-  },
-  files: ["out/**/*", "resources/**/*", "!resources/opencode-cli*"],
+const config: Configuration = {
+  appId,
+  productName: productNameForChannel(channel),
+  artifactName: "bharatcode-desktop-${os}-${arch}.${ext}",
+  directories: { output: "dist", buildResources: "resources" },
+  extraMetadata: { desktopName: `${appId}.desktop` },
+  files: ["out/**/*", "resources/**/*", "!resources/bharatcode-cli*"],
   extraResources: [
-    ...(channel === "dev"
-      ? [
-          {
-            from: "resources/",
-            to: "",
-            filter: ["opencode-cli*"],
-          },
-        ]
-      : []),
+    { from: "resources/", to: "", filter: ["bharatcode-cli*"] },
     {
       from: "native/",
       to: "native/",
       filter: ["index.js", "index.d.ts", "build/Release/mac_window.node", "swift-build/**"],
     },
   ],
+  beforePack: async (context) => assertPackagingPolicy(context.electronPlatformName),
+  protocols: { name: BRANDING.appName, schemes: [BRANDING.protocol] },
+  ...(channel === "dev"
+    ? {}
+    : {
+        publish: {
+          provider: "github",
+          owner: BRANDING.repo.owner,
+          repo: BRANDING.repo.name,
+          channel: channel === "beta" ? "beta" : "latest",
+        },
+      }),
   mac: {
     category: "public.app-category.developer-tools",
-    icon: `resources/icons/icon.icns`,
+    icon: "resources/icons/icon.icns",
     hardenedRuntime: true,
     gatekeeperAssess: false,
     entitlements: "resources/entitlements.plist",
     entitlementsInherit: "resources/entitlements.plist",
-    notarize: true,
+    notarize: channel !== "dev",
     target: ["dmg", "zip"],
   },
-  dmg: {
-    sign: true,
-  },
-  protocols: {
-    name: "OpenCode",
-    schemes: ["opencode"],
-  },
+  dmg: { sign: channel !== "dev" },
   win: {
-    icon: `resources/icons/icon.ico`,
-    signtoolOptions: {
-      sign: signWindows,
-    },
+    icon: "resources/icons/icon.ico",
+    // Current Windows release policy is explicitly unsigned. Never invoke an
+    // inherited upstream/Azure signer or opportunistically discover a certificate.
+    signtoolOptions: { sign: async () => assertPackagingPolicy("win32") },
     target: ["nsis"],
     verifyUpdateCodeSignature: false,
   },
   nsis: {
     oneClick: true,
     perMachine: false,
-    installerIcon: `resources/icons/icon.ico`,
-    installerHeaderIcon: `resources/icons/icon.ico`,
+    installerIcon: "resources/icons/icon.ico",
+    installerHeaderIcon: "resources/icons/icon.ico",
   },
   linux: {
-    icon: `resources/icons`,
+    icon: "resources/icons",
     category: "Development",
-    executableName: appId,
-    desktop: {
-      entry: {
-        // Match the installed .desktop file and hicolor icon basename so
-        // Linux shells can associate the running Electron window with its launcher.
-        StartupWMClass: appId,
-      },
-    },
-    target: ["AppImage", "deb", "rpm"],
+    executableName: packageNameForChannel(channel),
+    desktop: { entry: { StartupWMClass: appId } },
+    target: ["AppImage", "deb"],
   },
-})
-
-function getConfig() {
-  const appId = APP_IDS[channel]
-  const base = getBase(appId)
-
-  switch (channel) {
-    case "dev": {
-      return {
-        ...base,
-        appId,
-        productName: "OpenCode Dev",
-        deb: { fpm: [metainfoFpm(appId)] },
-        rpm: { packageName: "opencode-dev", fpm: [metainfoFpm(appId)] },
-      }
-    }
-    case "beta": {
-      return {
-        ...base,
-        appId,
-        productName: "OpenCode Beta",
-        protocols: { name: "OpenCode Beta", schemes: ["opencode"] },
-        publish: { provider: "github", owner: "anomalyco", repo: "opencode-beta", channel: "latest" },
-        deb: { fpm: [metainfoFpm(appId)] },
-        rpm: { packageName: "opencode-beta", fpm: [metainfoFpm(appId)] },
-      }
-    }
-    case "prod": {
-      return {
-        ...base,
-        appId,
-        productName: "OpenCode",
-        protocols: { name: "OpenCode", schemes: ["opencode"] },
-        publish: { provider: "github", owner: "anomalyco", repo: "opencode", channel: "latest" },
-        deb: { fpm: [metainfoFpm(appId), legacyDesktopEntryFpm] },
-        rpm: { packageName: "opencode", fpm: [metainfoFpm(appId), legacyDesktopEntryFpm] },
-      }
-    }
-  }
+  deb: { fpm: [metainfo] },
 }
 
-export default getConfig()
+export default config

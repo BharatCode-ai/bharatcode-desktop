@@ -6,7 +6,7 @@ import * as fs from "node:fs/promises"
 const OPENCODE_SERVER_DIST = "../opencode/dist/node"
 
 const channel = (() => {
-  const raw = process.env.OPENCODE_CHANNEL
+  const raw = process.env.BHARATCODE_CHANNEL ?? process.env.OPENCODE_CHANNEL
   if (raw === "dev" || raw === "beta" || raw === "prod") return raw
   if (process.env.OPENCODE_CHANNEL === "latest") return "prod"
   return "dev"

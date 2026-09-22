@@ -3,6 +3,8 @@
 import { $ } from "bun"
 import path from "path"
 import { fileURLToPath } from "url"
+import { mkdtemp, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
 import { createSolidTransformPlugin } from "@opentui/solid/bun-plugin"
 import { DISTRIBUTION, PLATFORM_TARGETS, createPlatformPackageManifest, platformPackageName } from "./distribution.mjs"
 
@@ -134,12 +136,26 @@ for (const item of targets) {
   if (item.os === process.platform && item.arch === process.arch && !item.abi) {
     const binaryPath = `dist/${name}/bin/${DISTRIBUTION.commandName}`
     console.log(`Running smoke test: ${binaryPath} --version`)
+    const smokeHome = await mkdtemp(path.join(tmpdir(), "bharatcode-build-smoke-"))
     try {
-      const versionOutput = await $`${binaryPath} --version`.text()
+      const versionOutput = await $`${binaryPath} --version`
+        .env({
+          ...process.env,
+          HOME: smokeHome,
+          USERPROFILE: smokeHome,
+          OPENCODE_TEST_HOME: smokeHome,
+          XDG_DATA_HOME: path.join(smokeHome, "data"),
+          XDG_STATE_HOME: path.join(smokeHome, "state"),
+          XDG_CONFIG_HOME: path.join(smokeHome, "config"),
+          XDG_CACHE_HOME: path.join(smokeHome, "cache"),
+        })
+        .text()
       console.log(`Smoke test passed: ${versionOutput.trim()}`)
     } catch (e) {
       console.error(`Smoke test failed for ${name}:`, e)
-      process.exit(1)
+      throw e
+    } finally {
+      await rm(smokeHome, { recursive: true, force: true })
     }
   }
 
@@ -158,7 +174,8 @@ if (Script.release) {
       await $`zip -r ../../${key}.zip *`.cwd(`dist/${key}/bin`)
     }
   }
-  await $`gh release upload v${Script.version} ./dist/*.zip ./dist/*.tar.gz --clobber --repo ${process.env.GH_REPO}`
+  // Building must not publish or overwrite assets. Cohort publication is a
+  // separate, exact-source release workflow after all artifacts are verified.
 }
 
 export { binaries }
