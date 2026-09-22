@@ -560,6 +560,7 @@ export function AppInterface(props: {
   disableHealthCheck?: boolean
   startup?: Promise<void>
   serverScoped?: JSX.Element
+  platformBoundary?: Component<ParentProps>
 }) {
   // The visual new layout lives in the router root so it remains mounted across
   // route changes. Draft and session routes override only their server-bound data
@@ -579,32 +580,34 @@ export function AppInterface(props: {
       canonicalLocalServer={props.canonicalLocalServer}
       servers={props.servers}
     >
-      <GlobalProvider>
-        <SettingsProvider>
-          <ConnectionGate disableHealthCheck={props.disableHealthCheck} startup={props.startup}>
-            <Show when={useSettings().general.newLayoutDesigns().toString()} keyed>
-              <Dynamic
-                component={props.router ?? Router}
-                root={(routerProps) => (
-                  <TabsProvider>
-                    <PermissionProvider>
-                      <NotificationProvider>
-                        <ServerShell>
-                          <Show when={useSettings().general.newLayoutDesigns()} fallback={routerProps.children}>
-                            <NewAppLayout serverScoped={props.serverScoped}>{routerProps.children}</NewAppLayout>
-                          </Show>
-                        </ServerShell>
-                      </NotificationProvider>
-                    </PermissionProvider>
-                  </TabsProvider>
-                )}
-              >
-                <Routes serverScoped={props.serverScoped} />
-              </Dynamic>
-            </Show>
-          </ConnectionGate>
-        </SettingsProvider>
-      </GlobalProvider>
+      <Dynamic component={props.platformBoundary ?? ((props: ParentProps) => <>{props.children}</>)}>
+        <GlobalProvider>
+          <SettingsProvider>
+            <ConnectionGate disableHealthCheck={props.disableHealthCheck} startup={props.startup}>
+              <Show when={useSettings().general.newLayoutDesigns().toString()} keyed>
+                <Dynamic
+                  component={props.router ?? Router}
+                  root={(routerProps) => (
+                    <TabsProvider>
+                      <PermissionProvider>
+                        <NotificationProvider>
+                          <ServerShell>
+                            <Show when={useSettings().general.newLayoutDesigns()} fallback={routerProps.children}>
+                              <NewAppLayout serverScoped={props.serverScoped}>{routerProps.children}</NewAppLayout>
+                            </Show>
+                          </ServerShell>
+                        </NotificationProvider>
+                      </PermissionProvider>
+                    </TabsProvider>
+                  )}
+                >
+                  <Routes serverScoped={props.serverScoped} />
+                </Dynamic>
+              </Show>
+            </ConnectionGate>
+          </SettingsProvider>
+        </GlobalProvider>
+      </Dynamic>
     </ServerProvider>
   )
 }

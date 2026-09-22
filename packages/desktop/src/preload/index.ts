@@ -11,13 +11,15 @@ const updaterHandler = (_: unknown, state: UpdaterState) => {
 }
 
 const api: ElectronAPI = {
-  getAccountStatus: () => ipcRenderer.invoke("account-status"),
-  refreshAccountStatus: () => ipcRenderer.invoke("account-refresh"),
+  getAccountStatus: (id) => ipcRenderer.invoke("account-status", id),
+  refreshAccountStatus: (id) => ipcRenderer.invoke("account-refresh", id),
   beginSignIn: (input) => ipcRenderer.invoke("account-sign-in", input),
-  cancelSignIn: () => ipcRenderer.invoke("account-cancel"),
-  logout: () => ipcRenderer.invoke("account-logout"),
-  onAccountStatusChanged: (cb) => {
-    const handler = (_: unknown, status: BharatCodeAccountStatus) => cb(status)
+  cancelSignIn: (id) => ipcRenderer.invoke("account-cancel", id),
+  logout: (id) => ipcRenderer.invoke("account-logout", id),
+  onAccountStatusChanged: (cb, runtimeId = "sidecar") => {
+    const handler = (_: unknown, event: { runtimeId: string; status: BharatCodeAccountStatus }) => {
+      if (event.runtimeId === runtimeId) cb(event.status)
+    }
     ipcRenderer.on("account-status-changed", handler)
     return () => ipcRenderer.removeListener("account-status-changed", handler)
   },

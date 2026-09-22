@@ -225,18 +225,51 @@ unexecuted boundary. Local logs: `/tmp/bc-wsl-launch-smoke.log` and the native
 `WINDOWS_WSL_PROVISION_TRANSPORT_PASS` result; reproducible Windows harness is
 `packages/desktop/scripts/wsl-windows-smoke.ts`.
 
+### Runtime account ownership — September 23, 2026
+
+Desktop now maintains one main-owned account session per verified local runtime.
+Each session captures its connection; replacement disposes its pending login,
+rejects old replies/callbacks, and preserves monotonic revisions. Callback state
+selects exactly one owning runtime rather than trying every credential store.
+Unknown runtime IDs do not fall back to the native store. No credentials are
+copied between Windows and WSL or exposed to the renderer.
+
+The sign-in gate now sits beneath the selected-server provider. Its account
+actions and notifications are scoped to that runtime, with a return-to-local
+action if a WSL account cannot be checked. Settings inherit the same scope.
+Conversation recovery uses the conversation's actual SDK server, since a tab can
+target a runtime other than the globally selected server. API/web behavior and
+the newer recovery error contract have not been changed by this checkpoint.
+
+Evidence: Desktop account/callback/routing suites **28 pass**, 114 assertions;
+Desktop typecheck passes. Actual Chromium rendering of the gate with synthetic
+accounts verifies event isolation, late status replies, runtime-scoped sign-in
+and logout, return-to-local and listener disposal. Harness:
+`packages/desktop/scripts/runtime-account-browser.ts` (run from `packages/app`).
+This is mocked account transport, not live OAuth or installed Electron proof.
+Impeccable hardening guidance was used to keep the existing screen and provide a
+clear escape/retry without a redesign.
+
+App's configured unit condition (`solid`) passes **740/740**, 3069 assertions;
+its separate browser-mode suite passes **41/41**, 100 assertions. Production
+frontend build passes. Earlier unconfigured invocations (default Bun server
+condition and browser condition applied to the entire unit suite) failed on
+Solid export/proxy semantics; they are not the configured suite or a green
+result. Logs are under `/tmp/bc-runtime-account-*`. No live profiles, app install,
+protocol associations or production services were changed.
+
 ### Original re-fork baseline
 
 12 commits. Every one green at the point it landed: `bun turbo typecheck --force`
 19/19, and the suites for whatever that commit touched.
 
-| | |
-|---|---|
-| net vs `upstream/dev` | 1,721 files, +12,786, −503,734 |
-| our tests passing | 196 (auth, bharatcode, migration, provider, goal) |
-| `packages/core` | 1,100 pass / 0 fail |
-| upstream provider suite | 713 pass / 5 fail — **identical to baseline** |
-| upstream session + agent | 462 pass / 0 fail — identical to baseline |
+|                          |                                                   |
+| ------------------------ | ------------------------------------------------- |
+| net vs `upstream/dev`    | 1,721 files, +12,786, −503,734                    |
+| our tests passing        | 196 (auth, bharatcode, migration, provider, goal) |
+| `packages/core`          | 1,100 pass / 0 fail                               |
+| upstream provider suite  | 713 pass / 5 fail — **identical to baseline**     |
+| upstream session + agent | 462 pass / 0 fail — identical to baseline         |
 
 The 5 provider failures are pre-existing and auth-dependent (they want real
 bearer tokens); I confirmed them against a stashed baseline before and after.

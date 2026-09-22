@@ -65,6 +65,7 @@ export const BHARATCODE_ENGLISH = {
   "account.gate.continue": "Continue with BharatCode",
   "account.gate.browser": "BharatCode opens your browser for secure account sign-in.",
   "account.gate.unavailable": "Could not check your BharatCode account. Refresh status to try again.",
+  "account.gate.returnLocal": "Return to local runtime",
   "settings.account.state.storageUnavailable.description":
     "Desktop could not check your BharatCode account on this device. Refresh status to try again.",
   "settings.account.action.signOut": "Sign out",

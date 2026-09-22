@@ -24,7 +24,7 @@ import type { UpdaterController } from "./updater-controller"
 import { createUpdaterSubscriptions } from "./updater-subscriptions"
 import { createDesktopDraftStore } from "./draft-store"
 import { nativeT } from "./native-translations"
-import type { createAccountSession } from "./account-session"
+import type { createRuntimeAccounts } from "./runtime-accounts"
 import { isOwnedRenderer } from "./windows"
 
 const pickerFilters = (ext?: string[]) => {
@@ -35,7 +35,7 @@ const pickerFilters = (ext?: string[]) => {
 const pickedFiles = createPickedFileAuthorizations()
 
 type Deps = {
-  account: ReturnType<typeof createAccountSession>
+  account: ReturnType<typeof createRuntimeAccounts>
   killSidecar: () => Promise<void> | void
   relaunch: () => void
   awaitInitialization: () => Promise<ServerReadyData>
@@ -72,28 +72,31 @@ export function registerIpcHandlers(deps: Deps) {
     }
   ipcMain.handle(
     "account-status",
-    accountAction(() => deps.account.getAccountStatus()),
+    accountAction((id) => deps.account.getAccountStatus(id)),
   )
   ipcMain.handle(
     "account-refresh",
-    accountAction(() => deps.account.refreshAccountStatus()),
+    accountAction((id) => deps.account.refreshAccountStatus(id)),
   )
   ipcMain.handle(
     "account-sign-in",
     accountAction((input) =>
-      deps.account.beginSignIn({
-        selectAccount:
-          typeof input === "object" && input !== null && "selectAccount" in input && input.selectAccount === true,
-      }),
+      deps.account.beginSignIn(
+        {
+          selectAccount:
+            typeof input === "object" && input !== null && "selectAccount" in input && input.selectAccount === true,
+        },
+        typeof input === "object" && input !== null && "runtimeId" in input ? input.runtimeId : undefined,
+      ),
     ),
   )
   ipcMain.handle(
     "account-cancel",
-    accountAction(() => deps.account.cancelSignIn()),
+    accountAction((id) => deps.account.cancelSignIn(id)),
   )
   ipcMain.handle(
     "account-logout",
-    accountAction(() => deps.account.logout()),
+    accountAction((id) => deps.account.logout(id)),
   )
   const drafts = createDesktopDraftStore(join(app.getPath("userData"), "drafts.sqlite"))
   const updaterSubscriptions = createUpdaterSubscriptions()

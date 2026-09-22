@@ -1,11 +1,37 @@
-import { createAccountStatusResource, useLanguage } from "@opencode-ai/app"
+import {
+  createAccountStatusResource,
+  PlatformProvider,
+  ServerConnection,
+  useLanguage,
+  usePlatform,
+  useServer,
+} from "@opencode-ai/app"
 import { Button } from "@opencode-ai/ui/button"
 import { Show, type ParentProps } from "solid-js"
 import { createStore } from "solid-js/store"
 
-export function BharatCodeAuthGate(props: ParentProps) {
+export function RuntimeAccountBoundary(props: ParentProps) {
+  const platform = usePlatform()
+  const server = useServer()
+  return (
+    <Show when={server.key} keyed>
+      {(key) => (
+        <PlatformProvider value={{ ...platform, ...platform.accountForServer?.(key) }}>
+          <BharatCodeAuthGate
+            onReturnLocal={key === "sidecar" ? undefined : () => server.setActive(ServerConnection.Key.make("sidecar"))}
+          >
+            {props.children}
+          </BharatCodeAuthGate>
+        </PlatformProvider>
+      )}
+    </Show>
+  )
+}
+
+export function BharatCodeAuthGate(props: ParentProps<{ onReturnLocal?: () => void }>) {
   const language = useLanguage()
-  const [auth, { mutate, refetch }] = createAccountStatusResource(window.api)
+  const platform = usePlatform()
+  const [auth, { mutate, refetch }] = createAccountStatusResource(platform)
   const [store, setStore] = createStore({ signingIn: false, failed: false })
   const ready = () => auth()?.authenticated === true
   const pending = () => store.signingIn || ["authorizing", "switching", "refreshing"].includes(auth()?.state ?? "")
@@ -13,7 +39,7 @@ export function BharatCodeAuthGate(props: ParentProps) {
     if (pending()) return
     setStore({ signingIn: true, failed: false })
     try {
-      mutate(await window.api.beginSignIn())
+      mutate(await platform.beginSignIn!())
       if (!ready()) setStore("failed", true)
     } catch {
       setStore("failed", true)
@@ -23,7 +49,7 @@ export function BharatCodeAuthGate(props: ParentProps) {
   }
   async function cancel() {
     try {
-      await window.api.cancelSignIn()
+      await platform.cancelSignIn?.()
     } catch {
       setStore("failed", true)
     }
@@ -76,6 +102,11 @@ export function BharatCodeAuthGate(props: ParentProps) {
               </p>
             </Show>
             <p class="text-12-regular text-text-weak">{language.t("account.gate.browser")}</p>
+            <Show when={props.onReturnLocal}>
+              <Button type="button" variant="ghost" onClick={() => props.onReturnLocal?.()}>
+                {language.t("account.gate.returnLocal")}
+              </Button>
+            </Show>
           </section>
         </main>
       }

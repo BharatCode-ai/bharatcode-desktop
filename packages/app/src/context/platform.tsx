@@ -40,13 +40,18 @@ export type FatalRendererErrorLog = {
   os?: DesktopOS
 }
 
-type PlatformBase = {
+export type AccountPlatform = {
   getAccountStatus?(): Promise<BharatCodeAccountStatus>
   refreshAccountStatus?(): Promise<BharatCodeAccountStatus>
   beginSignIn?(input?: BharatCodeSignInOptions): Promise<BharatCodeAccountStatus>
   cancelSignIn?(): Promise<void>
   logout?(): Promise<BharatCodeAccountStatus>
   onAccountStatusChanged?(callback: (status: BharatCodeAccountStatus) => void): () => void
+}
+
+type PlatformBase = AccountPlatform & {
+  /** Account operations for a specific owned runtime; never a remote URL fallback. */
+  accountForServer?(key: ServerConnection.Key): AccountPlatform
   /** App version */
   version?: string
 

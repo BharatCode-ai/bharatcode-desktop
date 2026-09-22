@@ -18,7 +18,7 @@ import { registerIpcHandlers, sendDeepLinks, sendMenuCommand } from "./ipc"
 import { forwardInitializationFailure, initializeConnection } from "./initialization"
 import { BRANDING, appIdForChannel, productNameForChannel, shouldRegisterProtocol } from "./branding"
 import { createBharatCodeAccountClient, type BharatCodeSidecarConnection } from "./bharatcode-auth"
-import { createAccountSession } from "./account-session"
+import { createRuntimeAccounts } from "./runtime-accounts"
 import { createDeepLinkEvents } from "./deep-link-events"
 import { openExternalUrl } from "./external-browser"
 import { exportDebugLogs, initCrashReporter, initLogging, startNetLog, write as writeLog } from "./logging"
@@ -156,7 +156,13 @@ const main = Effect.gen(function* () {
       return spawnWslSidecar(distro)
     },
     {
-      onConnection: setWslSidecarAuthorization,
+      onConnection: (id, connection) => {
+        setWslSidecarAuthorization(id, connection)
+        account.bind(
+          id,
+          connection ? createBharatCodeAccountClient({ getConnection: async () => connection }) : undefined,
+        )
+      },
       logger: {
         log: (message, meta) => logger.log(message, meta),
         error: (message, meta) => logger.error(message, meta),
@@ -202,15 +208,18 @@ const main = Effect.gen(function* () {
   const shellEnv = preferAppEnv(app.getPath("userData"))
 
   const serverReady = Deferred.makeUnsafe<BharatCodeSidecarConnection, unknown>()
-  const account = createAccountSession({
-    client: createBharatCodeAccountClient({ getConnection: () => Effect.runPromise(Deferred.await(serverReady)) }),
+  const account = createRuntimeAccounts({
     openBrowser: (url) => openExternalUrl(url, { openExternal: (target) => shell.openExternal(target) }),
-    changed: (status) => {
+    changed: (runtimeId, status) => {
       for (const win of BrowserWindow.getAllWindows()) {
-        if (isOwnedRenderer(win.webContents.id)) win.webContents.send("account-status-changed", status)
+        if (isOwnedRenderer(win.webContents.id)) win.webContents.send("account-status-changed", { runtimeId, status })
       }
     },
   })
+  account.bind(
+    "sidecar",
+    createBharatCodeAccountClient({ getConnection: () => Effect.runPromise(Deferred.await(serverReady)) }),
+  )
   let incomingDeepLinksReady = false
   const pendingIncomingDeepLinks: string[] = []
   const deepLinkEvents = createDeepLinkEvents({

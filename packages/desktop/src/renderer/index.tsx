@@ -31,7 +31,8 @@ import { availableStartupServer, readyWslConnections } from "./wsl/connections"
 import "./styles.css"
 import { Splash } from "@opencode-ai/ui/logo"
 import { useTheme } from "@opencode-ai/ui/theme/context"
-import { BharatCodeAuthGate } from "./account-gate"
+import { RuntimeAccountBoundary } from "./account-gate"
+import { runtimeAccountApi } from "./runtime-account"
 
 const root = document.getElementById("root")
 if (import.meta.env.DEV && !(root instanceof HTMLElement)) {
@@ -167,12 +168,8 @@ const createPlatform = (windowState: DesktopWindowState): Platform => {
   const wslServersApi = os === "windows" ? window.api.wslServers : undefined
 
   return {
-    getAccountStatus: () => window.api.getAccountStatus(),
-    refreshAccountStatus: () => window.api.refreshAccountStatus(),
-    beginSignIn: (input) => window.api.beginSignIn(input),
-    cancelSignIn: () => window.api.cancelSignIn(),
-    logout: () => window.api.logout(),
-    onAccountStatusChanged: (cb) => window.api.onAccountStatusChanged(cb),
+    ...runtimeAccountApi(window.api, "sidecar"),
+    accountForServer: (key) => runtimeAccountApi(window.api, key),
     platform: "desktop",
     os,
     version: pkg.version,
@@ -409,26 +406,25 @@ function DesktopRoot(props: { windowState: DesktopWindowState }) {
     )
     return (
       <Show when={ready()} fallback={<LoadingSplash />}>
-        <BharatCodeAuthGate>
-          <Show when={effectiveDefaultServer()} keyed>
-            {(key) => (
-              <AppInterface
-                defaultServer={key}
-                servers={servers()}
-                router={router}
-                startup={onboarding.promise}
-                serverScoped={
-                  <DesktopFirstLaunchOnboarding
-                    initialUrl={getLastActiveUrl(platform.windowID ?? "browser")}
-                    onLoaded={onboarding.resolve}
-                  />
-                }
-              >
-                <Inner />
-              </AppInterface>
-            )}
-          </Show>
-        </BharatCodeAuthGate>
+        <Show when={effectiveDefaultServer()} keyed>
+          {(key) => (
+            <AppInterface
+              defaultServer={key}
+              servers={servers()}
+              router={router}
+              startup={onboarding.promise}
+              platformBoundary={RuntimeAccountBoundary}
+              serverScoped={
+                <DesktopFirstLaunchOnboarding
+                  initialUrl={getLastActiveUrl(platform.windowID ?? "browser")}
+                  onLoaded={onboarding.resolve}
+                />
+              }
+            >
+              <Inner />
+            </AppInterface>
+          )}
+        </Show>
       </Show>
     )
   }

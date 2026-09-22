@@ -127,18 +127,23 @@ export function createAccountSession(options: {
     return result.promise
   }
 
-  const completeSignIn = (callbackUrl: string) => {
-    const attempt = pending
+  const acceptsCallback = (callbackUrl: string) => {
     const url = URL.canParse(callbackUrl) ? new URL(callbackUrl) : undefined
     const states = url?.searchParams.getAll("state")
-    if (
-      !attempt ||
-      attempt.claimed ||
-      !isBharatCodeAuthCallback(callbackUrl) ||
-      states?.length !== 1 ||
-      !attempt.state ||
-      states[0] !== attempt.state
-    ) {
+    return (
+      !!pending &&
+      !pending.claimed &&
+      !disposed &&
+      isBharatCodeAuthCallback(callbackUrl) &&
+      states?.length === 1 &&
+      !!pending.state &&
+      states[0] === pending.state
+    )
+  }
+
+  const completeSignIn = (callbackUrl: string) => {
+    const attempt = pending
+    if (!attempt || !acceptsCallback(callbackUrl)) {
       return Promise.reject(new Error("BharatCode sign-in callback is no longer active."))
     }
     attempt.claimed = true
@@ -196,6 +201,7 @@ export function createAccountSession(options: {
     getAccountStatus,
     beginSignIn,
     completeSignIn,
+    acceptsCallback,
     logout,
     refreshAccountStatus: getAccountStatus,
     dispose: () => {

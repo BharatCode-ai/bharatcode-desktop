@@ -6,6 +6,7 @@ import { useLanguage } from "@/context/language"
 import { usePlatform } from "@/context/platform"
 import { useSDK } from "@/context/sdk"
 import { useServerSDK } from "@/context/server-sdk"
+import { ServerConnection } from "@/context/server"
 import { checkModelConnection, type ModelRecoveryResult } from "./model-recovery-check"
 
 export function ModelRecovery(props: { message: string; modelID?: string; requestKey: string }) {
@@ -38,6 +39,7 @@ export function ModelRecovery(props: { message: string; modelID?: string; reques
     const attempt = ++generation
     const context = sdk()
     const connection = server()
+    const account = platform.accountForServer?.(ServerConnection.key(connection.server)) ?? platform
     const key = props.requestKey
     active = new AbortController()
     const abort = active
@@ -46,7 +48,7 @@ export function ModelRecovery(props: { message: string; modelID?: string; reques
     setState({ busy: true, notice: undefined })
     try {
       const notice = await checkModelConnection({
-        signIn: signIn ? platform.beginSignIn : undefined,
+        signIn: signIn ? account.beginSignIn : undefined,
         modelID: props.modelID,
         current,
         loadModels: async () => {
