@@ -89,13 +89,13 @@ assertions. This suite uses happy-dom, not an installed Electron window.
 
 ### Next integration boundary: WSL
 
-Source inspection confirms that the inherited multi-distro shell still installs
-from `opencode.ai/install`, resolves `$HOME/.opencode/bin/opencode`, and launches
+Initial source inspection found that the inherited multi-distro shell installed
+from `opencode.ai/install`, resolved `$HOME/.opencode/bin/opencode`, and launched
 the upstream binary. Initial inspection also found broadly bound serving and
 sidecar credentials in public state; the security checkpoint below corrects those
 two boundaries. None of those runtime paths have been executed during this
 continuation. Provisioning remains a release blocker, not an accepted BharatCode
-implementation.
+implementation at that checkpoint; the launcher integration below replaces it.
 
 The retained `origin/dev` implementation instead has same-source runtime
 manifests/digests, explicit non-root identity checks, a bounded typed stdio
@@ -207,6 +207,23 @@ recovery classification against the actual API changes when that theme resumes:
 retain tokens on transient failures, refresh once for true expiry, never retry
 subscription/bans as auth or replay a partially delivered generation. No API/web
 changes or other-task coordination were performed in this Desktop worktree.
+
+`e36f4f269ef14bd66b00bd57e511ee5ab6074a9b` records the launcher integration. The
+rebuilt exact beta CLI passes all **3 compiled lifecycle checks**, 33 assertions,
+including Desktop's actual transport. A separate native Windows Node 24.14.0
+harness then drove the same runtime through `wsl.exe` on Ubuntu-22.04: provision
+and re-verification in a fresh `/tmp/bharatcode-wsl-windows-smoke.*` home, identity
+handshake, anonymous 401/authenticated health, acknowledged stop, process exit and
+closed port all passed. The temporary Linux home was removed. Only a generated
+test harness remains in Windows Temp; no app install, protocol registration,
+credential copying, real-profile migration, or live account login occurred.
+
+This evidence is deliberately narrower than installed Electron acceptance. The
+visible WSL settings flow, selected-runtime account ownership and path picking
+still need integration. Native Windows provisioning/transport is no longer an
+unexecuted boundary. Local logs: `/tmp/bc-wsl-launch-smoke.log` and the native
+`WINDOWS_WSL_PROVISION_TRANSPORT_PASS` result; reproducible Windows harness is
+`packages/desktop/scripts/wsl-windows-smoke.ts`.
 
 ### Original re-fork baseline
 
