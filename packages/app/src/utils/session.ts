@@ -2,7 +2,7 @@ import type { SessionApi, SessionInfo, SessionListInput } from "@opencode-ai/cli
 import type { Session } from "@opencode-ai/sdk/v2/client"
 import { withTimestampedFallback } from "./session-title"
 
-export function normalizeSessionInfo(input: SessionInfo | Session): Session {
+export function normalizeSessionInfo(input: (SessionInfo & Pick<Session, "goal">) | Session): Session {
   if (!("location" in input)) return input
   return {
     id: input.id,
@@ -15,6 +15,7 @@ export function normalizeSessionInfo(input: SessionInfo | Session): Session {
     cost: input.cost,
     tokens: input.tokens,
     title: withTimestampedFallback(input),
+    ...(input.goal ? { goal: input.goal } : {}),
     agent: input.agent,
     model: input.model,
     version: "",

@@ -3992,6 +3992,7 @@ export type SessionV2Info = {
     archived?: number
   }
   title: string
+  goal?: SessionGoal
   location: LocationRef
   subpath?: string
   revert?: RevertState

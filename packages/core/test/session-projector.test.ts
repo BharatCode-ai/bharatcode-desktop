@@ -23,6 +23,8 @@ import { SessionInputTable, SessionMessageTable, SessionTable } from "@opencode-
 import { testEffect } from "./lib/effect"
 import { Snapshot } from "@opencode-ai/core/snapshot"
 import { Location } from "@opencode-ai/core/location"
+import { fromRow } from "@opencode-ai/core/session/info"
+import { SessionSchema } from "@opencode-ai/core/session/schema"
 
 const it = testEffect(AppNodeBuilder.build(LayerNode.group([Database.node, EventV2.node, SessionProjector.node])))
 const sessionsLayer = AppNodeBuilder.build(SessionV2.node, [[SessionExecution.node, SessionExecution.noopLayer]])
@@ -45,6 +47,33 @@ const assistantRow = (
 }
 
 describe("SessionProjector", () => {
+  it.effect("preserves persisted Goal Mode in current session responses", () =>
+    Effect.gen(function* () {
+      const { db } = yield* Database.Service
+      yield* db
+        .insert(ProjectTable)
+        .values({ id: Project.ID.global, worktree: AbsolutePath.make("/project"), sandboxes: [] })
+        .run()
+      const goal = { text: "Finish the task", status: "paused" as const, created: 1, updated: 2, accumulated: 50 }
+      yield* db
+        .insert(SessionTable)
+        .values({
+          id: sessionID,
+          project_id: Project.ID.global,
+          slug: "goal",
+          directory: "/project",
+          title: "Goal",
+          version: "test",
+          goal,
+        })
+        .run()
+      const row = (yield* db.select().from(SessionTable).where(eq(SessionTable.id, sessionID)).get())!
+      expect(Schema.encodeSync(SessionSchema.Info)(fromRow(row))).toMatchObject({ goal })
+      yield* db.update(SessionTable).set({ goal: null }).where(eq(SessionTable.id, sessionID)).run()
+      const cleared = (yield* db.select().from(SessionTable).where(eq(SessionTable.id, sessionID)).get())!
+      expect(Schema.encodeSync(SessionSchema.Info)(fromRow(cleared))).not.toHaveProperty("goal")
+    }),
+  )
   it.effect("projects moved sessions without the transitional context epoch table", () =>
     Effect.gen(function* () {
       const { db } = yield* Database.Service

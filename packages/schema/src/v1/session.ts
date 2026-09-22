@@ -11,6 +11,8 @@ import { ascending } from "../identifier"
 import { SessionID } from "../session-id"
 import { WorkspaceID } from "../workspace-id"
 import { PermissionV1 } from "./permission"
+import { Info as SessionGoal } from "../session-goal"
+export { Info as SessionGoal, Status as SessionGoalStatus } from "../session-goal"
 
 const Timestamp = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))
 
@@ -526,23 +528,6 @@ const SessionTokens = Schema.Struct({
 const SessionShare = Schema.Struct({
   url: Schema.String,
 })
-
-export const SessionGoalStatus = Schema.Literals(["active", "paused", "completed", "blocked"]).annotate({
-  identifier: "SessionGoalStatus",
-})
-export type SessionGoalStatus = typeof SessionGoalStatus.Type
-
-export const SessionGoal = Schema.Struct({
-  text: Schema.String,
-  status: SessionGoalStatus,
-  created: NonNegativeInt,
-  updated: NonNegativeInt,
-  accumulated: NonNegativeInt,
-  activeSince: optional(NonNegativeInt),
-  completed: optional(NonNegativeInt),
-  report: optional(Schema.String),
-}).annotate({ identifier: "SessionGoal" })
-export type SessionGoal = typeof SessionGoal.Type
 
 const SessionRevert = Schema.Struct({
   messageID: MessageID,

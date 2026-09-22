@@ -58,7 +58,7 @@ function mime(uri: string) {
   return match?.[1] ?? "application/octet-stream"
 }
 
-function sessionInfo(session: Session): SessionInfo {
+function sessionInfo(session: Session): SessionInfo & Pick<Session, "goal"> {
   return {
     id: session.id,
     parentID: session.parentID,
@@ -73,6 +73,7 @@ function sessionInfo(session: Session): SessionInfo {
     tokens: session.tokens ?? { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
     time: session.time,
     title: session.title,
+    goal: session.goal,
     location: { directory: session.directory, workspaceID: session.workspaceID },
     subpath: session.path,
     revert: session.revert && {

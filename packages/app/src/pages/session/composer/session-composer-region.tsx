@@ -10,6 +10,7 @@ import type { SessionComposerRegionController } from "./session-composer-region-
 
 export function SessionComposerRegion(props: {
   controller: SessionComposerRegionController
+  goal?: JSX.Element
   promptInput: JSX.Element
 }) {
   const language = useLanguage()
@@ -141,7 +142,12 @@ export function SessionComposerRegion(props: {
               </Show>
               <Show
                 when={controller.child()}
-                fallback={<Show when={!controller.state.blocked()}>{props.promptInput}</Show>}
+                fallback={
+                  <>
+                    {props.goal}
+                    <Show when={!controller.state.blocked()}>{props.promptInput}</Show>
+                  </>
+                }
               >
                 <div
                   ref={controller.setPromptRef}

@@ -355,6 +355,7 @@ export function currentSession(session: { id: string } & Record<string, unknown>
         : {}),
     },
     title: session.title ?? session.id,
+    goal: session.goal,
     location: {
       directory: typeof session.directory === "string" ? session.directory : fallbackDirectory,
       ...(typeof session.workspaceID === "string" ? { workspaceID: session.workspaceID } : {}),

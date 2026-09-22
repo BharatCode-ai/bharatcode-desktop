@@ -310,6 +310,66 @@ advertises. Replacing the tarball with a workspace alias without reconciling tho
 contracts would be incorrect. That separate integration and Goal Mode's UI/v2
 session behavior remain open; no publication or installed-app acceptance claimed.
 
+### Goal Mode renderer and session projection — September 23, 2026
+
+Restored the compact Goal Mode ribbon on the shared composer, using the existing
+UI components and shared English fallback. Save, pause/resume and clear use the
+actual directory-scoped session-update endpoint. Pending actions are single-flight;
+failed edits retain their draft and show fixed safe copy, not transport payloads.
+Session/runtime changes and disposal invalidate late UI completions. Text is
+bounded to the backend's 4,000-character limit. The elapsed timer is active only
+while the goal is active and is cleaned up with its owner. Completed goals retain
+the previous behavior of leaving the ribbon; blocked goals keep their report.
+
+Two RED regressions identified lost state: the V1-to-current adapter omitted the
+goal, and the current DB-to-session projection omitted it too. Both are corrected.
+The goal schema is now one shared browser-safe contract, re-exported through the
+legacy compatibility surface with unchanged identifiers. The duplicated SQL-only
+type is removed. SDK regeneration adds the goal to the current session-read type.
+The production test fixture now mirrors that actual response field.
+
+Fresh evidence:
+
+- App unit tests: **742 pass**, 3,076 assertions; browser-condition controller
+  tests: **45 pass**, 125 assertions (including duplicate submission, failed edit,
+  runtime switch, A-to-B-to-A navigation and disposal).
+- Real Chromium, production-built renderer: **2 pass**, exercising both layouts,
+  literal text rendering, safe failure/retry, pending controls, pause/resume,
+  clearing and persistence over reload. These use synthetic HTTP fixtures, not
+  real accounts or an installed app. Legacy layout uses a pre-sunset test clock
+  and its legacy route; upstream's September 14 retirement policy is unchanged.
+- Goal/backend/OpenAPI suites: **45 pass**, 259 assertions. Core SQLite projector
+  suite: **10 pass**, 23 assertions. Focused schema compatibility/hygiene: **9 pass**,
+  21 assertions. SDK contract tests: **2 pass**. SDK build and App, Core, Schema,
+  OpenCode, Desktop and E2E typechecks pass.
+- Full Schema suite has two inherited manifest-count/positional assertions that
+  fail on unchanged `dc2284bd1f` too: baseline **13 pass / 2 fail**. This checkpoint
+  does not label that suite green; those stale upstream assertions remain a
+  separate catch-up item.
+
+Production session-tab benchmark (one trial per scenario, 72 review diffs):
+
+| Scenario | Before stable (ms) | After stable (ms) |
+|---|---:|---:|
+| Review closed, cold | 53.1 | 59.9 |
+| Review closed, hot | 32.4 | 31.5 |
+| Review open, cold | 55.8 | 63.0 |
+| Review open, hot | 46.5 | 60.4 |
+
+All trials had zero wrong-destination, blank, unknown or replaced-review-host
+samples. This is a bounded regression smoke, not a statistically measured speed
+claim. Logs: `/tmp/bc-goal-timeline-before.log`, `/tmp/bc-goal-timeline-after.log`,
+`/tmp/bc-goal-production-browser.log`. The first browser experiments included
+development-server hot reload while source was changing; final renderer checks
+were serial against a fixed production build.
+
+Goal controls are gated to the bundled V1-compatible runtime protocol (independent
+of which visual layout is active). Reading current session responses now preserves
+goals, but this does not invent Goal execution support for an external pure-v2
+server. The vendored-client surface audit, remaining retained features, release
+workflows and exact native-package acceptance still remain. No publication,
+installation, protocol registration, real account or profile changes were made.
+
 ### Original re-fork baseline
 
 12 commits. Every one green at the point it landed: `bun turbo typecheck --force`

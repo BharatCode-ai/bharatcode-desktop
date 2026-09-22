@@ -59,6 +59,7 @@ import { useSync } from "@/context/sync"
 import { useTabs } from "@/context/tabs"
 import { TerminalProvider, useTerminal } from "@/context/terminal"
 import { PromptInput } from "@/components/prompt-input"
+import { SessionGoalRibbon } from "@/pages/session/composer/session-goal-ribbon"
 import { PromptInputV2Composer, usePromptInputV2Controller } from "@/components/prompt-input-v2"
 import { useSettingsCommand } from "@/components/settings-dialog"
 import { setCursorPosition } from "@/components/prompt-input/editor-dom"
@@ -2179,6 +2180,32 @@ export default function Page() {
           return (
             <SessionComposerRegion
               controller={controller}
+              goal={
+                <Show when={params.id && info() && serverSDK().protocolKind() === "v1"}>
+                  <SessionGoalRibbon
+                    sessionKey={`${sdk().scope}:${sessionKey()}`}
+                    goal={info()?.goal}
+                    onUpdate={async (goal) => {
+                      const id = params.id
+                      if (!id) return
+                      const owner = sessionOwnership.capture()
+                      const target = sdk()
+                      const cache = sync()
+                      const result = await target.client.session.update(
+                        { sessionID: id, goal },
+                        { signal: AbortSignal.timeout(15000) },
+                      )
+                      if (!result.data) throw new Error("Goal update unconfirmed")
+                      // Events may already contain a later goal transition than the reply.
+                      owner.run(() => {
+                        if (target !== sdk() || result.data.time.updated < (cache.session.get(id)?.time.updated ?? 0))
+                          return
+                        cache.session.remember(result.data)
+                      })
+                    }}
+                  />
+                </Show>
+              }
               promptInput={
                 <Show
                   when={newSessionDesign()}
