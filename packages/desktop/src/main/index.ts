@@ -6,7 +6,7 @@ import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import { getCACertificates, setDefaultCACertificates } from "node:tls"
 import type { Event } from "electron"
-import { app, BrowserWindow } from "electron"
+import { app, BrowserWindow, shell } from "electron"
 
 import { Deferred, Effect, Fiber } from "effect"
 import contextMenu from "electron-context-menu"
@@ -15,7 +15,12 @@ import type { ServerReadyData } from "../preload/types"
 import { checkAppExists, resolveAppPath } from "./apps"
 import { CHANNEL } from "./constants"
 import { registerIpcHandlers, sendDeepLinks, sendMenuCommand } from "./ipc"
-import { forwardInitializationFailure } from "./initialization"
+import { forwardInitializationFailure, initializeConnection } from "./initialization"
+import { BRANDING, appIdForChannel, productNameForChannel, shouldRegisterProtocol } from "./branding"
+import { createBharatCodeAccountClient, type BharatCodeSidecarConnection } from "./bharatcode-auth"
+import { createAccountSession } from "./account-session"
+import { createDeepLinkEvents } from "./deep-link-events"
+import { openExternalUrl } from "./external-browser"
 import { exportDebugLogs, initCrashReporter, initLogging, startNetLog, write as writeLog } from "./logging"
 import { createMenu } from "./menu"
 import {
@@ -29,6 +34,7 @@ import {
   preferAppEnv,
   setDefaultServerUrl,
   spawnLocalServer,
+  checkHealth,
   type SidecarListener,
 } from "./server"
 import { setupAutoUpdater, showUpdaterDialog } from "./updater"
@@ -41,6 +47,8 @@ import {
   setBackgroundColor,
   setDockIcon,
   restoreMainWindows,
+  setSidecarAuthorization,
+  isOwnedRenderer,
 } from "./windows"
 import { createWslServersController } from "./wsl/servers"
 import { registerWslIpcHandlers } from "./wsl/ipc"
@@ -50,17 +58,7 @@ import { cleanupStoreFiles } from "./store-cleanup"
 import { startBackgroundCli } from "./background-cli"
 import { setNativeTranslations } from "./native-translations"
 
-const APP_NAMES: Record<string, string> = {
-  dev: "OpenCode Dev",
-  beta: "OpenCode Beta",
-  prod: "OpenCode",
-}
-const APP_IDS: Record<string, string> = {
-  dev: "ai.opencode.desktop.dev",
-  beta: "ai.opencode.desktop.beta",
-  prod: "ai.opencode.desktop",
-}
-const TEST_ONBOARDING = process.env.OPENCODE_TEST_ONBOARDING === "1"
+const TEST_ONBOARDING = process.env.BHARATCODE_TEST_ONBOARDING === "1" || process.env.OPENCODE_TEST_ONBOARDING === "1"
 const SIDECAR_VERSION = process.env.OPENCODE_SIDECAR_V2 === "1" ? "v2" : "v1"
 const jsCallStackFeature = "DocumentPolicyIncludeJSCallStacksInCrashReports"
 
@@ -86,6 +84,7 @@ function emitDeepLinks(urls: string[]) {
 }
 
 async function killSidecar() {
+  setSidecarAuthorization()
   if (!server) return
   const current = server
   server = null
@@ -122,11 +121,11 @@ const main = Effect.gen(function* () {
 
   process.env.OPENCODE_DISABLE_EMBEDDED_WEB_UI = "true"
 
-  const appId = app.isPackaged ? APP_IDS[CHANNEL] : "ai.opencode.desktop.dev"
+  const appId = appIdForChannel(app.isPackaged ? CHANNEL : "dev")
   const onboardingTestRoot = ((): string | undefined => {
     if (!TEST_ONBOARDING) return
 
-    const root = join(tmpdir(), `opencode-onboarding-${randomUUID()}`)
+    const root = join(tmpdir(), `bharatcode-onboarding-${randomUUID()}`)
     rmSync(root, { recursive: true, force: true })
     ;["data", "config", "cache", "state", "desktop", "session"].forEach((dir) =>
       mkdirSync(join(root, dir), { recursive: true }),
@@ -138,7 +137,7 @@ const main = Effect.gen(function* () {
     process.env.XDG_STATE_HOME = join(root, "state")
     return root
   })()
-  app.setName(app.isPackaged ? APP_NAMES[CHANNEL] : "OpenCode Dev")
+  app.setName(productNameForChannel(app.isPackaged ? CHANNEL : "dev"))
   app.setAppUserModelId(appId)
   app.setPath(
     "userData",
@@ -202,12 +201,31 @@ const main = Effect.gen(function* () {
 
   const shellEnv = preferAppEnv(app.getPath("userData"))
 
+  const serverReady = Deferred.makeUnsafe<BharatCodeSidecarConnection, unknown>()
+  const account = createAccountSession({
+    client: createBharatCodeAccountClient({ getConnection: () => Effect.runPromise(Deferred.await(serverReady)) }),
+    openBrowser: (url) => openExternalUrl(url, { openExternal: (target) => shell.openExternal(target) }),
+    changed: (status) => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (isOwnedRenderer(win.webContents.id)) win.webContents.send("account-status-changed", status)
+      }
+    },
+  })
+  let incomingDeepLinksReady = false
+  const pendingIncomingDeepLinks: string[] = []
+  const deepLinkEvents = createDeepLinkEvents({
+    protocol: BRANDING.protocol,
+    pending: pendingIncomingDeepLinks,
+    ready: () => incomingDeepLinksReady,
+    client: () => account,
+    forward: async (urls) => emitDeepLinks(urls),
+    log: (event) => logger.log(event),
+  })
+  pendingIncomingDeepLinks.push(...process.argv.filter((arg) => arg.startsWith(`${BRANDING.protocol}://`)))
+  app.once("will-quit", () => account.dispose())
+
   app.on("second-instance", (_event: Event, argv: string[]) => {
-    const urls = argv.filter((arg: string) => arg.startsWith("opencode://"))
-    if (urls.length) {
-      logger.log("deep link received via second-instance", { urls })
-      emitDeepLinks(urls)
-    }
+    void deepLinkEvents.secondInstance(argv)
     const win = getLastFocusedWindow()
     if (win) {
       win.show()
@@ -216,9 +234,7 @@ const main = Effect.gen(function* () {
   })
 
   app.on("open-url", (event: Event, url: string) => {
-    event.preventDefault()
-    logger.log("deep link received via open-url", { url })
-    emitDeepLinks([url])
+    void deepLinkEvents.openUrl(event, url)
   })
 
   app.on("before-quit", () => {
@@ -250,8 +266,6 @@ const main = Effect.gen(function* () {
     })
   }
 
-  const serverReady = Deferred.makeUnsafe<ServerReadyData, unknown>()
-
   yield* Effect.promise(() => app.whenReady())
 
   if (!TEST_ONBOARDING) migrate()
@@ -268,7 +282,10 @@ const main = Effect.gen(function* () {
       }),
     ),
   )
-  app.setAsDefaultProtocolClient("opencode")
+  // A diagnostic or development launch must never claim the user's callback.
+  if (shouldRegisterProtocol({ packaged: app.isPackaged, channel: CHANNEL, diagnostic: TEST_ONBOARDING })) {
+    app.setAsDefaultProtocolClient(BRANDING.protocol)
+  }
   registerRendererProtocol()
   setDockIcon()
   const updater = setupAutoUpdater(stopSidecars)
@@ -281,6 +298,7 @@ const main = Effect.gen(function* () {
     relaunch,
   }
   registerIpcHandlers({
+    account,
     killSidecar: () => killSidecar(),
     relaunch,
     awaitInitialization: Effect.fnUntraced(
@@ -288,7 +306,7 @@ const main = Effect.gen(function* () {
         logger.log("awaiting server ready")
         const res = yield* Deferred.await(serverReady)
         logger.log("server ready", { url: res.url })
-        return res
+        return { url: res.url, username: null, password: null } satisfies ServerReadyData
       },
       (e) => Effect.runPromise(e),
     ),
@@ -333,11 +351,14 @@ const main = Effect.gen(function* () {
     if (SIDECAR_VERSION === "v2") {
       logger.log("spawning v2 sidecar")
       const sidecar = yield* Effect.promise(() => startBackgroundCli(logger, shellEnv?.XDG_STATE_HOME))
-      yield* Deferred.succeed(serverReady, {
-        url: sidecar.url,
-        username: sidecar.username,
-        password: sidecar.password,
-      })
+      setSidecarAuthorization(sidecar)
+      yield* initializeConnection(
+        serverReady,
+        sidecar,
+        Effect.promise(async () => {
+          if (!(await checkHealth(sidecar.url, sidecar.password))) throw new Error("Sidecar health check failed")
+        }),
+      )
 
       if (process.platform === "win32") {
         void wslServers.initialize().catch((error) => logger.error("wsl server initialization failed", error))
@@ -384,29 +405,24 @@ const main = Effect.gen(function* () {
       }),
     )
     server = listener
-    yield* Deferred.succeed(serverReady, {
+    const connection = {
       url,
       username: "opencode",
       password,
-    })
+    }
+    setSidecarAuthorization(connection)
+    yield* initializeConnection(
+      serverReady,
+      connection,
+      Effect.promise(() => health.wait).pipe(Effect.timeout("30 seconds")),
+    )
 
     if (process.platform === "win32") {
       void wslServers.initialize().catch((error) => logger.error("wsl server initialization failed", error))
     }
 
-    yield* Effect.promise(() => health.wait).pipe(
-      Effect.timeout("30 seconds"),
-      Effect.catch((e) =>
-        Effect.sync(() => {
-          logger.error("sidecar health check failed", e.toString())
-        }),
-      ),
-    )
-
     logger.log("loading task finished")
   }).pipe(forwardInitializationFailure(serverReady), Effect.forkChild)
-
-  yield* Fiber.await(loadingTask)
 
   app.on("window-all-closed", () => {
     if (process.platform === "darwin") return
@@ -419,6 +435,18 @@ const main = Effect.gen(function* () {
 
   const windows = restoreMainWindows()
   if (windows.length) createMenu(menuDeps)
+  // Render the upstream startup/error surface while the barrier is pending.
+  // Joining propagates failure; it cannot falsely publish a ready connection.
+  yield* Fiber.join(loadingTask).pipe(
+    Effect.tapCause(() =>
+      Effect.sync(() => {
+        setSidecarAuthorization()
+        logger.error("desktop initialization failed")
+      }),
+    ),
+  )
+  incomingDeepLinksReady = true
+  yield* Effect.promise(() => deepLinkEvents.flush())
 })
 
 Effect.runFork(main)

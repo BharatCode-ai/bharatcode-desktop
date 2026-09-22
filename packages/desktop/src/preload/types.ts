@@ -22,6 +22,18 @@ export type ServerReadyData = {
   password: string | null
 }
 
+export type BharatCodeSignInOptions = { selectAccount?: boolean }
+export type BharatCodeAccountStatus = {
+  revision?: number
+  state: "signed_out" | "signed_in" | "needs_sign_in" | "connection_issue" | "authorizing" | "refreshing" | "switching"
+  authenticated: boolean
+  checkedAt: string
+  email?: string
+  name?: string
+  expiresAt?: number
+  message?: string
+}
+
 export type WslServersAPI = WslServersPlatform
 export type UpdaterAPI = {
   subscribe: (cb: (state: UpdaterState) => void) => Promise<() => void>
@@ -43,6 +55,12 @@ export type FatalRendererError = {
 }
 
 export type ElectronAPI = {
+  getAccountStatus: () => Promise<BharatCodeAccountStatus>
+  refreshAccountStatus: () => Promise<BharatCodeAccountStatus>
+  beginSignIn: (input?: BharatCodeSignInOptions) => Promise<BharatCodeAccountStatus>
+  cancelSignIn: () => Promise<void>
+  logout: () => Promise<BharatCodeAccountStatus>
+  onAccountStatus: (cb: (status: BharatCodeAccountStatus) => void) => () => void
   killSidecar: () => Promise<void>
   installCli: () => Promise<string>
   awaitInitialization: () => Promise<ServerReadyData>

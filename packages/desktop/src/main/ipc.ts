@@ -24,6 +24,8 @@ import type { UpdaterController } from "./updater-controller"
 import { createUpdaterSubscriptions } from "./updater-subscriptions"
 import { createDesktopDraftStore } from "./draft-store"
 import { nativeT } from "./native-translations"
+import type { createAccountSession } from "./account-session"
+import { isOwnedRenderer } from "./windows"
 
 const pickerFilters = (ext?: string[]) => {
   if (!ext || ext.length === 0) return undefined
@@ -33,6 +35,7 @@ const pickerFilters = (ext?: string[]) => {
 const pickedFiles = createPickedFileAuthorizations()
 
 type Deps = {
+  account: ReturnType<typeof createAccountSession>
   killSidecar: () => Promise<void> | void
   relaunch: () => void
   awaitInitialization: () => Promise<ServerReadyData>
@@ -55,6 +58,43 @@ type Deps = {
 }
 
 export function registerIpcHandlers(deps: Deps) {
+  const accountAction =
+    <T>(run: (input: unknown) => Promise<T> | T) =>
+    async (event: IpcMainInvokeEvent, input?: unknown) => {
+      if (!isOwnedRenderer(event.sender.id) || event.senderFrame !== event.sender.mainFrame) {
+        throw new Error(nativeT("desktop.account.error.sender"))
+      }
+      try {
+        return await run(input)
+      } catch {
+        throw new Error(nativeT("desktop.account.error.request"))
+      }
+    }
+  ipcMain.handle(
+    "account-status",
+    accountAction(() => deps.account.getAccountStatus()),
+  )
+  ipcMain.handle(
+    "account-refresh",
+    accountAction(() => deps.account.refreshAccountStatus()),
+  )
+  ipcMain.handle(
+    "account-sign-in",
+    accountAction((input) =>
+      deps.account.beginSignIn({
+        selectAccount:
+          typeof input === "object" && input !== null && "selectAccount" in input && input.selectAccount === true,
+      }),
+    ),
+  )
+  ipcMain.handle(
+    "account-cancel",
+    accountAction(() => deps.account.cancelSignIn()),
+  )
+  ipcMain.handle(
+    "account-logout",
+    accountAction(() => deps.account.logout()),
+  )
   const drafts = createDesktopDraftStore(join(app.getPath("userData"), "drafts.sqlite"))
   const updaterSubscriptions = createUpdaterSubscriptions()
   app.once("will-quit", updaterSubscriptions.clear)
@@ -63,7 +103,13 @@ export function registerIpcHandlers(deps: Deps) {
   app.on("browser-window-created", (_event, win) => win.on("session-end", () => drafts.flush()))
 
   ipcMain.handle("kill-sidecar", () => deps.killSidecar())
-  ipcMain.handle("await-initialization", () => deps.awaitInitialization())
+  ipcMain.handle("await-initialization", async () => {
+    try {
+      return await deps.awaitInitialization()
+    } catch {
+      throw new Error(nativeT("desktop.error.initialization"))
+    }
+  })
   ipcMain.handle("consume-initial-deep-links", () => deps.consumeInitialDeepLinks())
   ipcMain.handle("get-default-server-url", () => deps.getDefaultServerUrl())
   ipcMain.handle("set-default-server-url", (_event: IpcMainInvokeEvent, url: string | null) =>

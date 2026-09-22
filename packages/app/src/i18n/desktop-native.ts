@@ -222,6 +222,20 @@ function locale(value: string) {
 }
 
 export const DESKTOP_NATIVE_ENGLISH = {
+  "desktop.account.error.sender": "This window cannot access the BharatCode account.",
+  "desktop.account.error.request": "The BharatCode account request could not be completed. Try again.",
+  "desktop.error.initialization": "BharatCode could not start its local server. Restart the app to try again.",
+  "desktop.account.error.cancelled": "BharatCode sign-in was cancelled. Try again.",
+  "desktop.account.error.status": "Could not check the BharatCode account. Try again.",
+  "desktop.account.error.unavailable": "The BharatCode account runtime is unavailable.",
+  "desktop.account.error.timeout": "Timed out waiting for BharatCode sign-in. Try again.",
+  "desktop.account.error.start": "Could not start BharatCode sign-in. Try again.",
+  "desktop.account.error.complete": "BharatCode sign-in could not be completed. Try again.",
+  "desktop.account.error.logout": "Could not sign out of BharatCode. Try again.",
+  "desktop.account.error.storage":
+    "BharatCode account storage is unavailable. Check local credential-store access, then retry.",
+  "desktop.account.error.connection": "Could not connect to BharatCode. Your saved sign-in has been kept. Try again.",
+  "desktop.account.error.signInRequired": "Sign in to BharatCode again to continue.",
   "desktop.menu.app": "OpenCode",
   "desktop.menu.file": "File",
   "desktop.menu.edit": "Edit",

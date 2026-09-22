@@ -16,6 +16,7 @@ import { nativeT } from "./native-translations"
 import { createWindowRegistry } from "./window-registry"
 import { safeWindowURL } from "./window-state"
 import { resolveExternalURL, resolveLocalFilePath } from "./external-url"
+import { createSidecarAuthorizationPolicy, type SidecarAuthorizationPolicy } from "./sidecar-auth"
 
 const root = dirname(fileURLToPath(import.meta.url))
 const rendererRoot = join(root, "../renderer")
@@ -45,6 +46,21 @@ protocol.registerSchemesAsPrivileged([
 ])
 
 let backgroundColor: string | undefined
+let sidecarAuthorization: SidecarAuthorizationPolicy | undefined
+
+export function setSidecarAuthorization(connection?: { url: string; username: string; password: string }) {
+  sidecarAuthorization?.invalidate()
+  sidecarAuthorization = connection
+    ? createSidecarAuthorizationPolicy({ ...connection, origin: connection.url })
+    : undefined
+}
+
+export function isOwnedRenderer(id: number | undefined) {
+  return BrowserWindow.getAllWindows().some(
+    (win) =>
+      !win.isDestroyed() && windowIDs.has(win) && win.webContents.id === id && isRendererUrl(win.webContents.getURL()),
+  )
+}
 let relaunchHandler = () => {
   setAppQuitting()
   app.relaunch()
@@ -208,11 +224,27 @@ export function createMainWindow(id: string = randomUUID()) {
   wireWindowRecovery(win, id)
   wireNavigationPolicy(win)
 
+  win.webContents.session.webRequest.onBeforeRequest((details, callback) => {
+    callback(
+      sidecarAuthorization?.beforeRequest(
+        details,
+        isOwnedRenderer(details.webContentsId) ? details.webContentsId! : -1,
+      ) ?? {},
+    )
+  })
   win.webContents.session.webRequest.onBeforeSendHeaders((details, callback) => {
     const { requestHeaders } = details
     upsertKeyValue(requestHeaders, "Access-Control-Allow-Origin", ["*"])
-    callback({ requestHeaders })
+    callback(
+      sidecarAuthorization?.beforeSendHeaders(
+        details,
+        isOwnedRenderer(details.webContentsId) ? details.webContentsId! : -1,
+      ) ?? { requestHeaders },
+    )
   })
+  win.webContents.session.webRequest.onBeforeRedirect((details) => sidecarAuthorization?.beforeRedirect(details))
+  win.webContents.session.webRequest.onCompleted((details) => sidecarAuthorization?.complete(details.id))
+  win.webContents.session.webRequest.onErrorOccurred((details) => sidecarAuthorization?.complete(details.id))
 
   win.webContents.session.webRequest.onHeadersReceived((details, callback) => {
     const { responseHeaders = {} } = details
@@ -236,7 +268,7 @@ export function createMainWindow(id: string = randomUUID()) {
 export function openExternalURL(value: string) {
   const url = resolveExternalURL(value)
   if (!url) {
-    writeLog("window", "blocked external target", { url: value }, "warn")
+    writeLog("window", "blocked external target", {}, "warn")
     return
   }
   void shell.openExternal(url)

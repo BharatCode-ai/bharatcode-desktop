@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron"
-import type { ElectronAPI, WslServersEvent } from "./types"
+import type { BharatCodeAccountStatus, ElectronAPI, WslServersEvent } from "./types"
 import type { UpdaterState } from "@opencode-ai/app/updater"
 
 const updaterCallbacks = new Set<(state: UpdaterState) => void>()
@@ -11,6 +11,16 @@ const updaterHandler = (_: unknown, state: UpdaterState) => {
 }
 
 const api: ElectronAPI = {
+  getAccountStatus: () => ipcRenderer.invoke("account-status"),
+  refreshAccountStatus: () => ipcRenderer.invoke("account-refresh"),
+  beginSignIn: (input) => ipcRenderer.invoke("account-sign-in", input),
+  cancelSignIn: () => ipcRenderer.invoke("account-cancel"),
+  logout: () => ipcRenderer.invoke("account-logout"),
+  onAccountStatus: (cb) => {
+    const handler = (_: unknown, status: BharatCodeAccountStatus) => cb(status)
+    ipcRenderer.on("account-status-changed", handler)
+    return () => ipcRenderer.removeListener("account-status-changed", handler)
+  },
   killSidecar: () => ipcRenderer.invoke("kill-sidecar"),
   installCli: () => ipcRenderer.invoke("install-cli"),
   awaitInitialization: () => ipcRenderer.invoke("await-initialization"),

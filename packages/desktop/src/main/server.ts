@@ -150,13 +150,15 @@ export async function spawnLocalServer(
     })
 
     const ready = async () => {
-      while (true) {
+      const deadline = Date.now() + 30_000
+      while (!exited && Date.now() < deadline) {
         await new Promise((resolve) => setTimeout(resolve, 100))
         if (await checkHealth(url, password)) {
           healthy = true
           return
         }
       }
+      throw new Error("Sidecar health check did not complete")
     }
 
     await Promise.race([ready(), gone])
@@ -202,6 +204,7 @@ export async function checkHealth(url: string, password?: string | null): Promis
       const res = await fetch(healthUrl, {
         method: "GET",
         headers,
+        redirect: "manual",
         signal: AbortSignal.timeout(3000),
       })
       if (res.ok) return true
