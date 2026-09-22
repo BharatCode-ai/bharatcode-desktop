@@ -7,6 +7,7 @@ import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { createSolidTransformPlugin } from "@opentui/solid/bun-plugin"
 import { DISTRIBUTION, PLATFORM_TARGETS, createPlatformPackageManifest, platformPackageName } from "./distribution.mjs"
+import { resolveWslBuildSourceSha } from "../src/server/wsl-desktop-transport"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -25,6 +26,13 @@ const skipInstall = process.argv.includes("--skip-install")
 const sourcemapsFlag = process.argv.includes("--sourcemaps")
 const plugin = createSolidTransformPlugin()
 const skipEmbedWebUi = process.argv.includes("--skip-embed-web-ui")
+const wslCandidate = process.argv.includes("--wsl-candidate")
+const wslSourceSha = resolveWslBuildSourceSha(process.env, wslCandidate)
+if (wslSourceSha !== "unavailable") {
+  const head = (await $`git rev-parse HEAD`.quiet().text()).trim()
+  const changes = (await $`git status --porcelain --untracked-files=normal`.quiet().text()).trim()
+  if (head !== wslSourceSha || changes) throw new Error("WSL runtime identity requires the exact clean source checkout")
+}
 
 const createEmbeddedWebUIBundle = async () => {
   console.log(`Building Web UI to embed in the binary`)
@@ -121,6 +129,7 @@ for (const item of targets) {
       ...(embeddedFileMap ? ["bharatcode-web-ui.gen.ts"] : []),
     ],
     define: {
+      BHARATCODE_WSL_COMPILED_SOURCE_SHA: JSON.stringify(wslSourceSha),
       FFF_LIBC: JSON.stringify(item.abi === "musl" ? "musl" : "gnu"),
       OPENCODE_VERSION: `'${Script.version}'`,
       OPENCODE_MODELS_DEV: generated.modelsData,

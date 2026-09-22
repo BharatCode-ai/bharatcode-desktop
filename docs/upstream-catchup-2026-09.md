@@ -132,6 +132,27 @@ The OpenCode installer/resolver still needs replacement with the same-source
 BharatCode artifact and typed lifecycle. No WSL distribution, account store,
 installed app, protocol association or user data was changed by execution tests.
 
+### WSL stdio runtime checkpoint — September 23, 2026
+
+The hidden Desktop serve mode now uses the retained bounded JSONL protocol:
+source/version/executable digest/non-root identity precedes readiness; credentials
+arrive through stdin and bind to that listener only. Two simultaneous listeners
+reject each other's credential and anonymous requests without changing process
+environment. Normal serve behavior remains available. EOF and Stop tear down
+the listener; shutdown failures are fixed safe outcomes, not successful stops.
+
+Build identity is accepted only from the matching clean checkout. Ordinary CLI
+builds without that identity cannot act as a verified WSL sidecar. The compiled
+acceptance harness uses fresh synthetic homes and checks identity, protected
+health/account routes, Stop/EOF and process/port cleanup. The old binary fails
+that harness before any identity record; rebuilding this exact checkpoint is
+the next check. This does not yet replace Desktop's old WSL installer/resolver.
+
+Source transport/listener checks and OpenCode/Desktop typechecks were run. An
+existing plugin-client test intermittently reaches its five-second timeout; its
+isolated and subsequent focused runs pass, so no full-suite stability claim is
+made here. Native Windows-to-WSL installation and packaged lifecycle remain open.
+
 ### Original re-fork baseline
 
 12 commits. Every one green at the point it landed: `bun turbo typecheck --force`

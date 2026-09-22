@@ -167,6 +167,40 @@ async function openPtySocket(listener: Awaited<ReturnType<typeof startListener>>
 }
 
 describe("HttpApi Server.listen", () => {
+  test("binds explicit sidecar credentials per listener without exporting them to the environment", async () => {
+    delete process.env.OPENCODE_SERVER_PASSWORD
+    const before = { ...process.env }
+    const first = await Server.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      credentials: { username: "bharatcode", password: "first-private" },
+    })
+    const second = await Server.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      credentials: { username: "bharatcode", password: "second-private" },
+    })
+    try {
+      for (const [listener, own, other] of [
+        [first, "first-private", "second-private"],
+        [second, "second-private", "first-private"],
+      ] as const) {
+        const url = new URL("/global/health", listener.url)
+        expect((await fetch(url)).status).toBe(401)
+        expect((await fetch(url, { headers: { authorization: `Basic ${btoa(`bharatcode:${other}`)}` } })).status).toBe(
+          401,
+        )
+        expect((await fetch(url, { headers: { authorization: `Basic ${btoa(`bharatcode:${own}`)}` } })).status).toBe(
+          200,
+        )
+      }
+      expect(process.env.OPENCODE_SERVER_PASSWORD).toBeUndefined()
+      expect(process.env.OPENCODE_SERVER_USERNAME).toBe(before.OPENCODE_SERVER_USERNAME)
+    } finally {
+      await Promise.all([stop(first, "first listener"), stop(second, "second listener")])
+    }
+  })
+
   testPty("serves HTTP routes and upgrades PTY websocket through Server.listen", async () => {
     await using tmp = await tmpdir({ config: { formatter: false, lsp: false } })
     const listener = await startListener()

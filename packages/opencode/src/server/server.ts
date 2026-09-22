@@ -2,7 +2,7 @@ import "./init-projectors"
 
 import { NodeHttpServer } from "@effect/platform-node"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
-import { ConfigProvider, Context, Effect, Exit, Layer, Scope } from "effect"
+import { Cause, ConfigProvider, Context, Effect, Exit, Layer, Scope } from "effect"
 import { HttpRouter, HttpServer } from "effect/unstable/http"
 import { OpenApi } from "effect/unstable/httpapi"
 import { createServer } from "node:http"
@@ -32,6 +32,7 @@ type ServerApp = {
 type ListenOptions = CorsOptions & {
   port: number
   hostname: string
+  credentials?: { username: string; password: string }
   mdns?: boolean
   mdnsDomain?: string
 }
@@ -71,12 +72,20 @@ export async function openapi() {
 export let url: URL | undefined
 
 export async function listen(opts: ListenOptions): Promise<Listener> {
+  if (opts.credentials && (!opts.credentials.username || !opts.credentials.password)) {
+    throw new Error("Explicit server credentials must not be empty")
+  }
   const listener = await Effect.runPromise(listenEffect(opts))
   return {
     hostname: listener.hostname,
     port: listener.port,
     url: listener.url,
-    stop: (close?: boolean) => Effect.runPromiseExit(listener.stop(close)).then(() => undefined),
+    stop: (close?: boolean) =>
+      Effect.runPromise(
+        listener
+          .stop(close)
+          .pipe(Effect.catchCause((cause) => (Cause.hasInterruptsOnly(cause) ? Effect.void : Effect.failCause(cause)))),
+      ),
   }
 }
 
@@ -110,7 +119,19 @@ function listenerLayer(opts: ListenOptions, port: number) {
     // `ConfigProvider` snapshots `process.env` on first read and caches the
     // result on a module-singleton Reference; without overriding it here,
     // every later `Server.listen()` keeps observing that initial snapshot.
-    Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv())),
+    Layer.provide(
+      ConfigProvider.layer(
+        opts.credentials
+          ? ConfigProvider.orElse(
+              ConfigProvider.fromUnknown({
+                OPENCODE_SERVER_USERNAME: opts.credentials.username,
+                OPENCODE_SERVER_PASSWORD: opts.credentials.password,
+              }),
+              ConfigProvider.fromEnv(),
+            )
+          : ConfigProvider.fromEnv(),
+      ),
+    ),
   )
 }
 
