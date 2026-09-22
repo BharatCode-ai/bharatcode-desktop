@@ -153,6 +153,23 @@ existing plugin-client test intermittently reaches its five-second timeout; its
 isolated and subsequent focused runs pass, so no full-suite stability claim is
 made here. Native Windows-to-WSL installation and packaged lifecycle remain open.
 
+`f26e216863` records the stdio checkpoint. Focused source checks: **19 pass / 0
+fail**, 75 assertions, both typechecks pass. The rebuilt beta Linux CLI at this
+exact source passed **2 compiled lifecycle tests**, 30 assertions, covering Stop
+and EOF in isolated homes. This is Linux child-process evidence, not a Windows
+Electron-to-WSL installed test. An initial build-shell invocation supplied the
+wrong repository SHA; the clean-source check correctly rejected it. The retry
+used the literal verified worktree SHA and passed.
+
+The following packaging checkpoint restores the closed WSL artifact verifier
+and non-overwriting staging operation, without the old installer implementation.
+Candidate CLI builds emit a read-only runtime plus source/version/architecture/
+length/SHA-256 manifest. Windows packaging stages and rechecks that resource and
+requires matching Windows/runtime architecture; other platforms do not bundle
+the WSL payload. Tests cover manifest/digest drift, non-files, writable files,
+symlinks/hardlinks and preservation of existing staging output. Actual selected-
+distro provisioning and Desktop consumption of this artifact are still next.
+
 ### Original re-fork baseline
 
 12 commits. Every one green at the point it landed: `bun turbo typecheck --force`

@@ -1,6 +1,7 @@
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import type { Configuration } from "electron-builder"
+import { Arch, type Configuration } from "electron-builder"
+import { verifyWslArtifact, wslRuntimeFilename } from "./src/main/wsl/artifact"
 import {
   BRANDING,
   appIdForChannel,
@@ -32,7 +33,7 @@ const config: Configuration = {
   artifactName: "bharatcode-desktop-${os}-${arch}.${ext}",
   directories: { output: "dist", buildResources: "resources" },
   extraMetadata: { desktopName: `${appId}.desktop` },
-  files: ["out/**/*", "resources/**/*", "!resources/bharatcode-cli*"],
+  files: ["out/**/*", "resources/**/*", "!resources/bharatcode-cli*", "!resources/wsl-runtime/**/*"],
   extraResources: [
     { from: "resources/", to: "", filter: ["bharatcode-cli*"] },
     {
@@ -41,7 +42,20 @@ const config: Configuration = {
       filter: ["index.js", "index.d.ts", "build/Release/mac_window.node", "swift-build/**"],
     },
   ],
-  beforePack: async (context) => assertPackagingPolicy(context.electronPlatformName),
+  beforePack: async (context) => {
+    assertPackagingPolicy(context.electronPlatformName)
+    if (context.electronPlatformName !== "win32") return
+    const arch = process.env.BHARATCODE_WSL_RUNTIME_ARCH
+    if (arch !== "x64" && arch !== "arm64") throw new Error("Missing Windows WSL runtime architecture")
+    if (context.arch !== Arch[arch]) throw new Error("Windows and WSL runtime architectures differ")
+    await verifyWslArtifact({
+      runtimePath: path.join(packageDir, "resources/wsl-runtime", wslRuntimeFilename(arch)),
+      manifestPath: path.join(packageDir, "resources/wsl-runtime/manifest.json"),
+      expectedSourceSha: process.env.BHARATCODE_SOURCE_SHA ?? "unavailable",
+      expectedVersion: context.packager.appInfo.version,
+      expectedArch: arch,
+    })
+  },
   protocols: { name: BRANDING.appName, schemes: [BRANDING.protocol] },
   ...(channel === "dev"
     ? {}
@@ -65,6 +79,7 @@ const config: Configuration = {
   },
   dmg: { sign: channel !== "dev" },
   win: {
+    extraResources: [{ from: "resources/wsl-runtime", to: "wsl-runtime", filter: ["*"] }],
     icon: "resources/icons/icon.ico",
     // Current Windows release policy is explicitly unsigned. Never invoke an
     // inherited upstream/Azure signer or opportunistically discover a certificate.

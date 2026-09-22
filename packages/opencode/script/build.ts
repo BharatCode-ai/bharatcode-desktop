@@ -3,7 +3,8 @@
 import { $ } from "bun"
 import path from "path"
 import { fileURLToPath } from "url"
-import { mkdtemp, rm } from "node:fs/promises"
+import { chmod, copyFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { createHash } from "node:crypto"
 import { tmpdir } from "node:os"
 import { createSolidTransformPlugin } from "@opentui/solid/bun-plugin"
 import { DISTRIBUTION, PLATFORM_TARGETS, createPlatformPackageManifest, platformPackageName } from "./distribution.mjs"
@@ -81,6 +82,10 @@ const targets = singleFlag
       return true
     })
   : PLATFORM_TARGETS
+
+if (wslCandidate && !targets.some((item) => item.os === "linux" && !item.abi && item.avx2 !== false)) {
+  throw new Error("WSL candidate requires a Linux glibc target")
+}
 
 await $`rm -rf dist`
 
@@ -173,6 +178,29 @@ for (const item of targets) {
     JSON.stringify(createPlatformPackageManifest(item, Script.version), null, 2),
   )
   binaries[name] = Script.version
+
+  if (wslCandidate && item.os === "linux" && !item.abi && item.avx2 !== false) {
+    const filename = `bharatcode-runtime-linux-${item.arch}-glibc`
+    const output = path.join(dir, "dist", `wsl-runtime-${item.arch}`)
+    await mkdir(output)
+    const runtimePath = path.join(output, filename)
+    await copyFile(`dist/${name}/bin/${DISTRIBUTION.commandName}`, runtimePath)
+    const bytes = new Uint8Array(await Bun.file(runtimePath).arrayBuffer())
+    await chmod(runtimePath, 0o444)
+    await writeFile(
+      path.join(output, "manifest.json"),
+      JSON.stringify({
+        schema: 1,
+        source_sha: wslSourceSha,
+        version: Script.version,
+        arch: item.arch,
+        filename,
+        bytes: bytes.byteLength,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+      }) + "\n",
+      { flag: "wx", mode: 0o444 },
+    )
+  }
 }
 
 if (Script.release) {

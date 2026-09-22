@@ -11,6 +11,8 @@ test("packaging cannot substitute an upstream product, protocol, CLI or update d
   expect(bundledCliFilename("linux")).toBe("bharatcode-cli")
   expect(config.mac?.hardenedRuntime).toBe(true)
   expect(config.linux?.target).toEqual(["AppImage", "deb"])
+  expect(config.win?.extraResources).toEqual([{ from: "resources/wsl-runtime", to: "wsl-runtime", filter: ["*"] }])
+  expect(config.files).toContain("!resources/wsl-runtime/**/*")
 })
 
 test("unsigned Windows is explicit and macOS release signing plus notarization is mandatory", () => {
