@@ -45,6 +45,7 @@ type ControllerLogger = {
 }
 
 type WslServersControllerOptions = {
+  onConnection?: (id: string, connection?: { url: string; username: string; password: string }) => void
   logger?: ControllerLogger
   readServers?: () => WslServerConfig[]
   writeServers?: (servers: WslServerConfig[]) => void
@@ -238,24 +239,35 @@ export function createWslServersController(
         }
         return
       }
+      try {
+        options?.onConnection?.(id, {
+          url: sidecar.url,
+          username: sidecar.username ?? "opencode",
+          password: sidecar.password,
+        })
+      } catch (error) {
+        sidecar.listener.stop()
+        throw error
+      }
       sidecars.set(id, sidecar)
       setRuntime(id, {
         kind: "ready",
         url: sidecar.url,
-        username: sidecar.username,
-        password: sidecar.password,
+        username: null,
+        password: null,
       })
       sidecar.listener.onExit((code, signal) => {
         if (sidecars.get(id) !== sidecar) return
         sidecars.delete(id)
+        options?.onConnection?.(id)
         const message = startupFailure(code, signal)
         setRuntime(id, { kind: "failed", message })
         logger?.error("wsl sidecar exited", { id, distro: item.config.distro, code, signal })
       })
       refreshOpencodeCheckBackground(id, item.config.distro)
       logger?.log("wsl sidecar ready", { id, distro: item.config.distro, url: sidecar.url })
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
+    } catch {
+      const message = nativeT("desktop.wsl.error.start")
       if (!isCurrentStartAttempt(id, attempt)) return
       setRuntime(id, { kind: "failed", message })
       // Without this, an Ubuntu-style silent failure leaves no trace in
@@ -269,6 +281,7 @@ export function createWslServersController(
     const existing = sidecars.get(id)
     if (!existing) return
     sidecars.delete(id)
+    options?.onConnection?.(id)
     try {
       existing.listener.stop()
     } catch {
@@ -410,7 +423,8 @@ export function createWslServersController(
 
     stopAll() {
       for (const item of state.servers) invalidateStartAttempt(item.config.id)
-      for (const existing of sidecars.values()) {
+      for (const [id, existing] of sidecars) {
+        options?.onConnection?.(id)
         try {
           existing.listener.stop()
         } catch {

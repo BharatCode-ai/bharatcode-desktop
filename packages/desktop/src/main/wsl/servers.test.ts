@@ -17,6 +17,64 @@ import { createWslServersController, type WslServerConfig } from "./servers"
 let persistedServers: WslServerConfig[] = []
 let releaseOpencodeResolve: (() => void) | undefined
 
+test("keeps runtime credentials out of snapshots/events and revokes them on remove", async () => {
+  persistedServers = []
+  const authorizations: unknown[] = []
+  const events: unknown[] = []
+  let exited: (() => void) | undefined
+  const controller = createWslServersController(
+    "1.16.2",
+    async () => ({
+      listener: {
+        stop: () => undefined,
+        onExit: (cb) => {
+          exited = () => cb(0, null)
+        },
+      },
+      url: "http://127.0.0.1:4096",
+      username: "bharatcode",
+      password: "never-render-this",
+    }),
+    {
+      ...testControllerOptions(),
+      resolveOpencode: async () => null,
+      onConnection: (id, connection) => authorizations.push({ id, connection }),
+    },
+  )
+  controller.subscribe((event) => events.push(event))
+  await controller.addServer("Debian")
+  await waitFor(() => controller.getState().servers[0]?.runtime.kind === "ready")
+  expect(JSON.stringify(controller.getState())).not.toContain("never-render-this")
+  expect(JSON.stringify(events)).not.toContain("never-render-this")
+  expect(authorizations).toHaveLength(1)
+  exited?.()
+  expect(authorizations.at(-1)).toEqual({ id: "wsl:Debian", connection: undefined })
+  await controller.startServer("wsl:Debian")
+  await controller.removeServer("wsl:Debian")
+  expect(authorizations.at(-1)).toEqual({ id: "wsl:Debian", connection: undefined })
+  await controller.addServer("Debian")
+  await waitFor(() => controller.getState().servers[0]?.runtime.kind === "ready")
+  controller.stopAll()
+  expect(authorizations.at(-1)).toEqual({ id: "wsl:Debian", connection: undefined })
+})
+
+test("failed startup publishes a fixed outcome instead of the child error", async () => {
+  persistedServers = []
+  const controller = createWslServersController(
+    "1.16.2",
+    async () => {
+      throw new Error("secret-token private-path child-output")
+    },
+    { ...testControllerOptions(), resolveOpencode: async () => null },
+  )
+  await controller.addServer("Debian")
+  await waitFor(() => controller.getState().servers[0]?.runtime.kind === "failed")
+  expect(controller.getState().servers[0]?.runtime).toEqual({
+    kind: "failed",
+    message: "BharatCode could not start the WSL runtime. Check the selected distribution and retry.",
+  })
+})
+
 test("starts every configured WSL server on initialization", () => {
   expect(
     wslServerIdsToStartOnInitialize([
@@ -69,6 +127,9 @@ test("clears cached distro probes when removing a WSL server", () => {
 
 test("opens terminals for distro names containing spaces", () => {
   expect(wslTerminalArgs("Ubuntu Preview")).toEqual(["/c", "start", "", "wsl", "-d", "Ubuntu Preview"])
+  for (const distro of ["Ubuntu & command", "Ubuntu|command", "%COMSPEC%", 'Ubuntu"', "-d", "Ubuntu\ncommand"]) {
+    expect(() => wslTerminalArgs(distro)).toThrow()
+  }
 })
 
 test("stops health polling when sidecar startup settles", async () => {

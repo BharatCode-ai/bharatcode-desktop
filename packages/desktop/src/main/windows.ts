@@ -16,7 +16,7 @@ import { nativeT } from "./native-translations"
 import { createWindowRegistry } from "./window-registry"
 import { safeWindowURL } from "./window-state"
 import { resolveExternalURL, resolveLocalFilePath } from "./external-url"
-import { createSidecarAuthorizationPolicy, type SidecarAuthorizationPolicy } from "./sidecar-auth"
+import { createSidecarAuthorizations } from "./sidecar-authorizations"
 
 const root = dirname(fileURLToPath(import.meta.url))
 const rendererRoot = join(root, "../renderer")
@@ -46,13 +46,17 @@ protocol.registerSchemesAsPrivileged([
 ])
 
 let backgroundColor: string | undefined
-let sidecarAuthorization: SidecarAuthorizationPolicy | undefined
+const sidecarAuthorization = createSidecarAuthorizations()
 
 export function setSidecarAuthorization(connection?: { url: string; username: string; password: string }) {
-  sidecarAuthorization?.invalidate()
-  sidecarAuthorization = connection
-    ? createSidecarAuthorizationPolicy({ ...connection, origin: connection.url })
-    : undefined
+  sidecarAuthorization.set("local", connection)
+}
+
+export function setWslSidecarAuthorization(
+  id: string,
+  connection?: { url: string; username: string; password: string },
+) {
+  sidecarAuthorization.set(id, connection)
 }
 
 export function isOwnedRenderer(id: number | undefined) {

@@ -1,6 +1,9 @@
 // Product-specific copy uses English fallback until translations are reviewed.
 // Kept separate from upstream's positional native-menu translation arrays.
 export const BHARATCODE_NATIVE_ENGLISH = {
+  "desktop.wsl.error.sender": "This window cannot manage BharatCode WSL.",
+  "desktop.wsl.error.request": "The WSL action could not be completed. Check WSL status and try again.",
+  "desktop.wsl.error.start": "BharatCode could not start the WSL runtime. Check the selected distribution and retry.",
   "desktop.account.error.sender": "This window cannot access the BharatCode account.",
   "desktop.account.error.request": "The BharatCode account request could not be completed. Try again.",
   "desktop.error.initialization": "BharatCode could not start its local server. Restart the app to try again.",

@@ -48,6 +48,7 @@ import {
   setDockIcon,
   restoreMainWindows,
   setSidecarAuthorization,
+  setWslSidecarAuthorization,
   isOwnedRenderer,
 } from "./windows"
 import { createWslServersController } from "./wsl/servers"
@@ -152,11 +153,10 @@ const main = Effect.gen(function* () {
     app.getVersion(),
     async (distro) => {
       logger.log("spawning wsl sidecar", { distro })
-      return spawnWslSidecar(distro, {
-        onLine: (line) => logger.log("wsl sidecar", { distro, stream: line.stream, text: line.text }),
-      })
+      return spawnWslSidecar(distro)
     },
     {
+      onConnection: setWslSidecarAuthorization,
       logger: {
         log: (message, meta) => logger.log(message, meta),
         error: (message, meta) => logger.error(message, meta),

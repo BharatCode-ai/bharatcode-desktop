@@ -1,4 +1,5 @@
 import type { WslDistroProbe, WslOpencodeCheck, WslServerItem } from "../../preload/types"
+import { nativeT } from "../native-translations"
 
 export function wslServerIdToRestart(servers: WslServerItem[], distro: string) {
   return servers.find((item) => item.config.distro === distro)?.config.id
@@ -17,6 +18,11 @@ export function clearWslDistroState(
 }
 
 export function wslTerminalArgs(distro?: string | null) {
+  // This one action uses cmd.exe's `start`; reject its expansion/operators
+  // rather than treating an IPC string as a command fragment.
+  if (distro && !/^[\p{L}\p{N}][\p{L}\p{N} ._-]{0,127}$/u.test(distro)) {
+    throw new Error(nativeT("desktop.wsl.error.request"))
+  }
   return ["/c", "start", "", "wsl", ...(distro ? ["-d", distro] : [])]
 }
 

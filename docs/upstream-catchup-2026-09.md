@@ -91,9 +91,11 @@ assertions. This suite uses happy-dom, not an installed Electron window.
 
 Source inspection confirms that the inherited multi-distro shell still installs
 from `opencode.ai/install`, resolves `$HOME/.opencode/bin/opencode`, and launches
-a broadly bound server. Its public controller state also contains sidecar
-credentials. None of those paths have been executed during this continuation.
-They are release blockers, not an accepted BharatCode implementation.
+the upstream binary. Initial inspection also found broadly bound serving and
+sidecar credentials in public state; the security checkpoint below corrects those
+two boundaries. None of those runtime paths have been executed during this
+continuation. Provisioning remains a release blocker, not an accepted BharatCode
+implementation.
 
 The retained `origin/dev` implementation instead has same-source runtime
 manifests/digests, explicit non-root identity checks, a bounded typed stdio
@@ -107,6 +109,28 @@ that gap. SDK generation also needs reconciliation: the renderer currently uses
 the pinned vendored v2 promise client, while the local client package exposes a
 different generated surface. A successful local client generation alone does not
 prove that the renderer consumed the regenerated API.
+
+### WSL authorization checkpoint — September 23, 2026
+
+- Native and WSL sidecar credentials now remain in a main-owned authorization
+  registry. Public WSL snapshots/events carry null credential fields, enforced by
+  their shared type. Each outstanding request remains bound to its original
+  runtime; stop/replacement invalidates that authority without changing another
+  runtime's authorization. Cross-runtime/external redirects fail closed.
+- WSL IPC actions require an owned renderer's main frame. Subscriptions stop
+  forwarding after window ownership is lost. Fixed safe failures replace raw
+  thrown payloads at IPC/startup boundaries; arbitrary child stdout/stderr is no
+  longer copied to the main log or renderer startup error.
+- WSL serving is restricted to loopback. The existing terminal-opening action
+  rejects shell metacharacters in distribution names before invoking cmd.exe.
+- Focused Desktop security/controller tests: **24 pass / 0 fail**, 86 assertions,
+  including the credential-leak regression that failed before the correction.
+  Desktop and App typechecks pass; App unit suite remains **740 pass / 0 fail**.
+
+This checkpoint does not add new WSL features or certify runtime installation.
+The OpenCode installer/resolver still needs replacement with the same-source
+BharatCode artifact and typed lifecycle. No WSL distribution, account store,
+installed app, protocol association or user data was changed by execution tests.
 
 ### Original re-fork baseline
 

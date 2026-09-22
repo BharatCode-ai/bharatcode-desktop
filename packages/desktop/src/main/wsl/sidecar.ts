@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto"
 import { createServer } from "node:net"
 import { app } from "electron"
 import { checkHealth } from "../server"
-import { type WslCommandLine, resolveWslOpencode, shellEscape, wslArgs } from "./runtime"
+import { resolveWslOpencode, shellEscape, wslArgs } from "./runtime"
 import { pollWslHealth } from "./startup"
 import { nativeT } from "../native-translations"
 
@@ -14,10 +14,7 @@ export type WslSidecar = {
   password: string
 }
 
-export async function spawnWslSidecar(
-  distro: string,
-  opts: { onLine?: (line: WslCommandLine) => void; healthTimeoutMs?: number } = {},
-): Promise<WslSidecar> {
+export async function spawnWslSidecar(distro: string, opts: { healthTimeoutMs?: number } = {}): Promise<WslSidecar> {
   const opencode = await resolveWslOpencode(distro)
   if (!opencode) throw new Error(nativeT("desktop.wsl.error.opencodeNotInstalled", { distro }))
 
@@ -35,7 +32,7 @@ export async function spawnWslSidecar(
     `export OPENCODE_SERVER_USERNAME=${shellEscape(username)}`,
     `export OPENCODE_SERVER_PASSWORD=${shellEscape(password)}`,
     'export XDG_STATE_HOME="$HOME/.local/state"',
-    `exec ${shellEscape(opencode)} --print-logs --log-level ${app.isPackaged ? "WARN" : "INFO"} serve --hostname 0.0.0.0 --port ${port}`,
+    `exec ${shellEscape(opencode)} --print-logs --log-level ${app.isPackaged ? "WARN" : "INFO"} serve --hostname 127.0.0.1 --port ${port}`,
   ].join("\n")
   const child = spawn("wsl", wslArgs(["bash", "-se"], distro), {
     stdio: ["pipe", "pipe", "pipe"],
@@ -43,19 +40,14 @@ export async function spawnWslSidecar(
   })
   child.stdin.end(script)
 
-  const recentOutput: string[] = []
-  const emit = (line: WslCommandLine) => {
-    if (!line.text.trim()) return
-    recentOutput.push(`[${line.stream}] ${line.text}`)
-    if (recentOutput.length > 12) recentOutput.shift()
-    opts.onLine?.(line)
-  }
-  forwardLines(child.stdout, "stdout", emit)
-  forwardLines(child.stderr, "stderr", emit)
+  // Drain output without forwarding arbitrary child output to renderer errors
+  // or the main log. Startup exposes only fixed lifecycle outcomes.
+  child.stdout.resume()
+  child.stderr.resume()
 
   const exit = new Promise<never>((_, reject) => {
     child.once("error", reject)
-    child.once("exit", (code, signal) => reject(new Error(startupFailure(code, signal, recentOutput))))
+    child.once("exit", (code, signal) => reject(new Error(startupFailure(code, signal))))
   })
   const url = `http://127.0.0.1:${port}`
   const startup = new AbortController()
@@ -106,29 +98,10 @@ function allocatePort() {
   })
 }
 
-function forwardLines(
-  stream: NodeJS.ReadableStream,
-  source: WslCommandLine["stream"],
-  onLine: (line: WslCommandLine) => void,
-) {
-  let pending = ""
-  stream.setEncoding("utf8")
-  stream.on("data", (chunk: string) => {
-    pending += chunk
-    const lines = pending.split(/\r?\n/g)
-    pending = lines.pop() ?? ""
-    lines.forEach((text) => onLine({ stream: source, text }))
-  })
-  stream.on("end", () => {
-    if (pending) onLine({ stream: source, text: pending })
-  })
-}
-
-function startupFailure(code: number | null, signal: NodeJS.Signals | null, recentOutput: string[]) {
-  const suffix = recentOutput.length ? `\n${recentOutput.join("\n")}` : ""
+function startupFailure(code: number | null, signal: NodeJS.Signals | null) {
   return nativeT("desktop.wsl.error.serverExitedBeforeHealthy", {
     code: code ?? "null",
     signal: signal ?? "null",
-    output: suffix,
+    output: "",
   })
 }
