@@ -1,4 +1,4 @@
-import { Component, createMemo, createSignal, startTransition } from "solid-js"
+import { Component, createMemo, createSignal, Show, startTransition } from "solid-js"
 import { Dialog } from "@opencode-ai/ui/v2/dialog-v2"
 import { TabsV2 } from "@opencode-ai/ui/v2/tabs-v2"
 import { Icon } from "@opencode-ai/ui/icon"
@@ -8,6 +8,7 @@ import { SettingsGeneralV2 } from "./general"
 import { SettingsKeybinds } from "../settings-keybinds"
 import { SettingsProvidersV2 } from "./providers"
 import { SettingsModelsV2 } from "./models"
+import { SettingsAccount } from "../settings-account"
 import "./settings-v2.css"
 import { SettingsServersV2 } from "./servers"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
@@ -25,7 +26,10 @@ export const DialogSettings: Component<{
   const layout = useLayout()
   const tabs = useTabs()
   const serverSync = useServerSync()
-  const [tab, setTab] = createSignal(props.defaultValue ?? "general")
+  const hasAccount = () => !!platform.getAccountStatus
+  const [tab, setTab] = createSignal(
+    hasAccount() && props.defaultValue === "providers" ? "account" : (props.defaultValue ?? "general"),
+  )
   const directory = createMemo(() => {
     const route = layout.route()
     if (route.type === "dir-new-sesssion") return route.dir
@@ -75,10 +79,20 @@ export const DialogSettings: Component<{
                       <Icon name="server" />
                       {language.t("status.popover.tab.servers")}
                     </TabsV2.Trigger>
-                    <TabsV2.Trigger value="providers">
-                      <Icon name="providers" />
-                      {language.t("settings.providers.title")}
-                    </TabsV2.Trigger>
+                    <Show
+                      when={hasAccount()}
+                      fallback={
+                        <TabsV2.Trigger value="providers">
+                          <Icon name="providers" />
+                          {language.t("settings.providers.title")}
+                        </TabsV2.Trigger>
+                      }
+                    >
+                      <TabsV2.Trigger value="account">
+                        <Icon name="shield" />
+                        {language.t("settings.account.title")}
+                      </TabsV2.Trigger>
+                    </Show>
                     <TabsV2.Trigger value="models">
                       <Icon name="models" />
                       {language.t("settings.models.title")}
@@ -102,9 +116,18 @@ export const DialogSettings: Component<{
         <TabsV2.Content value="servers" class="settings-v2-panel">
           <SettingsServersV2 />
         </TabsV2.Content>
-        <TabsV2.Content value="providers" class="settings-v2-panel">
-          <SettingsProvidersV2 directory={directory} onBack={showProviders} />
-        </TabsV2.Content>
+        <Show
+          when={hasAccount()}
+          fallback={
+            <TabsV2.Content value="providers" class="settings-v2-panel">
+              <SettingsProvidersV2 directory={directory} onBack={showProviders} />
+            </TabsV2.Content>
+          }
+        >
+          <TabsV2.Content value="account" class="settings-v2-panel">
+            <SettingsAccount />
+          </TabsV2.Content>
+        </Show>
         <TabsV2.Content value="models" class="settings-v2-panel">
           <SettingsModelsV2 />
         </TabsV2.Content>

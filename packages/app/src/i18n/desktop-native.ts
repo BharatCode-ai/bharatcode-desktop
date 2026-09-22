@@ -326,11 +326,13 @@ const BASE_DESKTOP_NATIVE_ENGLISH = {
 export type DesktopNativeKey = keyof typeof DESKTOP_NATIVE_ENGLISH
 export const DESKTOP_NATIVE_ENGLISH = { ...BASE_DESKTOP_NATIVE_ENGLISH, ...BHARATCODE_NATIVE_ENGLISH } as const
 
-export function desktopNativeMessages(values: readonly string[]) {
+export function desktopNativeMessages(values: readonly string[]): DesktopNativeMessages {
   return {
     ...BHARATCODE_NATIVE_ENGLISH,
-    ...Object.fromEntries(Object.keys(BASE_DESKTOP_NATIVE_ENGLISH).map((key, index) => [key, values[index]])),
-  }
+    ...Object.fromEntries(
+      Object.entries(BASE_DESKTOP_NATIVE_ENGLISH).map(([key, fallback], index) => [key, values[index] ?? fallback]),
+    ),
+  } as DesktopNativeMessages
 }
 export type DesktopNativeMessages = Record<DesktopNativeKey, string>
 export type DesktopNativeBundle = { locale: DesktopNativeLocale; messages: DesktopNativeMessages }

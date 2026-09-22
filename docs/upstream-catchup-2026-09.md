@@ -58,10 +58,30 @@ Remaining, in dependency order:
    lifecycle verification. Document any baseline failures explicitly before a
    replacement recommendation.
 
-The first production timeline benchmark could not launch because the matching
-Playwright Chromium binary was absent. Install the pinned browser and obtain a
-baseline before editing timeline/session UI; do not label that failed attempt a
-performance result.
+`caeed55c38` records the account renderer checkpoint. Both upstream settings
+layouts now expose Account instead of generic provider setup when hosted by
+BharatCode Desktop. Conversation error rows now offer explicit connection checks
+for the three classified account/catalog failures; checks never replay prompts
+or tools. Both legacy and current API loading paths are wired; helper tests cover
+missing selected models, incomplete sign-in, safe failures and stale completion.
+App unit suite: **740 pass / 0 fail**, 3,069 assertions; App typecheck passes.
+
+After installing the pinned Playwright Chromium shell, the production timeline
+benchmark passed before and after the recovery-row change. One trial per scenario
+(72 review diffs) is a bounded regression smoke, not a statistical performance
+claim. All trials had zero wrong-destination, blank and unknown samples.
+
+| Scenario | Before stable (ms) | After stable (ms) |
+|---|---:|---:|
+| Review closed, cold | 47.7 | 48.0 |
+| Review closed, hot | 29.6 | 28.9 |
+| Review open, cold | 70.8 | 69.5 |
+| Review open, hot | 61.2 | 54.9 |
+
+Raw local benchmark logs: `/tmp/bc-catchup-timeline-before.log` and
+`/tmp/bc-catchup-timeline-after.log`. These run the production-built renderer with
+synthetic API fixtures; they do not establish packaged account sign-in or native
+WSL behavior. The initial missing-browser attempt is not a performance result.
 
 ### Original re-fork baseline
 

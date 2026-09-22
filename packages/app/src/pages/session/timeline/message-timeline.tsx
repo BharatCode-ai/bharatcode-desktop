@@ -60,6 +60,7 @@ import { normalize } from "@opencode-ai/session-ui/session-diff"
 import { useFileComponent } from "@opencode-ai/ui/context/file"
 import { shouldMarkBoundaryGesture, normalizeWheelDelta } from "@/pages/session/message-gesture"
 import { SessionContextUsage } from "@/components/session-context-usage"
+import { ModelRecovery } from "@/components/model-recovery"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { useLanguage } from "@/context/language"
 import { useSessionKey } from "@/pages/session/session-layout"
@@ -1213,11 +1214,20 @@ export function MessageTimeline(props: {
       }
       case "Error": {
         const errorRow = row as Accessor<TimelineRowByTag<"Error">>
+        const modelID = () => {
+          const message = messageByID().get(errorRow().userMessageID)
+          if (message?.role === "user") return message.model.modelID
+        }
         return (
           <TimelineRowFrame row={errorRow}>
             <div data-slot="session-turn-message-container" class="w-full px-4 md:px-5">
               <Card variant="error" class="error-card">
                 {errorRow().text}
+                <ModelRecovery
+                  message={errorRow().text}
+                  modelID={modelID()}
+                  requestKey={`${sessionID()}:${errorRow().userMessageID}`}
+                />
               </Card>
             </div>
           </TimelineRowFrame>

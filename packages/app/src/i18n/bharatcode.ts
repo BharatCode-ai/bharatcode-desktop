@@ -19,6 +19,12 @@ export const BHARATCODE_NATIVE_ENGLISH = {
 
 export const BHARATCODE_ENGLISH = {
   ...BHARATCODE_NATIVE_ENGLISH,
+  "model.recovery.checking": "Checking…",
+  "model.recovery.retry": "Retry connection",
+  "model.recovery.restored": "Connection restored. Send your message again when ready.",
+  "model.recovery.unavailable": "Models are still unavailable. Check Account settings or retry.",
+  "model.recovery.signInIncomplete": "Sign-in has not completed. Try again.",
+  "model.recovery.failed": "Could not restore the connection. Check Account settings or retry.",
   "settings.account.title": "Account",
   "settings.account.state.checking.title": "Checking account",
   "settings.account.state.checking.description": "Desktop is checking your BharatCode sign-in on this device.",
