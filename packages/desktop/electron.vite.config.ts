@@ -2,8 +2,17 @@ import { sentryVitePlugin } from "@sentry/vite-plugin"
 import { defineConfig } from "electron-vite"
 import appPlugin from "@opencode-ai/app/vite"
 import * as fs from "node:fs/promises"
+import { execFileSync } from "node:child_process"
 
 const OPENCODE_SERVER_DIST = "../opencode/dist/node"
+const sourceSha = process.env.BHARATCODE_SOURCE_SHA ?? "unavailable"
+if (
+  sourceSha !== "unavailable" &&
+  (sourceSha !== execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim() ||
+    execFileSync("git", ["status", "--porcelain", "--untracked-files=normal"], { encoding: "utf8" }).trim())
+) {
+  throw new Error("Desktop WSL identity requires the exact clean source checkout")
+}
 
 const channel = (() => {
   const raw = process.env.BHARATCODE_CHANNEL ?? process.env.OPENCODE_CHANNEL
@@ -35,6 +44,7 @@ export default defineConfig({
   main: {
     define: {
       "import.meta.env.OPENCODE_CHANNEL": JSON.stringify(channel),
+      "import.meta.env.BHARATCODE_SOURCE_SHA": JSON.stringify(sourceSha),
     },
     build: {
       rollupOptions: {

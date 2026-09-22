@@ -54,6 +54,7 @@ const config: Configuration = {
       expectedSourceSha: process.env.BHARATCODE_SOURCE_SHA ?? "unavailable",
       expectedVersion: context.packager.appInfo.version,
       expectedArch: arch,
+      expectedChannel: channel,
     })
   },
   protocols: { name: BRANDING.appName, schemes: [BRANDING.protocol] },

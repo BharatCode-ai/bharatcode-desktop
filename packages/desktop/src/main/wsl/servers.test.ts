@@ -6,16 +6,51 @@ import {
   wslServerIdToRestart,
   wslTerminalArgs,
 } from "./policy"
-import {
-  expectOpencodeVersion,
-  pendingRestartAfterWslInstall,
-  pollWslHealth,
-  wslServerIdsToStartOnInitialize,
-} from "./startup"
+import { expectOpencodeVersion, pendingRestartAfterWslInstall, wslServerIdsToStartOnInitialize } from "./startup"
 import { createWslServersController, type WslServerConfig } from "./servers"
 
 let persistedServers: WslServerConfig[] = []
 let releaseOpencodeResolve: (() => void) | undefined
+
+test("restart waits for shutdown acknowledgement and does not spawn after failed shutdown", async () => {
+  for (const fails of [false, true]) {
+    persistedServers = []
+    const stopping = Promise.withResolvers<void>()
+    const complete = Promise.withResolvers<void>()
+    let spawns = 0
+    const controller = createWslServersController(
+      "1.15.35",
+      async () => {
+        spawns += 1
+        return {
+          url: `http://127.0.0.1:${43000 + spawns}`,
+          username: "bharatcode",
+          password: "private",
+          listener: {
+            onExit: () => undefined,
+            stop: async () => {
+              stopping.resolve()
+              await complete.promise
+              if (fails) throw new Error("private failure detail")
+            },
+          },
+        }
+      },
+      { ...testControllerOptions(), resolveOpencode: async () => null },
+    )
+    await controller.addServer("Debian")
+    await waitFor(() => controller.getState().servers[0]?.runtime.kind === "ready")
+    const restart = controller.startServer("wsl:Debian")
+    await stopping.promise
+    expect(spawns).toBe(1)
+    complete.resolve()
+    await restart
+    expect(spawns).toBe(fails ? 1 : 2)
+    expect(controller.getState().servers[0].runtime.kind).toBe(fails ? "failed" : "ready")
+    expect(JSON.stringify(controller.getState())).not.toContain("private failure detail")
+    await controller.stopAll()
+  }
+})
 
 test("keeps runtime credentials out of snapshots/events and revokes them on remove", async () => {
   persistedServers = []
@@ -130,26 +165,6 @@ test("opens terminals for distro names containing spaces", () => {
   for (const distro of ["Ubuntu & command", "Ubuntu|command", "%COMSPEC%", 'Ubuntu"', "-d", "Ubuntu\ncommand"]) {
     expect(() => wslTerminalArgs(distro)).toThrow()
   }
-})
-
-test("stops health polling when sidecar startup settles", async () => {
-  const abort = new AbortController()
-  let checks = 0
-  const polling = pollWslHealth(
-    async () => {
-      checks++
-      return false
-    },
-    abort.signal,
-    1,
-  )
-
-  await new Promise((resolve) => setTimeout(resolve, 5))
-  abort.abort()
-  await polling
-  const settled = checks
-  await new Promise((resolve) => setTimeout(resolve, 5))
-  expect(checks).toBe(settled)
 })
 
 test("validates WSL IPC identifiers at the module boundary", () => {

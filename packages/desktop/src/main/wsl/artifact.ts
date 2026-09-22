@@ -9,13 +9,14 @@ export type WslRuntimeManifest = {
   schema: 1
   source_sha: string
   version: string
+  channel: "dev" | "beta" | "prod"
   arch: WslRuntimeArch
   filename: string
   bytes: number
   sha256: string
 }
 
-const manifestKeys = ["schema", "source_sha", "version", "arch", "filename", "bytes", "sha256"]
+const manifestKeys = ["schema", "source_sha", "version", "channel", "arch", "filename", "bytes", "sha256"]
 
 function exactRecord(value: unknown): value is Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false
@@ -37,6 +38,8 @@ export function parseWslRuntimeManifest(value: unknown): WslRuntimeManifest {
     throw new Error("WSL runtime version must be canonical semver")
   }
   if (value.arch !== "x64" && value.arch !== "arm64") throw new Error("Unsupported WSL runtime architecture")
+  if (value.channel !== "dev" && value.channel !== "beta" && value.channel !== "prod")
+    throw new Error("Invalid WSL channel")
   if (value.filename !== wslRuntimeFilename(value.arch))
     throw new Error("WSL runtime filename does not match architecture")
   if (typeof value.bytes !== "number" || !Number.isSafeInteger(value.bytes) || value.bytes <= 0) {
@@ -49,6 +52,7 @@ export function parseWslRuntimeManifest(value: unknown): WslRuntimeManifest {
     schema: 1,
     source_sha: value.source_sha,
     version: value.version,
+    channel: value.channel,
     arch: value.arch,
     filename: value.filename,
     bytes: value.bytes,
@@ -97,6 +101,7 @@ export async function verifyWslArtifact(input: {
   expectedSourceSha: string
   expectedVersion: string
   expectedArch: WslRuntimeArch
+  expectedChannel: string
 }): Promise<Readonly<WslRuntimeManifest>> {
   const manifestBytes = await readImmutableFile(input.manifestPath, "WSL runtime manifest")
   let decoded: unknown
@@ -109,6 +114,7 @@ export async function verifyWslArtifact(input: {
   if (manifest.source_sha !== input.expectedSourceSha) throw new Error("WSL runtime source SHA mismatch")
   if (manifest.version !== input.expectedVersion) throw new Error("WSL runtime version mismatch")
   if (manifest.arch !== input.expectedArch) throw new Error("WSL runtime architecture mismatch")
+  if (manifest.channel !== input.expectedChannel) throw new Error("WSL runtime channel mismatch")
   if (basename(input.runtimePath) !== manifest.filename) throw new Error("WSL runtime path filename mismatch")
 
   const runtime = await readImmutableFile(input.runtimePath, "WSL runtime")

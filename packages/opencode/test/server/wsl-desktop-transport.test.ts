@@ -16,6 +16,7 @@ const identity: WslDesktopIdentity = {
   type: "identity",
   source_sha: sourceSha,
   version: "1.15.21",
+  channel: "beta",
   executable_sha256: executableSha256,
   uid: 1000,
 }

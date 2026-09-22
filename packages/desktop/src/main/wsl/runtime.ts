@@ -265,15 +265,10 @@ export async function installWslDistro(name: string, opts?: RunWslOptions) {
 }
 
 export async function installWslOpencode(version: string, distro: string, opts?: RunWslOptions) {
-  return runInteractiveCommand(
-    resolveSystem32Command("wsl.exe"),
-    wslArgs(
-      ["bash", "-lc", `curl -fsSL https://opencode.ai/install | bash -s -- --version ${shellEscape(version)}`],
-      distro,
-    ),
-    withTimeout(opts, DEFAULT_WSL_INSTALL_TIMEOUT_MS),
-    DEFAULT_WSL_INSTALL_TIMEOUT_MS,
-  )
+  const { bundledWslRuntime } = await import("./bundle")
+  const runtime = await bundledWslRuntime(distro, true, opts)
+  if (runtime.manifest.version !== version) throw new Error(nativeT("desktop.wsl.error.request"))
+  return { code: 0, signal: null, stdout: "", stderr: "" } satisfies WslCommandResult
 }
 
 export async function probeWslDistro(name: string, opts?: RunWslOptions): Promise<WslDistroProbe> {
@@ -308,20 +303,15 @@ export async function probeWslDistro(name: string, opts?: RunWslOptions): Promis
 }
 
 export async function resolveWslOpencode(distro: string, opts?: RunWslOptions) {
-  return firstLine(
-    (
-      await runWslSh(
-        'if [ -x "$HOME/.opencode/bin/opencode" ]; then printf "%s\\n" "$HOME/.opencode/bin/opencode"; fi',
-        distro,
-        opts,
-      )
-    ).stdout,
-  )
+  const { bundledWslRuntime } = await import("./bundle")
+  return (await bundledWslRuntime(distro, false, opts).catch(() => null))?.installedPath ?? null
 }
 
 export async function readWslCommandVersion(command: string, distro: string, opts?: RunWslOptions) {
-  const result = await runWslSh(`${shellEscape(command)} --version 2>/dev/null || true`, distro, opts)
-  return firstLine(result.stdout)
+  const { bundledWslRuntime } = await import("./bundle")
+  const runtime = await bundledWslRuntime(distro, false, opts)
+  if (runtime.installedPath !== command) throw new Error(nativeT("desktop.wsl.error.request"))
+  return runtime.manifest.version
 }
 
 export function openWslTerminal(distro?: string | null) {
@@ -384,10 +374,6 @@ export function summarize(value: string) {
     .map((line) => line.trim())
     .filter(Boolean)
     .join("\n")
-}
-
-export function shellEscape(value: string) {
-  return `'${value.replace(/'/g, `'"'"'`)}'`
 }
 
 function resolveSystem32Command(command: string) {

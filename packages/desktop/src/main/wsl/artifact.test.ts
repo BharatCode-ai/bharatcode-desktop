@@ -20,6 +20,7 @@ function manifest(overrides: Partial<WslRuntimeManifest> = {}): WslRuntimeManife
     schema: 1,
     source_sha: sourceSha,
     version,
+    channel: "beta",
     arch: "x64",
     filename: "bharatcode-runtime-linux-x64-glibc",
     bytes: runtimeBytes.byteLength,
@@ -48,6 +49,7 @@ describe("closed WSL runtime artifact", () => {
       manifestPath: input.manifestPath,
       expectedSourceSha: sourceSha,
       expectedVersion: version,
+      expectedChannel: "beta",
       expectedArch: "x64",
     })
 
@@ -90,6 +92,7 @@ describe("closed WSL runtime artifact", () => {
       manifestPath: input.manifestPath,
       expectedSourceSha: sourceSha,
       expectedVersion: version,
+      expectedChannel: "beta",
       expectedArch: "x64" as const,
     }
     for (const request of [
@@ -101,6 +104,7 @@ describe("closed WSL runtime artifact", () => {
       { ...base, runtimePath: empty.runtimePath, manifestPath: empty.manifestPath },
       { ...base, runtimePath: input.runtimePath, expectedSourceSha: "8".repeat(40) },
       { ...base, runtimePath: input.runtimePath, expectedVersion: "1.15.22" },
+      { ...base, runtimePath: input.runtimePath, expectedChannel: "prod" },
       { ...base, runtimePath: input.runtimePath, expectedArch: "arm64" as const },
     ]) {
       await expect(verifyWslArtifact(request)).rejects.toThrow()
@@ -119,6 +123,7 @@ describe("closed WSL runtime artifact", () => {
         manifestPath: input.manifestPath,
         expectedSourceSha: sourceSha,
         expectedVersion: version,
+        expectedChannel: "beta",
         expectedArch: "x64",
       }),
     ).rejects.toThrow(/bytes|sha-256/i)
@@ -128,7 +133,13 @@ describe("closed WSL runtime artifact", () => {
     const input = await fixture()
     await link(input.runtimePath, join(input.root, "alias"))
     await expect(
-      verifyWslArtifact({ ...input, expectedSourceSha: sourceSha, expectedVersion: version, expectedArch: "x64" }),
+      verifyWslArtifact({
+        ...input,
+        expectedSourceSha: sourceSha,
+        expectedVersion: version,
+        expectedChannel: "beta",
+        expectedArch: "x64",
+      }),
     ).rejects.toThrow("immutable")
   })
 })

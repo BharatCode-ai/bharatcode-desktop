@@ -30,6 +30,7 @@ async function fixture() {
       schema: 1,
       source_sha: sourceSha,
       version,
+      channel: "dev",
       arch: "x64",
       filename: "bharatcode-runtime-linux-x64-glibc",
       bytes: runtime.byteLength,
@@ -51,6 +52,7 @@ describe("WSL runtime packaging stage", () => {
       destinationDirectory: input.destinationDirectory,
       expectedSourceSha: sourceSha,
       expectedVersion: version,
+      expectedChannel: "dev",
       expectedArch: "x64",
     })
 
@@ -96,7 +98,13 @@ describe("WSL runtime packaging stage", () => {
     const sentinel = join(input.destinationDirectory, "existing")
     await writeFile(sentinel, "preserve")
     await expect(
-      stageWslRuntime({ ...input, expectedSourceSha: sourceSha, expectedVersion: version, expectedArch: "x64" }),
+      stageWslRuntime({
+        ...input,
+        expectedSourceSha: sourceSha,
+        expectedVersion: version,
+        expectedChannel: "dev",
+        expectedArch: "x64",
+      }),
     ).rejects.toThrow()
     expect(await readFile(sentinel, "utf8")).toBe("preserve")
   })

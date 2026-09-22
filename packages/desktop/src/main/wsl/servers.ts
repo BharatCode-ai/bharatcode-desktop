@@ -31,7 +31,10 @@ import {
 } from "./runtime"
 
 type RunningSidecar = {
-  listener: { stop: () => void; onExit: (cb: (code: number | null, signal: NodeJS.Signals | null) => void) => void }
+  listener: {
+    stop: () => void | Promise<void>
+    onExit: (cb: (code: number | null, signal: NodeJS.Signals | null) => void) => void
+  }
   url: string
   username: string | null
   password: string
@@ -225,17 +228,17 @@ export function createWslServersController(
     const item = state.servers.find((x) => x.config.id === id)
     if (!item) return
     const attempt = nextStartAttempt(id)
-    await stopServerInternal(id)
-    if (!isCurrentStartAttempt(id, attempt)) return
-    setRuntime(id, { kind: "starting" })
-    logger?.log("wsl sidecar starting", { id, distro: item.config.distro })
     try {
+      await stopServerInternal(id)
+      if (!isCurrentStartAttempt(id, attempt)) return
+      setRuntime(id, { kind: "starting" })
+      logger?.log("wsl sidecar starting", { id, distro: item.config.distro })
       const sidecar = await spawnSidecar(item.config.distro)
       if (!isCurrentStartAttempt(id, attempt)) {
         try {
-          sidecar.listener.stop()
+          await sidecar.listener.stop()
         } catch {
-          // ignore stop errors for stale sidecars
+          logger?.error("stale wsl shutdown failed", { id })
         }
         return
       }
@@ -246,7 +249,7 @@ export function createWslServersController(
           password: sidecar.password,
         })
       } catch (error) {
-        sidecar.listener.stop()
+        await sidecar.listener.stop()
         throw error
       }
       sidecars.set(id, sidecar)
@@ -283,9 +286,12 @@ export function createWslServersController(
     sidecars.delete(id)
     options?.onConnection?.(id)
     try {
-      existing.listener.stop()
+      await existing.listener.stop()
     } catch {
-      // ignore stop errors
+      const message = nativeT("desktop.wsl.error.request")
+      setRuntime(id, { kind: "failed", message })
+      logger?.error("wsl shutdown failed", { id })
+      throw new Error(message)
     }
   }
 
@@ -421,17 +427,21 @@ export function createWslServersController(
 
     startServer,
 
-    stopAll() {
+    async stopAll() {
       for (const item of state.servers) invalidateStartAttempt(item.config.id)
+      const stops: Promise<void>[] = []
       for (const [id, existing] of sidecars) {
         options?.onConnection?.(id)
-        try {
-          existing.listener.stop()
-        } catch {
-          // ignore
-        }
+        stops.push(
+          Promise.resolve()
+            .then(() => existing.listener.stop())
+            .catch(() => {
+              logger?.error("wsl shutdown failed", { id })
+            }),
+        )
       }
       sidecars.clear()
+      await Promise.all(stops)
     },
   }
 }

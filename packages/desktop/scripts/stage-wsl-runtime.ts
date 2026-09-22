@@ -2,6 +2,7 @@
 import { chmod, copyFile, mkdir, rm, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { verifyWslArtifact, type WslRuntimeArch } from "../src/main/wsl/artifact"
+import { normalizeChannel } from "../src/main/branding"
 
 export async function stageWslRuntime(input: {
   runtimePath: string
@@ -10,6 +11,7 @@ export async function stageWslRuntime(input: {
   expectedSourceSha: string
   expectedVersion: string
   expectedArch: WslRuntimeArch
+  expectedChannel: string
 }) {
   const manifest = await verifyWslArtifact(input)
   await mkdir(dirname(input.destinationDirectory), { recursive: true })
@@ -27,6 +29,7 @@ export async function stageWslRuntime(input: {
       expectedSourceSha: input.expectedSourceSha,
       expectedVersion: input.expectedVersion,
       expectedArch: input.expectedArch,
+      expectedChannel: input.expectedChannel,
     })
     return { runtimePath, manifestPath }
   } catch (error) {
@@ -58,6 +61,7 @@ export async function stageWslRuntimeFromEnvironment(input: {
     expectedSourceSha,
     expectedVersion: input.packageVersion,
     expectedArch: rawArch,
+    expectedChannel: normalizeChannel(input.env.BHARATCODE_CHANNEL ?? input.env.OPENCODE_CHANNEL),
   })
 }
 

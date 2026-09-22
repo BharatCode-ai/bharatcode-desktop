@@ -1,10 +1,12 @@
 import { expect, test } from "bun:test"
 import { createHash } from "node:crypto"
+import { spawn } from "node:child_process"
 import { mkdtemp, rm } from "node:fs/promises"
 import { createServer } from "node:net"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import pkg from "../package.json"
+import { connectWslChild } from "../src/main/wsl/transport"
 import {
   decodeWslDesktopOutput,
   encodeWslDesktopRecord,
@@ -67,6 +69,7 @@ for (const termination of ["stop", "eof"] as const) {
         type: "identity",
         source_sha: expectedSource,
         version: pkg.version,
+        channel: "beta",
         executable_sha256: digest,
         uid: process.getuid!(),
       })
@@ -97,6 +100,61 @@ for (const termination of ["stop", "eof"] as const) {
     }
   }, 45_000)
 }
+
+test("Desktop's actual transport controls the compiled runtime without exposing credentials in argv or environment", async () => {
+  const source = process.env.BHARATCODE_SOURCE_SHA
+  expect(source).toMatch(/^[0-9a-f]{40}$/)
+  const executable = resolve("../opencode/dist/bharatcode-linux-x64/bin/bharatcode")
+  const digest = createHash("sha256")
+    .update(new Uint8Array(await Bun.file(executable).arrayBuffer()))
+    .digest("hex")
+  const home = await mkdtemp(join(tmpdir(), "bharatcode-wsl-main-smoke-"))
+  const port = await allocatePort()
+  const child = spawn(
+    executable,
+    ["serve", "--hostname", "127.0.0.1", "--port", String(port), "--desktop-sidecar-stdio"],
+    {
+      cwd: home,
+      stdio: ["pipe", "pipe", "pipe"],
+      env: {
+        PATH: "/usr/bin:/bin",
+        HOME: home,
+        USERPROFILE: home,
+        OPENCODE_TEST_HOME: home,
+        XDG_DATA_HOME: join(home, "data"),
+        XDG_CONFIG_HOME: join(home, "config"),
+        XDG_STATE_HOME: join(home, "state"),
+        XDG_CACHE_HOME: join(home, "cache"),
+        OPENCODE_DISABLE_MODELS_FETCH: "true",
+      },
+    },
+  )
+  const closed = new Promise<void>((resolve) => child.once("close", () => resolve()))
+  try {
+    const listener = await connectWslChild(child, {
+      port,
+      password: "synthetic-main-owned-secret",
+      identity: {
+        type: "identity",
+        source_sha: source!,
+        version: pkg.version,
+        channel: "beta",
+        executable_sha256: digest,
+        uid: process.getuid!(),
+      },
+    })
+    await listener.stop()
+    await closed
+    expect(child.exitCode).toBe(0)
+    await expect(
+      fetch(`http://127.0.0.1:${port}/global/health`, { signal: AbortSignal.timeout(2000) }),
+    ).rejects.toThrow()
+  } finally {
+    child.kill()
+    await bounded(closed)
+    await rm(home, { recursive: true, force: true })
+  }
+}, 45_000)
 
 async function bounded<T>(promise: Promise<T>) {
   let timer: ReturnType<typeof setTimeout>

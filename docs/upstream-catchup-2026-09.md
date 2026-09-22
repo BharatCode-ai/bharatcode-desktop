@@ -170,6 +170,44 @@ the WSL payload. Tests cover manifest/digest drift, non-files, writable files,
 symlinks/hardlinks and preservation of existing staging output. Actual selected-
 distro provisioning and Desktop consumption of this artifact are still next.
 
+### WSL launcher integration — September 23, 2026
+
+Desktop now resolves its own bundled, verified Linux runtime instead of invoking
+the OpenCode internet installer or executing an arbitrary previously installed
+OpenCode binary. The selected distro must resolve a consistent non-root user.
+Windows resource translation is round-tripped; installation uses a verified,
+content-addressed path under the selected user's branded cache, with no overwrite
+of a running/existing artifact. Checks reject writable ancestors, symlinks,
+hardlinks, wrong owners, permission drift and changed content; they do not repair
+an existing user's permissions. The Linux namespace is trusted against concurrent
+same-user replacement, not represented as a held-object security boundary.
+
+Runtime launch uses an empty Linux environment plus a small explicit allowlist,
+and receives the short-lived HTTP credential only through typed stdin. Source,
+version, channel, executable digest and non-root UID must match before the main
+process can expose the runtime. Anonymous health must return 401; authenticated
+health must succeed. Stop is bounded, acknowledged and idempotent; failure kills
+the child and remains a failure rather than a successful stop. Controllers await
+shutdown and revoke request authority first. The obsolete shell-launch and health
+polling code has been removed. Internal `opencode` IPC/type names are retained as
+compatibility names only; remaining WSL settings copy/prerequisites need cleanup.
+
+Focused Desktop tests: **42 pass / 0 fail**, 143 assertions. Core stdio tests:
+**7 pass / 0 fail**, 32 assertions. Both typechecks pass. The compiled smoke now
+also drives the real runtime through Desktop's actual transport; it must be rerun
+after committing/building this exact new protocol identity. Windows Electron/WSL
+acceptance, account ownership for the selected runtime, path-picker translation,
+and the rest of the catch-up remain incomplete.
+
+Additional recovery contract received during this work: API verification outages
+will use 503 `authentication_unavailable`, expiry 401 `session_expired`, invalid
+credentials 401 `invalid_credentials`; model listing becomes public while
+inference retains entitlement/restriction enforcement. Reconcile Desktop's
+recovery classification against the actual API changes when that theme resumes:
+retain tokens on transient failures, refresh once for true expiry, never retry
+subscription/bans as auth or replay a partially delivered generation. No API/web
+changes or other-task coordination were performed in this Desktop worktree.
+
 ### Original re-fork baseline
 
 12 commits. Every one green at the point it landed: `bun turbo typecheck --force`

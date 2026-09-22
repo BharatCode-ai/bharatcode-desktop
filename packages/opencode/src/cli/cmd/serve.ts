@@ -3,7 +3,7 @@ import { effectCmd } from "../effect-cmd"
 import { withNetworkOptions, resolveNetworkOptions } from "../network"
 import { Flag } from "@opencode-ai/core/flag/flag"
 import { createHash } from "node:crypto"
-import { InstallationVersion } from "@opencode-ai/core/installation/version"
+import { InstallationChannel, InstallationVersion } from "@opencode-ai/core/installation/version"
 import { runWslDesktopTransport, type WslDesktopIdentity } from "../../server/wsl-desktop-transport"
 
 declare global {
@@ -68,10 +68,13 @@ async function runtimeIdentity(): Promise<WslDesktopIdentity> {
   if (!/^[0-9a-f]{40}$/u.test(sourceSha)) throw new Error("WSL runtime build source identity is unavailable")
   const uid = process.getuid?.()
   if (!uid || !Number.isSafeInteger(uid)) throw new Error("WSL runtime requires a non-root UID")
+  if (InstallationChannel !== "dev" && InstallationChannel !== "beta" && InstallationChannel !== "prod")
+    throw new Error("WSL runtime channel is unavailable")
   return {
     type: "identity",
     source_sha: sourceSha,
     version: InstallationVersion,
+    channel: InstallationChannel,
     executable_sha256: createHash("sha256")
       .update(new Uint8Array(await Bun.file(process.execPath).arrayBuffer()))
       .digest("hex"),

@@ -25,6 +25,7 @@ export type WslDesktopIdentity = {
   type: "identity"
   source_sha: string
   version: string
+  channel: "dev" | "beta" | "prod"
   executable_sha256: string
   uid: number
 }
@@ -108,7 +109,12 @@ export function decodeWslDesktopOutput(line: string): WslDesktopOutput {
     }
     return value as WslDesktopOutput
   }
-  if (exact(value, ["type", "source_sha", "version", "executable_sha256", "uid"]) && value.type === "identity") {
+  if (
+    exact(value, ["type", "source_sha", "version", "channel", "executable_sha256", "uid"]) &&
+    value.type === "identity"
+  ) {
+    if (value.channel !== "dev" && value.channel !== "beta" && value.channel !== "prod")
+      throw new Error("Invalid WSL runtime channel")
     if (typeof value.source_sha !== "string" || !/^[0-9a-f]{40}$/u.test(value.source_sha)) {
       throw new Error("WSL stdio identity source SHA is invalid")
     }
@@ -125,6 +131,7 @@ export function decodeWslDesktopOutput(line: string): WslDesktopOutput {
       type: "identity",
       source_sha: value.source_sha,
       version: value.version,
+      channel: value.channel,
       executable_sha256: value.executable_sha256,
       uid: value.uid,
     }

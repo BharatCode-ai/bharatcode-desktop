@@ -165,7 +165,7 @@ const main = Effect.gen(function* () {
   )
   const stopSidecars = async () => {
     await killSidecar()
-    wslServers.stopAll()
+    await wslServers.stopAll()
   }
   const relaunch = () => {
     setAppQuitting()

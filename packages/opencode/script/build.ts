@@ -193,6 +193,7 @@ for (const item of targets) {
         schema: 1,
         source_sha: wslSourceSha,
         version: Script.version,
+        channel: Script.channel,
         arch: item.arch,
         filename,
         bytes: bytes.byteLength,
