@@ -83,6 +83,31 @@ Raw local benchmark logs: `/tmp/bc-catchup-timeline-before.log` and
 synthetic API fixtures; they do not establish packaged account sign-in or native
 WSL behavior. The initial missing-browser attempt is not a performance result.
 
+`1285cb5b17` records the recovery integration. Follow-up Desktop typecheck passes;
+the browser-condition component suite passes **41 tests / 0 failures**, 100
+assertions. This suite uses happy-dom, not an installed Electron window.
+
+### Next integration boundary: WSL
+
+Source inspection confirms that the inherited multi-distro shell still installs
+from `opencode.ai/install`, resolves `$HOME/.opencode/bin/opencode`, and launches
+a broadly bound server. Its public controller state also contains sidecar
+credentials. None of those paths have been executed during this continuation.
+They are release blockers, not an accepted BharatCode implementation.
+
+The retained `origin/dev` implementation instead has same-source runtime
+manifests/digests, explicit non-root identity checks, a bounded typed stdio
+handshake, loopback serving, and main-owned authorization. Reuse those boundaries
+while reconciling the new multi-window/server lifecycle; do not blindly copy the
+old single-runtime startup flow or bring back its removed recovery gate.
+Account ownership must be explicit for the selected runtime: the Windows
+account session alone does not authenticate an independent WSL credential store.
+Do not copy credentials between profiles or expose them to the renderer to bridge
+that gap. SDK generation also needs reconciliation: the renderer currently uses
+the pinned vendored v2 promise client, while the local client package exposes a
+different generated surface. A successful local client generation alone does not
+prove that the renderer consumed the regenerated API.
+
 ### Original re-fork baseline
 
 12 commits. Every one green at the point it landed: `bun turbo typecheck --force`
