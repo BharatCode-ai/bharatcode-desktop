@@ -344,8 +344,7 @@ Fresh evidence:
   OpenCode, Desktop and E2E typechecks pass.
 - Full Schema suite has two inherited manifest-count/positional assertions that
   fail on unchanged `dc2284bd1f` too: baseline **13 pass / 2 fail**. This checkpoint
-  does not label that suite green; those stale upstream assertions remain a
-  separate catch-up item.
+  does not label that suite green; the separate correction below closes that item.
 
 Production session-tab benchmark (one trial per scenario, 72 review diffs):
 
@@ -369,6 +368,15 @@ goals, but this does not invent Goal execution support for an external pure-v2
 server. The vendored-client surface audit, remaining retained features, release
 workflows and exact native-package acceptance still remain. No publication,
 installation, protocol registration, real account or profile changes were made.
+
+### Upstream event-manifest test correction — September 23, 2026
+
+The two baseline schema failures came from upstream's three durable revert events
+(`staged`, `cleared`, `committed`) being added without updating the manifest test.
+No runtime event definitions were changed. Updated the existing inventory counts
+and checked canonical definitions by event type instead of their array positions;
+the revert events must also resolve to their exact durable definitions. The full
+Schema suite now passes **16 tests**, including the new shared Goal schema check.
 
 ### Original re-fork baseline
 
