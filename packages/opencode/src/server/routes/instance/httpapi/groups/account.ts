@@ -1,4 +1,4 @@
-import { Schema, SchemaGetter } from "effect"
+import { Schema } from "effect"
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/unstable/httpapi"
 import { DESKTOP_REDIRECT_URI } from "@/bharatcode/account"
 import { InvalidRequestError, ServiceUnavailableError, UnauthorizedError, UpstreamError } from "../errors"
@@ -21,51 +21,19 @@ export const AccountStatusResponse = Schema.Struct({
   message: Schema.optional(Schema.String),
 }).annotate({ identifier: "BharatCodeAccountStatusResponse" })
 
-const AuthorizeRequestShape = Schema.Struct({
+export const AuthorizeRequest = Schema.Struct({
   redirectUri: Schema.Literal(DESKTOP_REDIRECT_URI),
   selectAccount: Schema.optional(Schema.Boolean),
-})
-export const AuthorizeRequest = Schema.Unknown.pipe(
-  Schema.check(
-    Schema.makeFilter(
-      (input) =>
-        typeof input === "object" &&
-        input !== null &&
-        !Array.isArray(input) &&
-        Object.keys(input).every((key) => key === "redirectUri" || key === "selectAccount"),
-      { message: "BharatCode authorization request contains unknown fields." },
-    ),
-  ),
-  Schema.decodeTo(AuthorizeRequestShape, {
-    decode: SchemaGetter.passthrough({ strict: false }),
-    encode: SchemaGetter.passthrough({ strict: false }),
-  }),
-).annotate({ identifier: "BharatCodeAuthorizeRequest" })
+}).annotate({ identifier: "BharatCodeAuthorizeRequest", parseOptions: { onExcessProperty: "error" } })
 
 export const AuthorizeResponse = Schema.Struct({
   url: Schema.String,
   expiresAt: Schema.Number,
 }).annotate({ identifier: "BharatCodeAuthorizeResponse" })
 
-const CallbackRequestShape = Schema.Struct({
+export const CallbackRequest = Schema.Struct({
   callbackUrl: Schema.String,
-})
-export const CallbackRequest = Schema.Unknown.pipe(
-  Schema.check(
-    Schema.makeFilter(
-      (input) =>
-        typeof input === "object" &&
-        input !== null &&
-        !Array.isArray(input) &&
-        Object.keys(input).every((key) => key === "callbackUrl"),
-      { message: "BharatCode callback request contains unknown fields." },
-    ),
-  ),
-  Schema.decodeTo(CallbackRequestShape, {
-    decode: SchemaGetter.passthrough({ strict: false }),
-    encode: SchemaGetter.passthrough({ strict: false }),
-  }),
-).annotate({ identifier: "BharatCodeCallbackRequest" })
+}).annotate({ identifier: "BharatCodeCallbackRequest", parseOptions: { onExcessProperty: "error" } })
 
 export const LogoutResponse = Schema.Struct({
   ok: Schema.Literal(true),

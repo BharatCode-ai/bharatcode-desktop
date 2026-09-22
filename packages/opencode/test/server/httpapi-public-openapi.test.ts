@@ -38,6 +38,17 @@ const methods = ["get", "post", "put", "delete", "patch"] as const
 
 const allowedV2BuiltInEndpointErrors: string[] = []
 
+test("account request schemas remain structural and cannot alias arbitrary event metadata", () => {
+  const spec = OpenApi.fromApi(PublicApi) as OpenApiSpec
+  const schemas = spec.components.schemas
+  expect(schemas.BharatCodeAuthorizeRequest.type).toBe("object")
+  expect(schemas.BharatCodeAuthorizeRequest.required).toEqual(["redirectUri"])
+  expect(schemas.BharatCodeAuthorizeRequest.properties?.redirectUri.enum).toEqual(["bharatcode://auth/callback"])
+  expect(schemas.BharatCodeCallbackRequest.required).toEqual(["callbackUrl"])
+  expect(JSON.stringify(schemas.SessionNextAgentSwitched)).not.toContain("BharatCodeAuthorizeRequest")
+  expect(Object.keys(schemas).filter((key) => /^SessionNext\w+1$/.test(key))).toEqual([])
+})
+
 function v2Operations(spec: OpenApiSpec) {
   return Object.entries(spec.paths).flatMap(([path, item]) =>
     path.startsWith("/api/")

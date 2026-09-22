@@ -280,6 +280,36 @@ including the working-directory assertion. Full App unit suite: **741 pass**,
 new native-installed acceptance run. No live distro installation, profile or
 account changes were made.
 
+### SDK regeneration and schema correction — September 23, 2026
+
+Regenerated the consumed legacy-compatible `@opencode-ai/sdk/v2` from the actual
+HTTP API. Goal fields/update actions and the account endpoints are now typed and
+serialized by that SDK. No generated file was hand-patched; the existing build
+script's narrowly scoped upstream-generator corrections remain in use.
+
+The first regeneration failed its duplicate-event-schema guard. Root cause:
+account input schemas used `Unknown -> Struct`, so their encoded OpenAPI shape
+was unknown; the shared unknown metadata shape acquired an account-request
+reference, producing duplicate event variants. Replaced these with structural
+schemas and the supported `onExcessProperty: error` annotation. Actual HTTP tests
+still reject extra/substituted fields. The new OpenAPI regression was RED before
+the correction and GREEN afterward; the duplicate-schema guard was not weakened.
+
+Evidence: account/OpenAPI suites **24 pass**, 203 assertions; SDK tests **2 pass**;
+SDK build/typecheck, OpenCode typecheck and Desktop/App typecheck pass. Two isolated
+generations produced identical generated-file hashes:
+`sdk.gen.ts` = `ea63af06a3022326c5079e66df9a55a10eeb401ae408009651b8531cd967c867`;
+`types.gen.ts` = `e6c04f48b4b18a29b7160fe34a98bcc051d0992c551541c194c3f9920dad01cd`.
+Generator execution used fresh temporary homes/XDG roots, removed afterward.
+
+This is **not** complete SDK/new-layout acceptance. App and session-ui also consume
+the vendored `@opencode-ai/client` 1.17.13-v2 tarball. The local workspace client
+exports a different Promise surface (plural groups, no `/promise` alias), and the
+current server protocol does not expose every endpoint that vendored client
+advertises. Replacing the tarball with a workspace alias without reconciling those
+contracts would be incorrect. That separate integration and Goal Mode's UI/v2
+session behavior remain open; no publication or installed-app acceptance claimed.
+
 ### Original re-fork baseline
 
 12 commits. Every one green at the point it landed: `bun turbo typecheck --force`

@@ -167,6 +167,19 @@ export type PermissionRule = {
 
 export type PermissionRuleset = Array<PermissionRule>
 
+export type SessionGoalStatus = "active" | "paused" | "completed" | "blocked"
+
+export type SessionGoal = {
+  text: string
+  status: SessionGoalStatus
+  created: number
+  updated: number
+  accumulated: number
+  activeSince?: number
+  completed?: number
+  report?: string
+}
+
 export type Session = {
   id: string
   slug: string
@@ -218,6 +231,7 @@ export type Session = {
     snapshot?: string
     diff?: string
   }
+  goal?: SessionGoal
 }
 
 export type OutputFormatText = {
@@ -2032,6 +2046,52 @@ export type Config = {
   }
 }
 
+export type BharatCodeAccountStatusResponse = {
+  state: "signed-out" | "sign-in-required" | "connection-problem" | "signed-in"
+  accountID?: string
+  email?: string
+  name?: string
+  picture?: string
+  expiresAt?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+  message?: string
+}
+
+export type ServiceUnavailableError = {
+  _tag: "ServiceUnavailableError"
+  message: string
+  service?: string
+}
+
+export type BharatCodeAuthorizeRequest = {
+  redirectUri: "bharatcode://auth/callback"
+  selectAccount?: boolean
+}
+
+export type BharatCodeAuthorizeResponse = {
+  url: string
+  expiresAt: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+}
+
+export type UnauthorizedError = {
+  _tag: "UnauthorizedError"
+  message: string
+}
+
+export type UpstreamError = {
+  _tag: "UpstreamError"
+  message: string
+  service?: string
+  status?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+}
+
+export type BharatCodeCallbackRequest = {
+  callbackUrl: string
+}
+
+export type BharatCodeLogoutResponse = {
+  ok: true
+}
+
 export type Model = {
   id: string
   providerID: string
@@ -2246,6 +2306,7 @@ export type GlobalSession = {
     snapshot?: string
     diff?: string
   }
+  goal?: SessionGoal
   project: ProjectSummary | null
 }
 
@@ -2550,6 +2611,21 @@ export type NotFoundError = {
   }
 }
 
+export type SessionGoalUpdate =
+  | {
+      action: "set"
+      text: string
+    }
+  | {
+      action: "pause"
+    }
+  | {
+      action: "resume"
+    }
+  | {
+      action: "clear"
+    }
+
 export type TextPartInput = {
   id?: string
   type: "text"
@@ -2680,11 +2756,6 @@ export type WorkspaceWarpError = {
   }
 }
 
-export type UnauthorizedError = {
-  _tag: "UnauthorizedError"
-  message: string
-}
-
 export type SessionsResponse = {
   data: Array<SessionV2Info>
   cursor: {
@@ -2718,12 +2789,6 @@ export type ConflictError = {
   _tag: "ConflictError"
   message: string
   resource?: string
-}
-
-export type ServiceUnavailableError = {
-  _tag: "ServiceUnavailableError"
-  message: string
-  service?: string
 }
 
 export type MessageNotFoundError = {
@@ -7408,6 +7473,130 @@ export type EventSubscribeResponses = {
 
 export type EventSubscribeResponse = EventSubscribeResponses[keyof EventSubscribeResponses]
 
+export type V2AccountStatusData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/account/status"
+}
+
+export type V2AccountStatusErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * ServiceUnavailableError
+   */
+  503: ServiceUnavailableError
+}
+
+export type V2AccountStatusError = V2AccountStatusErrors[keyof V2AccountStatusErrors]
+
+export type V2AccountStatusResponses = {
+  /**
+   * BharatCodeAccountStatusResponse
+   */
+  200: BharatCodeAccountStatusResponse
+}
+
+export type V2AccountStatusResponse = V2AccountStatusResponses[keyof V2AccountStatusResponses]
+
+export type V2AccountAuthorizeData = {
+  body?: BharatCodeAuthorizeRequest
+  path?: never
+  query?: never
+  url: "/account/authorize"
+}
+
+export type V2AccountAuthorizeErrors = {
+  /**
+   * InvalidRequestError
+   */
+  400: InvalidRequestError
+  /**
+   * UpstreamError
+   */
+  502: UpstreamError
+  /**
+   * ServiceUnavailableError
+   */
+  503: ServiceUnavailableError
+}
+
+export type V2AccountAuthorizeError = V2AccountAuthorizeErrors[keyof V2AccountAuthorizeErrors]
+
+export type V2AccountAuthorizeResponses = {
+  /**
+   * BharatCodeAuthorizeResponse
+   */
+  200: BharatCodeAuthorizeResponse
+}
+
+export type V2AccountAuthorizeResponse = V2AccountAuthorizeResponses[keyof V2AccountAuthorizeResponses]
+
+export type V2AccountCallbackData = {
+  body?: BharatCodeCallbackRequest
+  path?: never
+  query?: never
+  url: "/account/callback"
+}
+
+export type V2AccountCallbackErrors = {
+  /**
+   * InvalidRequestError
+   */
+  400: InvalidRequestError
+  /**
+   * UpstreamError
+   */
+  502: UpstreamError
+  /**
+   * ServiceUnavailableError
+   */
+  503: ServiceUnavailableError
+}
+
+export type V2AccountCallbackError = V2AccountCallbackErrors[keyof V2AccountCallbackErrors]
+
+export type V2AccountCallbackResponses = {
+  /**
+   * BharatCodeAccountStatusResponse
+   */
+  200: BharatCodeAccountStatusResponse
+}
+
+export type V2AccountCallbackResponse = V2AccountCallbackResponses[keyof V2AccountCallbackResponses]
+
+export type V2AccountLogoutData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/account/logout"
+}
+
+export type V2AccountLogoutErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * ServiceUnavailableError
+   */
+  503: ServiceUnavailableError
+}
+
+export type V2AccountLogoutError = V2AccountLogoutErrors[keyof V2AccountLogoutErrors]
+
+export type V2AccountLogoutResponses = {
+  /**
+   * BharatCodeLogoutResponse
+   */
+  200: BharatCodeLogoutResponse
+}
+
+export type V2AccountLogoutResponse = V2AccountLogoutResponses[keyof V2AccountLogoutResponses]
+
 export type ConfigGetData = {
   body?: never
   path?: never
@@ -9620,6 +9809,7 @@ export type SessionUpdateData = {
       [key: string]: unknown
     }
     permission?: PermissionRuleset
+    goal?: SessionGoalUpdate
     time?: {
       archived?: number
     }
