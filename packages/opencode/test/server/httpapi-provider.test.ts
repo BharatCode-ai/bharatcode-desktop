@@ -1,6 +1,7 @@
 import { describe, expect } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { FSUtil } from "@opencode-ai/core/fs-util"
+import { Auth } from "../../src/auth"
 import { Effect, Layer } from "effect"
 import path from "path"
 import { resetDatabase } from "../fixture/db"
@@ -16,7 +17,9 @@ const testStateLayer = Layer.effectDiscard(
   ),
 )
 
-const it = testEffect(Layer.mergeAll(testStateLayer, LayerNode.compile(FSUtil.node), httpApiLayer))
+const it = testEffect(
+  Layer.mergeAll(testStateLayer, LayerNode.compile(FSUtil.node), LayerNode.compile(Auth.node), httpApiLayer),
+)
 const projectOptions = { config: { formatter: false, lsp: false } }
 const providerID = "test-oauth-parity"
 const oauthURL = "https://example.com/oauth"
@@ -245,21 +248,6 @@ function writeProviderModelsMutationPlugin(dir: string) {
   })
 }
 
-function setEnvScoped(key: string, value: string) {
-  return Effect.acquireRelease(
-    Effect.sync(() => {
-      const previous = process.env[key]
-      process.env[key] = value
-      return previous
-    }),
-    (previous) =>
-      Effect.sync(() => {
-        if (previous === undefined) delete process.env[key]
-        else process.env[key] = previous
-      }),
-  )
-}
-
 describe("provider HttpApi", () => {
   it.instance.skip(
     "returns public v2 provider not found errors",
@@ -355,11 +343,11 @@ describe("provider HttpApi", () => {
     "serves provider lists when auth loaders add runtime fetch options",
     Effect.gen(function* () {
       const directory = (yield* TestInstance).directory
-      yield* setEnvScoped(
-        "OPENCODE_AUTH_CONTENT",
-        JSON.stringify({
-          google: { type: "oauth", refresh: "dummy", access: "dummy", expires: 9999999999999 },
-        }),
+      const auth = yield* Auth.Service
+      const previous = yield* auth.get("google")
+      yield* Effect.acquireRelease(
+        auth.set("google", { type: "oauth", refresh: "dummy", access: "dummy", expires: 9999999999999 }),
+        () => (previous ? auth.set("google", previous) : auth.remove("google")).pipe(Effect.orDie),
       )
       const headers = { "x-opencode-directory": directory }
       const providerResponse = yield* request("/provider", { headers })

@@ -60,69 +60,76 @@ export function define<R>(plugin: Plugin<R>) {
   return plugin
 }
 
-const layer = Layer.effectDiscard(
-  Effect.gen(function* () {
-    const catalog = yield* Catalog.Service
-    const commands = yield* CommandV2.Service
-    const plugin = yield* PluginV2.Service
-    const integration = yield* Integration.Service
-    const agents = yield* AgentV2.Service
-    const config = yield* Config.Service
-    const location = yield* Location.Service
-    const modelsDev = yield* ModelsDev.Service
-    const npm = yield* Npm.Service
-    const events = yield* EventV2.Service
-    const fs = yield* FSUtil.Service
-    const filesystem = yield* FileSystem.Service
-    const global = yield* Global.Service
-    const http = yield* HttpClient.HttpClient
-    const skill = yield* SkillV2.Service
-    const reference = yield* Reference.Service
-    const add = <R>(input: Plugin<R>) => {
-      const loaded = {
-        id: input.id,
-        effect: (context: PluginContext) =>
-          input
-            .effect(context)
-            .pipe(
-              Effect.provideService(Catalog.Service, catalog),
-              Effect.provideService(CommandV2.Service, commands),
-              Effect.provideService(Integration.Service, integration),
-              Effect.provideService(AgentV2.Service, agents),
-              Effect.provideService(Config.Service, config),
-              Effect.provideService(Location.Service, location),
-              Effect.provideService(ModelsDev.Service, modelsDev),
-              Effect.provideService(Npm.Service, npm),
-              Effect.provideService(EventV2.Service, events),
-              Effect.provideService(FSUtil.Service, fs),
-              Effect.provideService(FileSystem.Service, filesystem),
-              Effect.provideService(Global.Service, global),
-              Effect.provideService(HttpClient.HttpClient, http),
-              Effect.provideService(SkillV2.Service, skill),
-              Effect.provideService(Reference.Service, reference),
-            ),
-      }
-      return plugin.add(PluginV2.ID.make(loaded.id), loaded.effect)
-    }
+export type Options = { providers?: boolean; external?: boolean }
 
-    yield* State.batch(
-      Effect.gen(function* () {
-        yield* add(ConfigReferencePlugin.Plugin)
-        yield* add(AgentPlugin.Plugin)
-        yield* add(CommandPlugin.Plugin)
-        yield* add(SkillPlugin.Plugin)
-        yield* add(ModelsDevPlugin)
-        yield* add(ConfigAgentPlugin.Plugin)
-        yield* add(ConfigCommandPlugin.Plugin)
-        yield* add(ConfigSkillPlugin.Plugin)
-        for (const item of ProviderPlugins) yield* add(item)
-        yield* add(ConfigExternalPlugin.Plugin)
-        yield* add(ConfigProviderPlugin.Plugin)
-        yield* add(VariantPlugin.Plugin)
-      }),
-    ).pipe(Effect.withSpan("PluginInternal.boot"), Effect.forkScoped({ startImmediately: true }))
-  }),
-)
+const layerWith = (options: Options = {}) =>
+  Layer.effectDiscard(
+    Effect.gen(function* () {
+      const catalog = yield* Catalog.Service
+      const commands = yield* CommandV2.Service
+      const plugin = yield* PluginV2.Service
+      const integration = yield* Integration.Service
+      const agents = yield* AgentV2.Service
+      const config = yield* Config.Service
+      const location = yield* Location.Service
+      const modelsDev = yield* ModelsDev.Service
+      const npm = yield* Npm.Service
+      const events = yield* EventV2.Service
+      const fs = yield* FSUtil.Service
+      const filesystem = yield* FileSystem.Service
+      const global = yield* Global.Service
+      const http = yield* HttpClient.HttpClient
+      const skill = yield* SkillV2.Service
+      const reference = yield* Reference.Service
+      const add = <R>(input: Plugin<R>) => {
+        const loaded = {
+          id: input.id,
+          effect: (context: PluginContext) =>
+            input
+              .effect(context)
+              .pipe(
+                Effect.provideService(Catalog.Service, catalog),
+                Effect.provideService(CommandV2.Service, commands),
+                Effect.provideService(Integration.Service, integration),
+                Effect.provideService(AgentV2.Service, agents),
+                Effect.provideService(Config.Service, config),
+                Effect.provideService(Location.Service, location),
+                Effect.provideService(ModelsDev.Service, modelsDev),
+                Effect.provideService(Npm.Service, npm),
+                Effect.provideService(EventV2.Service, events),
+                Effect.provideService(FSUtil.Service, fs),
+                Effect.provideService(FileSystem.Service, filesystem),
+                Effect.provideService(Global.Service, global),
+                Effect.provideService(HttpClient.HttpClient, http),
+                Effect.provideService(SkillV2.Service, skill),
+                Effect.provideService(Reference.Service, reference),
+              ),
+        }
+        return plugin.add(PluginV2.ID.make(loaded.id), loaded.effect)
+      }
+
+      yield* State.batch(
+        Effect.gen(function* () {
+          yield* add(ConfigReferencePlugin.Plugin)
+          yield* add(AgentPlugin.Plugin)
+          yield* add(CommandPlugin.Plugin)
+          yield* add(SkillPlugin.Plugin)
+          if (options.providers !== false) yield* add(ModelsDevPlugin)
+          yield* add(ConfigAgentPlugin.Plugin)
+          yield* add(ConfigCommandPlugin.Plugin)
+          yield* add(ConfigSkillPlugin.Plugin)
+          if (options.providers !== false) {
+            for (const item of ProviderPlugins) yield* add(item)
+            yield* add(ConfigProviderPlugin.Plugin)
+            yield* add(VariantPlugin.Plugin)
+          }
+          if (options.external !== false) yield* add(ConfigExternalPlugin.Plugin)
+        }),
+      ).pipe(Effect.withSpan("PluginInternal.boot"), Effect.forkScoped({ startImmediately: true }))
+    }),
+  )
+
+const layer = layerWith()
 
 export const locationLayer = layer.pipe(
   Layer.provideMerge(Config.locationLayer),
@@ -151,3 +158,6 @@ export const node = makeLocationNode({
     Reference.node,
   ],
 })
+
+/** Embeddings may retain core agents/skills without generic provider or external plugin boot. */
+export const nodeWith = (options: Options) => ({ ...node, implementation: layerWith(options) })

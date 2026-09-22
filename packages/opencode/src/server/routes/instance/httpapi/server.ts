@@ -83,6 +83,11 @@ import { EventApi } from "./groups/event"
 import { PtyConnectApi } from "./groups/pty"
 import { eventHandlers } from "./handlers/event"
 import { configHandlers } from "./handlers/config"
+import { accountHandlers } from "./handlers/account"
+import { BharatCodeAccount } from "../../../../bharatcode/account"
+import { BharatCodeCatalog } from "../../../../bharatcode/catalog"
+import { BharatCodeRuntime } from "../../../../bharatcode/runtime"
+import { ProductPolicy } from "../../../../product/policy"
 import { controlHandlers } from "./handlers/control"
 import { controlPlaneHandlers } from "./handlers/control-plane"
 import { experimentalHandlers } from "./handlers/experimental"
@@ -153,6 +158,7 @@ const ptyConnectApiRoutes = HttpApiBuilder.layer(PtyConnectApi).pipe(
 )
 const instanceApiRoutes = HttpApiBuilder.layer(InstanceHttpApi).pipe(
   Layer.provide([
+    accountHandlers,
     configHandlers,
     experimentalHandlers,
     fileHandlers,
@@ -214,6 +220,9 @@ const app = LayerNode.group([
   FSUtil.node,
   Database.node,
   Auth.node,
+  BharatCodeAccount.node,
+  BharatCodeCatalog.node,
+  ProductPolicy.node,
   Account.node,
   Config.node,
   Env.node,
@@ -271,7 +280,7 @@ const app = LayerNode.group([
 export function createRoutes(
   corsOptions?: CorsOptions,
 ): Layer.Layer<never, EffectConfig.ConfigError, RouteRequirements> {
-  const locationServiceMapV2 = buildLocationServiceMap()
+  const locationServiceMapV2 = buildLocationServiceMap(BharatCodeRuntime.replacements())
 
   return Layer.mergeAll(
     rootApiRoutes,

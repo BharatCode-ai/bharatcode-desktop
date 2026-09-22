@@ -3,6 +3,7 @@ import { Config } from "@/config/config"
 import { ModelsDev } from "@opencode-ai/core/models-dev"
 import { Provider } from "@/provider/provider"
 import { Auth } from "@/auth"
+import { ProductPolicy } from "../../../../../product/policy"
 
 import { mapValues } from "remeda"
 import { Effect, Schema } from "effect"
@@ -38,8 +39,17 @@ export const providerHandlers = HttpApiBuilder.group(InstanceHttpApi, "provider"
     const provider = yield* Provider.Service
     const svc = yield* ProviderAuth.Service
     const authStore = yield* Auth.Service
+    const policy = yield* ProductPolicy.Service
 
     const list = Effect.fn("ProviderHttpApi.list")(function* () {
+      if (policy.isShipped) {
+        const connected = yield* provider.list()
+        return {
+          all: Object.values(connected).map(Provider.toPublicInfo),
+          default: Provider.defaultModelIDs(connected),
+          connected: Object.keys(connected),
+        }
+      }
       const config = yield* cfg.get()
       const all = yield* ModelsDev.Service.use((s) => s.get())
       const disabled = new Set(config.disabled_providers ?? [])
@@ -62,6 +72,7 @@ export const providerHandlers = HttpApiBuilder.group(InstanceHttpApi, "provider"
     })
 
     const auth = Effect.fn("ProviderHttpApi.auth")(function* () {
+      if (policy.isShipped) return {}
       return yield* svc.methods()
     })
 
@@ -69,6 +80,11 @@ export const providerHandlers = HttpApiBuilder.group(InstanceHttpApi, "provider"
       params: { providerID: ProviderV2.ID }
       payload: ProviderAuth.AuthorizeInput
     }) {
+      if (policy.isShipped)
+        return yield* new ProviderAuthApiError({
+          name: "BadRequest",
+          data: { message: "Use BharatCode account sign-in; provider connections are unavailable." },
+        })
       return yield* mapProviderAuthError(
         svc.authorize({
           providerID: ctx.params.providerID,
@@ -97,6 +113,11 @@ export const providerHandlers = HttpApiBuilder.group(InstanceHttpApi, "provider"
       params: { providerID: ProviderV2.ID }
       payload: ProviderAuth.CallbackInput
     }) {
+      if (policy.isShipped)
+        return yield* new ProviderAuthApiError({
+          name: "BadRequest",
+          data: { message: "Use BharatCode account sign-in; provider connections are unavailable." },
+        })
       yield* mapProviderAuthError(
         svc.callback({
           providerID: ctx.params.providerID,

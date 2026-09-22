@@ -123,26 +123,8 @@ describe("BharatCode shipped provider policy", () => {
     ).toMatchObject({ id: "bharatcode:future-text-coder", limit: { context: 128_000, output: 16_000 } })
   })
 
-  // Scans src/cli/cmd/models.ts, src/index.ts, the httpapi v2 provider/model
-  // handlers, src/server/mdns.ts and src/cli/network.ts. Four of those are not
-  // on this branch yet -- they arrive with the httpapi-v2 and cli themes of the
-  // upstream catch-up. Un-skip once those land; the guard is what keeps the
-  // shipped surface from falling back to the generic catalog.
-  test.skip("keeps shipped command and v2 query sources free of generic public fallbacks", async () => {
-    const source = await Promise.all(
-      [
-        "../../src/cli/cmd/models.ts",
-        "../../src/index.ts",
-        "../../src/server/routes/instance/httpapi/handlers/v2/provider.ts",
-        "../../src/server/routes/instance/httpapi/handlers/v2/model.ts",
-        "../../src/server/mdns.ts",
-        "../../src/cli/network.ts",
-      ].map((file) => Bun.file(new URL(file, import.meta.url)).text()),
-    ).then((files) => files.join("\n"))
-
-    expect(source).not.toMatch(/ProvidersCommand|cmd\/providers|models\.dev|ModelsDev|PluginBoot|opencode\.local/)
-    expect(source).toContain("BharatCodeCatalog")
-  })
+  // Shipped v2 isolation is exercised behaviorally in bharatcode/runtime.test.ts
+  // and server/httpapi-account.test.ts, rather than scanning obsolete route paths.
 
   test.each([
     ["file:///home/private/project/plugin.ts?token=shsec_seeded-private-value", "plugin_specification"],
