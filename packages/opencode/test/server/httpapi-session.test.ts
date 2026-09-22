@@ -24,6 +24,7 @@ import * as HttpSessionError from "../../src/server/routes/instance/httpapi/hand
 import { ExperimentalPaths } from "../../src/server/routes/instance/httpapi/groups/experimental"
 import { SessionPaths } from "../../src/server/routes/instance/httpapi/groups/session"
 import { Session } from "@/session/session"
+import { GoalState } from "../../src/session/goal-state"
 import { MessageID, PartID, SessionID, type SessionID as SessionIDType } from "../../src/session/schema"
 import { Database } from "@opencode-ai/core/database/database"
 import { SessionInputTable, SessionMessageTable, SessionTable } from "@opencode-ai/core/session/sql"
@@ -235,6 +236,46 @@ afterEach(async () => {
 })
 
 describe("session HttpApi", () => {
+  it.instance(
+    "persists goal pause and clear and pauses active goals on abort",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const sessions = yield* Session.Service
+        const chat = yield* createSession({ title: "goal lifecycle" })
+        yield* createTextMessage(chat.id, "Synthetic goal context")
+        yield* sessions.setGoal({
+          sessionID: chat.id,
+          goal: GoalState.set(undefined, { text: "Test objective" }, Date.now()),
+        })
+        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
+        const paused = yield* requestJson<Session.Info>(pathFor(SessionPaths.update, { sessionID: chat.id }), {
+          method: "PATCH",
+          headers,
+          body: JSON.stringify({ goal: { action: "pause" } }),
+        })
+        expect(paused.goal?.status).toBe("paused")
+        const messages = yield* sessions.messages({ sessionID: chat.id })
+        expect(
+          messages
+            .flatMap((message) => message.parts)
+            .some((part) => part.type === "text" && part.synthetic && part.metadata?.kind === "goal-pause"),
+        ).toBe(true)
+        const cleared = yield* requestJson<Session.Info>(pathFor(SessionPaths.update, { sessionID: chat.id }), {
+          method: "PATCH",
+          headers,
+          body: JSON.stringify({ goal: { action: "clear" } }),
+        })
+        expect(cleared.goal).toBeUndefined()
+        yield* sessions.setGoal({
+          sessionID: chat.id,
+          goal: GoalState.set(undefined, { text: "Abort objective" }, Date.now()),
+        })
+        yield* requestJson<boolean>(pathFor(SessionPaths.abort, { sessionID: chat.id }), { method: "POST", headers })
+        expect((yield* sessions.get(chat.id)).goal?.status).toBe("paused")
+      }),
+    { git: true, config: { formatter: false, lsp: false } },
+  )
   it.effect("maps busy sessions to public session busy errors", () =>
     Effect.gen(function* () {
       const sessionID = SessionID.descending()

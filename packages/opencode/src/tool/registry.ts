@@ -2,6 +2,7 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { httpClient } from "@opencode-ai/core/effect/app-node-platform"
 import { Ripgrep } from "@opencode-ai/core/ripgrep"
 import { PlanExitTool } from "./plan"
+import { GoalBlockerTool, GoalCompleteTool, GoalSetTool } from "./goal"
 import { Session } from "@/session/session"
 import { QuestionTool } from "./question"
 import { ShellTool } from "./shell"
@@ -99,6 +100,9 @@ const layer = Layer.effect(
     const mcp = yield* MCP.Service
 
     const invalid = yield* InvalidTool
+    const goalSet = yield* GoalSetTool
+    const goalComplete = yield* GoalCompleteTool
+    const goalBlocker = yield* GoalBlockerTool
     const task = yield* TaskTool
     const read = yield* ReadTool
     const question = yield* QuestionTool
@@ -208,6 +212,9 @@ const layer = Layer.effect(
 
         const tool = yield* Effect.all({
           invalid: Tool.init(invalid),
+          goal_set: Tool.init(goalSet),
+          goal_complete: Tool.init(goalComplete),
+          goal_blocker: Tool.init(goalBlocker),
           shell: Tool.init(shell),
           read: Tool.init(read),
           glob: Tool.init(globtool),
@@ -230,6 +237,9 @@ const layer = Layer.effect(
           custom,
           builtin: [
             tool.invalid,
+            tool.goal_set,
+            tool.goal_complete,
+            tool.goal_blocker,
             ...(questionEnabled ? [tool.question] : []),
             tool.shell,
             tool.read,

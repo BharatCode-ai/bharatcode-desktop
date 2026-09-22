@@ -35,6 +35,7 @@ import { SessionSummary } from "../../src/session/summary"
 import { Instruction } from "../../src/session/instruction"
 import { SessionProcessor } from "../../src/session/processor"
 import { SessionPrompt } from "../../src/session/prompt"
+import { GoalState } from "../../src/session/goal-state"
 import { SessionRevert } from "../../src/session/revert"
 import { SessionRunState } from "../../src/session/run-state"
 import { MessageID, PartID, SessionID } from "../../src/session/schema"
@@ -628,6 +629,39 @@ it.instance("legacy prompt emits message events without session.next events", ()
   }),
 )
 
+it.instance("active goal requests assessment and completes through the registered goal tool", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig(providerCfg)
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const chat = yield* sessions.create({
+      title: "Pinned",
+      permission: [{ permission: "*", pattern: "*", action: "allow" }],
+    })
+    yield* sessions.setGoal({
+      sessionID: chat.id,
+      goal: GoalState.set(undefined, { text: "Verify synthetic result" }, Date.now()),
+    })
+    yield* prompt.prompt({
+      sessionID: chat.id,
+      agent: "build",
+      noReply: true,
+      parts: [{ type: "text", text: "Work on the goal" }],
+    })
+    yield* llm.text("The synthetic check is done.")
+    yield* llm.tool("mcp_goal_complete", { report: "Synthetic verification passed." })
+    yield* prompt.loop({ sessionID: chat.id }).pipe(Effect.timeout("5 seconds"))
+    expect(yield* llm.calls).toBe(2)
+    expect((yield* sessions.get(chat.id)).goal?.status).toBe("completed")
+    const messages = yield* sessions.messages({ sessionID: chat.id })
+    expect(
+      messages
+        .flatMap((message) => message.parts)
+        .some((part) => part.type === "text" && part.synthetic && part.metadata?.kind === "goal-assessment"),
+    ).toBe(true)
+  }),
+)
+
 it.instance("loop surfaces content-filter finishes as session errors", () =>
   Effect.gen(function* () {
     const { llm } = yield* useServerConfig(providerCfg)
@@ -636,6 +670,10 @@ it.instance("loop surfaces content-filter finishes as session errors", () =>
     const sessions = yield* Session.Service
     const chat = yield* sessions.create({ title: "Pinned" })
     const errors: NonNullable<SessionV1.Assistant["error"]>[] = []
+    yield* sessions.setGoal({
+      sessionID: chat.id,
+      goal: GoalState.set(undefined, { text: "Must not bypass a content filter" }, Date.now()),
+    })
     const expected = {
       name: "ContentFilterError",
       data: { message: "The response was blocked by the provider's content filter" },

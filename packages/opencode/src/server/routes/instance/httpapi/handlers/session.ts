@@ -6,6 +6,7 @@ import { Command } from "@/command"
 import { Permission } from "@/permission"
 import { SessionShare } from "@/share/session"
 import { Session } from "@/session/session"
+import { GoalState } from "../../../../../session/goal-state"
 import { SessionCompaction } from "@/session/compaction"
 import { MessageV2 } from "@/session/message-v2"
 import { SessionPrompt } from "@/session/prompt"
@@ -197,6 +198,43 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
           permission: Permission.merge(current.permission ?? [], ctx.payload.permission),
         })
       }
+      if (ctx.payload.goal !== undefined) {
+        const next = GoalState.update(current.goal, ctx.payload.goal, Date.now())
+        if (next.goal !== undefined) {
+          yield* session.setGoal({ sessionID: ctx.params.sessionID, goal: next.goal })
+          if (
+            ctx.payload.goal.action === "set" &&
+            GoalState.isActive(current.goal) &&
+            next.goal &&
+            current.goal.text !== next.goal.text
+          ) {
+            yield* promptSvc
+              .ensureGoalUpdateMessage({ sessionID: ctx.params.sessionID, goal: next.goal })
+              .pipe(Effect.orDie)
+          }
+          if (ctx.payload.goal.action === "pause" && next.goal) {
+            yield* promptSvc
+              .ensureGoalPauseMessage({ sessionID: ctx.params.sessionID, goal: next.goal })
+              .pipe(Effect.orDie)
+          }
+          if (next.shouldRun && next.goal) {
+            yield* promptSvc
+              .ensureGoalRunMessage({ sessionID: ctx.params.sessionID, goal: next.goal })
+              .pipe(Effect.orDie)
+            yield* promptSvc.loop({ sessionID: ctx.params.sessionID }).pipe(
+              Effect.catchCause(() =>
+                events.publish(Session.Event.Error, {
+                  sessionID: ctx.params.sessionID,
+                  error: new NamedError.Unknown({
+                    message: "Goal Mode could not continue. Check the account and selected model, then resume.",
+                  }).toObject(),
+                }),
+              ),
+              Effect.forkIn(scope),
+            )
+          }
+        }
+      }
       if (ctx.payload.time?.archived !== undefined) {
         yield* session.setArchived({ sessionID: ctx.params.sessionID, time: ctx.payload.time.archived })
       }
@@ -230,6 +268,13 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
     })
 
     const abort = Effect.fn("SessionHttpApi.abort")(function* (ctx: { params: { sessionID: SessionID } }) {
+      const current = yield* session.get(ctx.params.sessionID).pipe(Effect.option)
+      if (Option.isSome(current) && GoalState.isActive(current.value.goal)) {
+        yield* session.setGoal({
+          sessionID: ctx.params.sessionID,
+          goal: GoalState.pause(current.value.goal, Date.now()),
+        })
+      }
       yield* promptSvc.cancel(ctx.params.sessionID)
       return true
     })

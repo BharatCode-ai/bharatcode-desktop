@@ -55,6 +55,8 @@ import { eq } from "drizzle-orm"
 import { SessionTable } from "@opencode-ai/core/session/sql"
 import { SessionReminders } from "./reminders"
 import { SessionTools } from "./tools"
+import { GoalAssessment } from "./goal-assessment"
+import { GoalState } from "./goal-state"
 import { LLMEvent } from "@opencode-ai/llm"
 
 // @ts-ignore
@@ -102,6 +104,9 @@ function isOrphanedInterruptedTool(part: SessionV1.ToolPart) {
 export interface Interface {
   readonly cancel: (sessionID: SessionID) => Effect.Effect<void>
   readonly prompt: (input: PromptInput) => Effect.Effect<SessionV1.WithParts, Image.Error>
+  readonly ensureGoalUpdateMessage: (input: GoalRunInput) => Effect.Effect<SessionV1.WithParts | undefined, Image.Error>
+  readonly ensureGoalPauseMessage: (input: GoalRunInput) => Effect.Effect<SessionV1.WithParts | undefined, Image.Error>
+  readonly ensureGoalRunMessage: (input: GoalRunInput) => Effect.Effect<SessionV1.WithParts | undefined, Image.Error>
   readonly loop: (input: LoopInput) => Effect.Effect<SessionV1.WithParts>
   readonly shell: (input: ShellInput) => Effect.Effect<SessionV1.WithParts, Session.BusyError>
   readonly command: (input: CommandInput) => Effect.Effect<SessionV1.WithParts, Image.Error>
@@ -600,11 +605,10 @@ const layer = Layer.effect(
       if (Exit.isSuccess(exit)) return exit.value
       const err = Cause.squash(exit.cause)
       if (Provider.ModelNotFoundError.isInstance(err)) {
-        const hint = err.suggestions?.length ? ` Did you mean: ${err.suggestions.join(", ")}?` : ""
         yield* events.publish(Session.Event.Error, {
           sessionID,
           error: new NamedError.Unknown({
-            message: `Model not found: ${err.providerID}/${err.modelID}.${hint}`,
+            message: Provider.modelNotFoundMessage(err),
           }).toObject(),
         })
       }
@@ -1049,6 +1053,177 @@ const layer = Layer.effect(
       return { info, parts }
     }, Effect.scoped)
 
+    const goalAssessmentMessage = (goal: Session.Goal, notes: string[] = []) =>
+      [
+        "<goal-mode>",
+        "The active session goal is still open:",
+        goal.text,
+        "",
+        "The assistant just stopped with a normal response while Goal Mode is active.",
+        "Assess the current state against the goal and choose exactly one path:",
+        "1. Continue working: do the next useful action now.",
+        "2. Goal complete: call the mcp_goal_complete tool with a concise completion report after validating the goal.",
+        "3. Blocked: call the mcp_goal_blocker tool with the blocker, what was tried, and the smallest user input needed.",
+        ...GoalAssessment.progressPolicy(),
+        ...notes,
+        "Do not call mcp_goal_set from this automatic Goal Mode turn; the active objective is already set.",
+        "Do not end with plain text while this goal remains active.",
+        "</goal-mode>",
+      ].join("\n")
+
+    const createGoalAssessmentMessage = Effect.fn("SessionPrompt.createGoalAssessmentMessage")(function* (input: {
+      sessionID: SessionID
+      goal: Session.Goal
+      lastUser: SessionV1.User
+      messages: SessionV1.WithParts[]
+      lastAssistant?: SessionV1.WithParts
+    }) {
+      const notes = GoalAssessment.assessmentNotes({ messages: input.messages, assistant: input.lastAssistant })
+      return yield* createUserMessage({
+        sessionID: input.sessionID,
+        agent: input.lastUser.agent,
+        model: {
+          providerID: input.lastUser.model.providerID,
+          modelID: input.lastUser.model.modelID,
+        },
+        variant: input.lastUser.model.variant,
+        tools: input.lastUser.tools,
+        system: input.lastUser.system,
+        noReply: true,
+        parts: [
+          {
+            type: "text",
+            text: goalAssessmentMessage(input.goal, notes),
+            synthetic: true,
+            metadata: { kind: "goal-assessment" },
+          },
+        ],
+      })
+    }, Effect.scoped)
+
+    const goalRunMessage = (goal: Session.Goal) =>
+      [
+        "<goal-mode>",
+        "Goal Mode was started or resumed without a new user message.",
+        "The active session goal is:",
+        goal.text,
+        "",
+        "Begin or continue working toward this goal now.",
+        ...GoalAssessment.progressPolicy(),
+        "When complete, call mcp_goal_complete with a concise completion report.",
+        "When blocked, call mcp_goal_blocker with the blocker, what was tried, and the smallest useful user input needed.",
+        "Do not call mcp_goal_set from this automatic Goal Mode turn; the active objective is already set.",
+        "Do not end with plain text while this goal remains active.",
+        "</goal-mode>",
+      ].join("\n")
+
+    const goalPauseMessage = (goal: Session.Goal) =>
+      [
+        "<goal-mode>",
+        "Goal Mode was paused by the user.",
+        "The paused session goal is:",
+        goal.text,
+        "",
+        "Stop working on this goal now.",
+        "Do not continue automatic Goal Mode work until the user resumes it.",
+        "If you need to respond, acknowledge the pause briefly and do not start new tool calls for this paused goal.",
+        "</goal-mode>",
+      ].join("\n")
+
+    const goalUpdateMessage = (goal: Session.Goal) =>
+      [
+        "<goal-mode>",
+        "Goal Mode objective was updated by the user.",
+        "The updated session goal is:",
+        goal.text,
+        "",
+        "Continue working toward this updated goal.",
+        ...GoalAssessment.progressPolicy(),
+        "When complete, call mcp_goal_complete with a concise completion report.",
+        "When blocked, call mcp_goal_blocker with the blocker, what was tried, and the smallest useful user input needed.",
+        "Do not call mcp_goal_set in response to this update; the active objective has already been updated.",
+        "</goal-mode>",
+      ].join("\n")
+
+    const latestUser = (sessionID: SessionID) =>
+      sessions
+        .findMessage(sessionID, (message) => message.info.role === "user")
+        .pipe(
+          Effect.map((option) => (Option.isSome(option) ? option.value : undefined)),
+          Effect.orDie,
+        )
+
+    const isGoalPauseMessage = (message: SessionV1.WithParts | undefined) =>
+      message?.parts.some((part) => part.type === "text" && part.synthetic && part.metadata?.kind === "goal-pause") ??
+      false
+
+    const isGoalUpdateMessage = (message: SessionV1.WithParts | undefined) =>
+      message?.parts.some((part) => part.type === "text" && part.synthetic && part.metadata?.kind === "goal-update") ??
+      false
+
+    const ensureGoalUpdateMessage: (
+      input: GoalRunInput,
+    ) => Effect.Effect<SessionV1.WithParts | undefined, Image.Error> = Effect.fn(
+      "SessionPrompt.ensureGoalUpdateMessage",
+    )(function* (input: GoalRunInput) {
+      const latest = yield* latestUser(input.sessionID)
+      if (
+        isGoalUpdateMessage(latest) &&
+        latest?.parts.some((part) => part.type === "text" && part.text === goalUpdateMessage(input.goal))
+      )
+        return undefined
+
+      return yield* createUserMessage({
+        sessionID: input.sessionID,
+        noReply: true,
+        parts: [
+          {
+            type: "text",
+            text: goalUpdateMessage(input.goal),
+            synthetic: true,
+            metadata: { kind: "goal-update" },
+          },
+        ],
+      })
+    }, Effect.scoped)
+
+    const ensureGoalPauseMessage: (input: GoalRunInput) => Effect.Effect<SessionV1.WithParts | undefined, Image.Error> =
+      Effect.fn("SessionPrompt.ensureGoalPauseMessage")(function* (input: GoalRunInput) {
+        if (isGoalPauseMessage(yield* latestUser(input.sessionID))) return undefined
+
+        return yield* createUserMessage({
+          sessionID: input.sessionID,
+          noReply: true,
+          parts: [
+            {
+              type: "text",
+              text: goalPauseMessage(input.goal),
+              synthetic: true,
+              metadata: { kind: "goal-pause" },
+            },
+          ],
+        })
+      }, Effect.scoped)
+
+    const ensureGoalRunMessage: (input: GoalRunInput) => Effect.Effect<SessionV1.WithParts | undefined, Image.Error> =
+      Effect.fn("SessionPrompt.ensureGoalRunMessage")(function* (input: GoalRunInput) {
+        const latest = yield* latestUser(input.sessionID)
+        if (latest && !isGoalPauseMessage(latest)) return undefined
+
+        return yield* createUserMessage({
+          sessionID: input.sessionID,
+          noReply: true,
+          parts: [
+            {
+              type: "text",
+              text: goalRunMessage(input.goal),
+              synthetic: true,
+              metadata: { kind: "goal-resume" },
+            },
+          ],
+        })
+      }, Effect.scoped)
+
     const prompt: (input: PromptInput) => Effect.Effect<SessionV1.WithParts, Image.Error> = Effect.fn(
       "SessionPrompt.prompt",
     )(function* (input: PromptInput) {
@@ -1083,9 +1258,9 @@ const layer = Layer.effect(
         const ctx = yield* InstanceState.context
         let structured: unknown
         let step = 0
-        const session = yield* sessions.get(sessionID).pipe(Effect.orDie)
 
         while (true) {
+          const session = yield* sessions.get(sessionID).pipe(Effect.orDie)
           yield* status.set(sessionID, { type: "busy" })
           yield* Effect.logInfo("loop", { "session.id": sessionID, step })
 
@@ -1124,6 +1299,28 @@ const layer = Layer.effect(
                 tool: orphan.tool,
                 callID: orphan.callID,
               })
+            }
+            // A filtered/error/interrupted answer must not trigger automatic
+            // retries. Only an ordinary completed response assesses an open goal.
+            if (
+              session.goal &&
+              !lastAssistant.error &&
+              !orphan &&
+              lastAssistant.finish === "stop" &&
+              GoalAssessment.shouldRequest({
+                goalStatus: session.goal.status,
+                lastAssistantFinishedNormally: true,
+                hasToolCalls,
+              })
+            ) {
+              yield* createGoalAssessmentMessage({
+                sessionID,
+                goal: session.goal,
+                lastUser,
+                messages: msgs,
+                lastAssistant: lastAssistantMsg,
+              }).pipe(Effect.orDie)
+              continue
             }
             yield* Effect.logInfo("exiting loop", { "session.id": sessionID })
             break
@@ -1175,7 +1372,7 @@ const layer = Layer.effect(
             yield* events.publish(Session.Event.Error, { sessionID, error: error.toObject() })
             throw error
           }
-          const maxSteps = agent.steps ?? Infinity
+          const maxSteps = GoalState.isActive(session.goal) ? Infinity : (agent.steps ?? Infinity)
           const isLastStep = step >= maxSteps
           msgs = yield* SessionReminders.apply({ messages: msgs, agent, session }).pipe(
             Effect.provideService(RuntimeFlags.Service, flags),
@@ -1284,6 +1481,19 @@ const layer = Layer.effect(
               model,
               toolChoice: format.type === "json_schema" ? "required" : undefined,
             })
+
+            const afterTools = yield* sessions.get(sessionID).pipe(Effect.orDie)
+            if (
+              GoalState.isTerminal(afterTools.goal) &&
+              (session.goal?.status !== afterTools.goal.status || session.goal?.updated !== afterTools.goal.updated)
+            ) {
+              if (!handle.message.error && (!handle.message.finish || handle.message.finish === "tool-calls")) {
+                handle.message.finish = "stop"
+                handle.message.time.completed ??= Date.now()
+                yield* sessions.updateMessage(handle.message)
+              }
+              return "break" as const
+            }
 
             if (structured !== undefined) {
               handle.message.structured = structured
@@ -1483,6 +1693,9 @@ const layer = Layer.effect(
     return Service.of({
       cancel,
       prompt,
+      ensureGoalUpdateMessage,
+      ensureGoalPauseMessage,
+      ensureGoalRunMessage,
       loop,
       shell,
       command,
@@ -1519,6 +1732,8 @@ export const PromptInput = Schema.Struct({
   ),
 })
 export type PromptInput = Schema.Schema.Type<typeof PromptInput>
+
+export type GoalRunInput = { sessionID: SessionID; goal: Session.Goal }
 
 export class LoopInput extends Schema.Class<LoopInput>("SessionPrompt.LoopInput")({
   sessionID: SessionID,
