@@ -14,14 +14,19 @@ jobs:
   check:
     runs-on: ubuntu-24.04
     env:
-      OPENCODE_TEST_HOME: ${{ runner.temp }}/sdk-home
-      XDG_DATA_HOME: ${{ runner.temp }}/sdk-home/data
-      XDG_STATE_HOME: ${{ runner.temp }}/sdk-home/state
-      XDG_CONFIG_HOME: ${{ runner.temp }}/sdk-home/config
-      XDG_CACHE_HOME: ${{ runner.temp }}/sdk-home/cache
       OPENCODE_DISABLE_MODELS_FETCH: "true"
       OPENCODE_DISABLE_AUTOUPDATE: "true"
     steps:
+      - name: Isolate generated-client runtime state
+        shell: bash
+        run: |
+          printf '%s\n' \
+            "OPENCODE_TEST_HOME=$RUNNER_TEMP/sdk-home" \
+            "XDG_DATA_HOME=$RUNNER_TEMP/sdk-home/data" \
+            "XDG_STATE_HOME=$RUNNER_TEMP/sdk-home/state" \
+            "XDG_CONFIG_HOME=$RUNNER_TEMP/sdk-home/config" \
+            "XDG_CACHE_HOME=$RUNNER_TEMP/sdk-home/cache" >> "$GITHUB_ENV"
+
       - name: Checkout repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
