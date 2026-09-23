@@ -1,11 +1,19 @@
 # BharatCode Desktop workflows
 
-The upstream catch-up retains only the following curated workflows:
+The release flow is build candidates, manually test them on Windows/Linux/macOS,
+then explicitly publish the exact accepted artifacts without rebuilding. Candidate
+builds run no test suites. Source identity, artifact integrity and macOS signing/
+notarization checks remain part of packaging and publication.
+
+The following diagnostic workflows are manual-only and are not release gates:
 
 - `test.yml`: Linux/Windows unit and renderer E2E checks, generated-client checks,
   and the Linux HTTP route exerciser. Read-only repository permissions.
 - `typecheck.yml`: workspace typechecks. Read-only repository permissions.
 - `generate.yml`: verify generated client output without pushing changes.
+
+The build and publication workflows are separate from those diagnostics:
+
 - `publish.yml`: manually build an exact-source Desktop candidate for Windows,
   macOS arm64/x64, Linux and the bundled WSL runtime. Upload artifacts only.
 - `build-and-publish.yml`: manually build all CLI targets on one Linux runner.

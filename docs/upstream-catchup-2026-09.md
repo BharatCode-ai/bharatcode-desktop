@@ -10,6 +10,20 @@ than resolving 499 overlapping files at once.
 
 ## Current checkpoint — September 24
 
+Release policy corrected by Shrey: build candidates, manually test Windows/Linux/
+macOS, then give explicit approval to publish those exact artifacts. Test,
+typecheck and generated-client workflows are now optional manual diagnostics,
+not candidate or release gates. Candidate builds retain source/artifact identity
+and macOS signing/notarization, but no test-suite prerequisites. Version 1.15.36
+is reserved for the next candidate; 1.15.35 was already published.
+
+The latest diagnostic run (35923204215, ca5517c4) passed Linux unit/HTTP and both
+renderer E2E jobs. Windows codegen passed; the client import-boundary test then
+failed because it assumes a package-local effect install despite Windows using
+hoisted dependencies. This test portability issue remains recorded, not fixed or
+declared passing. The earlier statements below requiring more full hosted tests
+are historical and superseded by the manual-acceptance policy above.
+
 Hosted run 35914141928 at 578c5f8fa1 completed, not hung: typecheck and Linux E2E
 passed; Windows codegen tests, one Linux CLI deadline, and Windows legacy-markdown
 readiness failed. The following bounded corrections retain all existing deadlines

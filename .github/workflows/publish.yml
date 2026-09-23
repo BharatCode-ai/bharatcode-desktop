@@ -45,9 +45,6 @@ jobs:
           install-flags: --frozen-lockfile
       - id: identity
         run: bun packages/desktop/scripts/candidate-cohort.ts admit
-      - name: Candidate validation
-        working-directory: packages/desktop
-        run: bun test scripts/candidate-cohort.test.ts scripts/tested-release.test.ts scripts/packaging.test.ts
 
   wsl:
     needs: admit

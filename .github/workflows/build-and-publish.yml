@@ -75,9 +75,6 @@ jobs:
           install-flags: --frozen-lockfile
       - name: Admit exact source
         run: bun packages/desktop/scripts/candidate-cohort.ts admit
-      - name: Verify package assembly
-        working-directory: packages/opencode
-        run: bun test script/pack.test.ts script/publish-workflow.test.ts
       - name: Cross-compile all CLI platforms
         working-directory: packages/opencode
         run: bun run build
