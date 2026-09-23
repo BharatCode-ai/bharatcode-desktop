@@ -89,6 +89,9 @@ export function windowsCredentialStore(file: string, options: { spawn?: typeof s
 const script = String.raw`
 $ErrorActionPreference = 'Stop'
 try {
+  # Avoid scanning ambient modules for Add-Type/JSON commands on every operation.
+  $PSModuleAutoLoadingPreference = 'None'
+  Import-Module -Name "$PSHOME\Modules\Microsoft.PowerShell.Utility\Microsoft.PowerShell.Utility.psd1"
   Add-Type -TypeDefinition @'
 using System;
 using System.IO;

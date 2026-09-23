@@ -10,6 +10,39 @@ than resolving 499 overlapping files at once.
 
 ## Where it stands
 
+### Windows module-discovery correction and CLI candidate — September 23
+
+Run `35895366628` isolates the supported narrow correction. On the same hosted
+machine, ordinary `Add-Type` took 21,777 ms; explicitly importing the built-in
+Utility module by its `$PSHOME` path with ambient module autoloading disabled
+took 270 ms. Direct CodeDOM was also fast (261 ms), but no compiler replacement
+is needed. The runtime now makes that explicit import before the unchanged
+`Add-Type` and JSON commands. C# source, held handles/ACL/link checks, durable
+publication/quarantine, stdin-only payloads and all timeouts are unchanged.
+
+A native synthetic module-shadow regression fails before the correction and
+passes afterward. The full native Windows store suite passes 18 tests/70
+assertions, with the separately compiled Auth fixture not supplied for that run.
+Broad grants, reparse/hardlink/held-object replacement, definite-missing races,
+pre/post-publication uncertainty and timeout checks remain active. Core and
+OpenCode typechecks pass. The temporary diagnostic workflows, compiler controls
+and 90-second smoke overrides are removed; the normal production-bound lifecycle
+smoke remains. Hosted normal unit verification is still required.
+
+Separately compiled exact-current shared Auth and first-use fixtures also pass
+on native Windows: Auth cross-process creation/read/rotation/removal 1/1 (14
+assertions); ordinary inherited-profile Global and migration first-use paths 2/2
+(24 assertions). No application credential parent was pre-provisioned by those
+fixtures. Each used a fresh explicitly isolated profile and synthetic credentials;
+this is not real OAuth or installed Electron acceptance.
+
+CLI run `35895744848`, exact source `617a9c571be7ec622c1254e590aba19a1d305b88`,
+passes on one Linux runner: all 12 targets, both executable Linux version checks,
+four archive tests and complete 13-tarball assembly, followed by source admission
+and artifact upload. Artifact `cli-candidate-35895744848-1` contains source/hash
+manifests. This is an intermediate build before the module-loading fix, not the
+final cohort, and no registry or release publication occurred.
+
 ### Latest hosted checkpoint — source `129b76bce5`
 
 Test run `35893178542`: Linux unit/generated-client/HTTP gates pass. Both

@@ -31,6 +31,38 @@ test.skipIf(process.platform !== "win32")(
 const native = test.skipIf(process.platform !== "win32")
 
 native(
+  "credential helper loads the built-in utility module without ambient module discovery",
+  async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "bc-native-module-discovery-"))
+    const file = path.join(root, "private", "auth.json")
+    try {
+      const modules = path.join(root, "modules")
+      const module = path.join(modules, "SyntheticUtility")
+      await mkdir(module, { recursive: true })
+      await writeFile(
+        path.join(module, "SyntheticUtility.psd1"),
+        "@{ RootModule='SyntheticUtility.psm1'; ModuleVersion='1.0.0'; FunctionsToExport=@('Add-Type'); CmdletsToExport=@(); AliasesToExport=@() }",
+      )
+      await writeFile(
+        path.join(module, "SyntheticUtility.psm1"),
+        "function Add-Type { throw 'Synthetic module selected' }",
+      )
+      const store = windowsCredentialStore(file, {
+        spawn: ((exe: string, args: string[], options: Parameters<typeof spawnSync>[2]) =>
+          spawnSync(exe, args, { ...options, env: { ...options?.env, PSModulePath: modules } })) as typeof spawnSync,
+      })
+      store.prepareParent()
+      expect(store.read()).toBeUndefined()
+      store.publish('{"fixture":"trusted-utility"}')
+      expect(store.read()).toBe('{"fixture":"trusted-utility"}')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  },
+  60_000,
+)
+
+native(
   "cold native preparation tolerates startup beyond fifteen seconds without weakening private storage",
   async () => {
     const root = await mkdtemp(path.join(tmpdir(), "bc-native-cold-helper-"))
