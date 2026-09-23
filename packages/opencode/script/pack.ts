@@ -12,6 +12,21 @@ import {
   platformPackageName,
 } from "./distribution.mjs"
 
+export function createMetaPackageManifest(version: string) {
+  return {
+    name: DISTRIBUTION.npmPackage,
+    version,
+    license: "MIT",
+    repository: { type: "git", url: `git+https://github.com/${DISTRIBUTION.repository}.git` },
+    type: "module",
+    bin: { [DISTRIBUTION.commandName]: "bin/bharatcode.mjs" },
+    files: ["bin", "script/distribution.mjs", "LICENSE"],
+    optionalDependencies: Object.fromEntries(PLATFORM_TARGETS.map((target) => [platformPackageName(target), version])),
+    os: ["darwin", "linux", "win32"],
+    cpu: ["arm64", "x64"],
+  }
+}
+
 /** Assemble tarballs only. Registry publication requires a separate, authorized workflow. */
 export async function pack(dist: string, output: string) {
   const names = PLATFORM_TARGETS.map(platformPackageName)
@@ -51,21 +66,7 @@ export async function pack(dist: string, output: string) {
     await chmod(path.join(staging, "bin/bharatcode.mjs"), 0o755)
     await copyFile(path.join(import.meta.dirname, "distribution.mjs"), path.join(staging, "script/distribution.mjs"))
     await copyFile(path.join(import.meta.dirname, "../../../LICENSE"), path.join(staging, "LICENSE"))
-    await Bun.write(
-      path.join(staging, "package.json"),
-      JSON.stringify({
-        name: DISTRIBUTION.npmPackage,
-        version,
-        license: "MIT",
-        repository: { type: "git", url: `git+https://github.com/${DISTRIBUTION.repository}.git` },
-        type: "module",
-        bin: { [DISTRIBUTION.commandName]: "bin/bharatcode.mjs" },
-        files: ["bin", "script/distribution.mjs", "LICENSE"],
-        optionalDependencies: Object.fromEntries(names.map((name) => [name, version])),
-        os: ["darwin", "linux", "win32"],
-        cpu: ["arm64", "x64"],
-      }),
-    )
+    await Bun.write(path.join(staging, "package.json"), JSON.stringify(createMetaPackageManifest(version)))
     const packages: { name: string; file: string; size: number; sha256: string }[] = []
     for (const name of [...names, DISTRIBUTION.npmPackage]) {
       const directory = name === DISTRIBUTION.npmPackage ? staging : path.join(dist, name)

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { mkdtemp, mkdir, rm } from "node:fs/promises"
+import { mkdtemp, mkdir, rm, readFile, readdir, appendFile, link } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import {
@@ -9,6 +9,18 @@ import {
   platformPackageName,
 } from "./distribution.mjs"
 import { pack } from "./pack"
+import { createHash } from "node:crypto"
+import { verifyCandidate } from "./verify-candidate"
+
+const identity = {
+  source: "a".repeat(40),
+  tree: "b".repeat(40),
+  version: "1.15.35",
+  channel: "beta" as const,
+  repository: "BharatCode-ai/bharatcode-desktop",
+  run: "123",
+  attempt: "1",
+}
 
 async function fixture() {
   const root = await mkdtemp(path.join(tmpdir(), "bharatcode-pack-test-"))
@@ -55,6 +67,65 @@ test("packs the complete branded CLI cohort without a postinstall or publication
     expect(entry.size).toBeGreaterThan(0)
   }
   await expect(pack(input.dist, input.output)).rejects.toThrow()
+}, 30_000)
+
+test("verifies exact packed bytes/source and orders all platform publications before the wrapper", async () => {
+  await using input = await fixture()
+  await pack(input.dist, input.output)
+  await Bun.write(path.join(input.output, "source.json"), JSON.stringify(identity))
+  const manifest = await readFile(path.join(input.output, "manifest.json"))
+  const digest = createHash("sha256").update(manifest).digest("hex")
+  const verified = await verifyCandidate(input.output, identity, digest)
+  expect(verified.version).toBe(identity.version)
+  expect(verified.packages.map((item) => item.name)).toEqual([
+    ...PLATFORM_TARGETS.map(platformPackageName),
+    "bharatcode",
+  ])
+  for (const item of verified.packages) {
+    const content = await readFile(path.join(input.output, item.file))
+    expect(item.integrity).toBe(`sha512-${createHash("sha512").update(content).digest("base64")}`)
+  }
+  await expect(verifyCandidate(input.output, identity, "f".repeat(64))).rejects.toThrow()
+  await expect(verifyCandidate(input.output, { ...identity, attempt: "2" }, digest)).rejects.toThrow()
+  const archive = path.join(input.output, verified.packages[0].file)
+  await appendFile(archive, "drift")
+  await expect(verifyCandidate(input.output, identity, digest)).rejects.toThrow()
+}, 30_000)
+
+test("verification rejects extra files, hardlinks, forged package identity and rehashed injected lifecycle scripts", async () => {
+  await using input = await fixture()
+  await pack(input.dist, input.output)
+  await Bun.write(path.join(input.output, "source.json"), JSON.stringify(identity))
+  const file = path.join(input.output, "manifest.json")
+  const original = await readFile(file)
+  const digest = createHash("sha256").update(original).digest("hex")
+  await Bun.write(path.join(input.output, "extra.tgz"), "unexpected")
+  await expect(verifyCandidate(input.output, identity, digest)).rejects.toThrow()
+  await rm(path.join(input.output, "extra.tgz"))
+  const manifest = JSON.parse(original.toString())
+  const target = path.join(input.output, manifest.packages[0].file)
+  await link(target, path.join(input.root, "outside.tgz"))
+  await expect(verifyCandidate(input.output, identity, digest)).rejects.toThrow()
+  await rm(path.join(input.root, "outside.tgz"))
+  const archive = new Bun.Archive(await readFile(target))
+  const files = await archive.files()
+  const metadata = await files.get("package/package.json")!.json()
+  for (const change of [{ name: "wrong-package" }, { scripts: { prepublishOnly: "exit 1" } }]) {
+    const replacement = new Bun.Archive({
+      "package/package.json": JSON.stringify({ ...metadata, ...change }),
+      "package/bin/bharatcode": "synthetic binary fixture",
+    })
+    const content = new Uint8Array(await replacement.bytes())
+    await Bun.write(target, content)
+    manifest.packages[0].size = content.length
+    manifest.packages[0].sha256 = createHash("sha256").update(content).digest("hex")
+    const changed = Buffer.from(JSON.stringify(manifest))
+    await Bun.write(file, changed)
+    await expect(
+      verifyCandidate(input.output, identity, createHash("sha256").update(changed).digest("hex")),
+    ).rejects.toThrow()
+  }
+  expect((await readdir(input.output)).length).toBe(15)
 }, 30_000)
 
 test("rejects mixed versions before creating an output directory", async () => {

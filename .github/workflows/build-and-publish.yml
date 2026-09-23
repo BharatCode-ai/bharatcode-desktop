@@ -1,13 +1,14 @@
-name: BharatCode CLI candidate
+name: BharatCode CLI build and tested publication
 
-# Retain the established workflow filename. This branch builds candidates only;
-# registry/release publication is a separate explicitly authorized operation.
+# Keep this filename: npm trusted publishing is bound to build-and-publish.yml.
+# Building and publishing are separate manual operations; neither rebuild nor
+# automatic publication occurs in publish-tested mode.
 
 on:
   workflow_dispatch:
     inputs:
       source_sha:
-        description: Exact committed source (must equal the selected workflow ref)
+        description: Exact committed source (build mode requires the selected workflow ref)
         required: true
         type: string
       channel:
@@ -16,9 +17,44 @@ on:
         type: choice
         options: [beta, prod]
         default: beta
+      operation:
+        description: Build only, or publish an already tested candidate
+        required: true
+        type: choice
+        options: [build, publish-tested]
+        default: build
+      build_run_id:
+        description: Original successful CLI build run (publish-tested only)
+        type: string
+      build_run_attempt:
+        description: Original successful build attempt (publish-tested only)
+        type: string
+      candidate_sha256:
+        description: Recorded manifest.json SHA-256 of tested tarballs (publish-tested only)
+        type: string
+      manual_acceptance_confirmed:
+        description: I approve publishing these exact tested tarballs and documented limitations
+        type: boolean
+        default: false
+      acceptance_notes:
+        description: Tester, date, platforms, results and explicitly accepted limitations
+        type: string
+      publish_npm:
+        description: Publish verified packages to npm (beta uses next; prod uses latest)
+        type: boolean
+        default: false
+      publish_github:
+        description: Publish a new immutable GitHub prerelease containing these tarballs
+        type: boolean
+        default: false
 
 permissions:
   contents: read
+  actions: read
+
+concurrency:
+  group: cli-${{ inputs.operation == 'publish-tested' && 'publication' || github.run_id }}
+  cancel-in-progress: false
 
 env:
   BHARATCODE_SOURCE_SHA: ${{ inputs.source_sha }}
@@ -26,6 +62,7 @@ env:
 
 jobs:
   build:
+    if: inputs.operation != 'publish-tested' && inputs.source_sha == github.sha
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -40,7 +77,7 @@ jobs:
         run: bun packages/desktop/scripts/candidate-cohort.ts admit
       - name: Verify package assembly
         working-directory: packages/opencode
-        run: bun test script/pack.test.ts
+        run: bun test script/pack.test.ts script/publish-workflow.test.ts
       - name: Cross-compile all CLI platforms
         working-directory: packages/opencode
         run: bun run build
@@ -54,3 +91,143 @@ jobs:
           path: ${{ runner.temp }}/cli-candidate/*
           if-no-files-found: error
           retention-days: 14
+
+  publish:
+    # npm provenance uses the workflow SHA. Require that SHA to be the tested
+    # source rather than attesting a newer default-branch commit for old tarballs.
+    if: inputs.operation == 'publish-tested' && inputs.manual_acceptance_confirmed && (inputs.publish_npm || inputs.publish_github) && inputs.source_sha == github.sha && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    environment: cli-release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: read
+      id-token: write
+    env:
+      SOURCE_RUN_ID: ${{ inputs.build_run_id }}
+      SOURCE_RUN_ATTEMPT: ${{ inputs.build_run_attempt }}
+      CANDIDATE_SHA256: ${{ inputs.candidate_sha256 }}
+    steps:
+      - name: Verify producer and acceptance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACCEPTANCE_NOTES: ${{ inputs.acceptance_notes }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REPOSITORY" == 'BharatCode-ai/bharatcode-desktop' ]]
+          [[ "$BHARATCODE_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$SOURCE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$SOURCE_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+          [[ "$CANDIDATE_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ -n "${ACCEPTANCE_NOTES//[[:space:]]/}" ]]
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/attempts/$SOURCE_RUN_ATTEMPT" \
+            | jq -e --arg sha "$BHARATCODE_SOURCE_SHA" --arg run "$SOURCE_RUN_ID" --arg attempt "$SOURCE_RUN_ATTEMPT" '
+              (.id | tostring) == $run and (.run_attempt | tostring) == $attempt and .head_sha == $sha and
+              .repository.full_name == "BharatCode-ai/bharatcode-desktop" and .event == "workflow_dispatch" and
+              .status == "completed" and .conclusion == "success" and .path == ".github/workflows/build-and-publish.yml"
+            ' > /dev/null
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.build_run_id }}
+          name: cli-candidate-${{ inputs.build_run_id }}-${{ inputs.build_run_attempt }}
+          path: ${{ runner.temp }}/cli-candidate
+      - name: Verify exact tarballs and committed identity
+        id: verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun packages/opencode/script/verify-candidate.ts "$RUNNER_TEMP/cli-candidate" > "$RUNNER_TEMP/verified-cli.json"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        if: inputs.publish_npm
+        with:
+          node-version: "24"
+      - name: Setup OIDC-capable npm
+        if: inputs.publish_npm
+        run: npm install --global npm@12.1.0 --ignore-scripts
+      - name: Refuse an existing release before any npm writes
+        if: inputs.publish_github
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.verify.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/releases" --paginate --slurp \
+            | jq -e --arg tag "$RELEASE_TAG" '[.[][] | select(.tag_name == $tag)] | length == 0' > /dev/null
+          gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/$RELEASE_TAG" \
+            | jq -e --arg ref "refs/tags/$RELEASE_TAG" '[.[] | select(.ref == $ref)] | length == 0' > /dev/null
+      - name: Refuse existing npm versions before any publication
+        if: inputs.publish_npm
+        env:
+          VERSION: ${{ steps.verify.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq -er '.packages[].name' "$RUNNER_TEMP/verified-cli.json" | while IFS= read -r name; do
+            if npm view "$name@$VERSION" version --json --registry https://registry.npmjs.org > "$RUNNER_TEMP/registry-check.json" 2>/dev/null; then
+              echo 'A candidate version already exists; refusing partial-cohort replay.' >&2; exit 1
+            fi
+            jq -e '.error.code == "E404"' "$RUNNER_TEMP/registry-check.json" > /dev/null
+          done
+      - name: Publish platforms then wrapper and verify registry bytes
+        if: inputs.publish_npm
+        env:
+          VERSION: ${{ steps.verify.outputs.version }}
+          NPM_TAG: ${{ steps.verify.outputs.npm_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq -er '.packages[] | [.name,.file,.integrity] | @tsv' "$RUNNER_TEMP/verified-cli.json" | while IFS=$'\t' read -r name file integrity; do
+            npm publish "$RUNNER_TEMP/cli-candidate/$file" --access public --provenance --ignore-scripts --tag "$NPM_TAG" --registry https://registry.npmjs.org
+            npm view "$name@$VERSION" dist.integrity --json --registry https://registry.npmjs.org \
+              | jq -e --arg expected "$integrity" '. == $expected' > /dev/null
+            npm view "$name" dist-tags --json --registry https://registry.npmjs.org \
+              | jq -e --arg tag "$NPM_TAG" --arg version "$VERSION" '.[$tag] == $version' > /dev/null
+          done
+      - name: Publish verified tarballs as a new immutable GitHub release
+        if: inputs.publish_github
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.verify.outputs.tag }}
+          ACCEPTANCE_NOTES: ${{ inputs.acceptance_notes }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/releases" --paginate --slurp \
+            | jq -e --arg tag "$RELEASE_TAG" '[.[][] | select(.tag_name == $tag)] | length == 0' > /dev/null
+          gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/$RELEASE_TAG" \
+            | jq -e --arg ref "refs/tags/$RELEASE_TAG" '[.[] | select(.ref == $ref)] | length == 0' > /dev/null
+          {
+            echo "Source: $BHARATCODE_SOURCE_SHA"
+            echo "Build: https://github.com/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/attempts/$SOURCE_RUN_ATTEMPT"
+            echo "Tested manifest SHA-256: $CANDIDATE_SHA256"
+            echo "Manual acceptance approved by $GITHUB_ACTOR at $(date -u +%FT%TZ):"
+            printf '%s\n' "$ACCEPTANCE_NOTES"
+          } > "$RUNNER_TEMP/cli-release-notes.md"
+          jq -n --arg tag "$RELEASE_TAG" --arg sha "$BHARATCODE_SOURCE_SHA" --rawfile notes "$RUNNER_TEMP/cli-release-notes.md" \
+            '{tag_name:$tag,target_commitish:$sha,name:("BharatCode " + $tag),body:$notes,draft:true,prerelease:true}' \
+            | gh api "repos/$GITHUB_REPOSITORY/releases" --method POST --input - > "$RUNNER_TEMP/cli-draft.json"
+          release_id=$(jq -er '.id | select(type == "number")' "$RUNNER_TEMP/cli-draft.json")
+          gh release upload "$RELEASE_TAG" "$RUNNER_TEMP"/cli-candidate/* --repo "$GITHUB_REPOSITORY"
+          (cd "$RUNNER_TEMP/cli-candidate" && sha256sum *) | sort > "$RUNNER_TEMP/cli-expected-digests.txt"
+          gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+            --jq '.assets[] | "\(.digest | ltrimstr("sha256:"))  \(.name)"' \
+            | sort > "$RUNNER_TEMP/cli-uploaded-digests.txt"
+          diff "$RUNNER_TEMP/cli-expected-digests.txt" "$RUNNER_TEMP/cli-uploaded-digests.txt"
+          gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" --method PATCH -F draft=false -F prerelease=true > /dev/null
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > "$RUNNER_TEMP/cli-published.json"
+          jq -e --arg sha "$BHARATCODE_SOURCE_SHA" --arg tag "$RELEASE_TAG" \
+            '.draft == false and .prerelease == true and .immutable == true and .target_commitish == $sha and .tag_name == $tag' "$RUNNER_TEMP/cli-published.json" > /dev/null
+          jq -r '.assets[] | "\(.digest | ltrimstr("sha256:"))  \(.name)"' "$RUNNER_TEMP/cli-published.json" \
+            | sort > "$RUNNER_TEMP/cli-published-digests.txt"
+          diff "$RUNNER_TEMP/cli-expected-digests.txt" "$RUNNER_TEMP/cli-published-digests.txt"
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir "$RUNNER_TEMP/cli-live-downloads"
+          (cd "$RUNNER_TEMP/cli-live-downloads" && sha256sum --check "$RUNNER_TEMP/cli-expected-digests.txt")

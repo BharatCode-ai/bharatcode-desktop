@@ -1684,6 +1684,47 @@ run `35898998270`. Both unit-test steps and both E2E jobs passed; that Linux
 exerciser step was still in progress at the last check. The local full auth run
 exited normally; a persistent local finalizer hang was not reproduced.
 
+### September 24: tested CLI publication and real artifact verification
+
+The canonical `build-and-publish.yml` now separates its default build-only mode
+from explicit `publish-tested` mode. Publication requires operator acceptance,
+the default branch, the tested source equal to the workflow SHA (npm provenance),
+a successful exact producer run/attempt, the manifest digest, and `cli-release`
+environment approval where configured. It does not rebuild. The verifier checks
+all 13 original tarballs, source identity, hashes, sizes, filenames and actual
+package manifests before any publication. npm uses OIDC-capable npm 12.1.0 with
+no token fallback, refuses existing versions, publishes platforms before the
+wrapper, and verifies registry integrity and tags. A failed partial publication
+stops without automatic retry or overwrite. Optional GitHub publication starts
+as a new draft, verifies uploaded bytes, then checks immutability and downloads.
+No workflow was dispatched and no npm/release write occurred in this checkpoint.
+
+The executable local publication-shell tests use a fake registry CLI, not real
+publication. They cover wrapper-last ordering, registry failures, byte mismatch,
+existing versions, and malformed/empty verification input. Pack/publication tests
+passed 8/8 (108 assertions); with the probe-isolation regression, 9/9 (112).
+OpenCode typecheck passed.
+
+The real CLI artifact from run `35896723529`, attempt 1, source
+`b04af8981efb43a7e0b3cd26f445a4c8b018d6c0` passed verification for all 13 tarballs.
+Its manifest SHA-256 is
+`468a469dee031519bf9964066ce4e121ddf8e3d2b896d1896a2d0f2f02668ac0`.
+The matching Desktop run `35896719902` passed all four platform producers,
+including both macOS signed/notarized builds. Downloaded Desktop staging passed
+all 12 checksum entries; cohort manifest SHA-256 is
+`46c1ac23ce8e5bba567b118336788c5e314cf46d8ee39bf821ea472dfe6744bf`.
+These are intermediate 1.15.35 build artifacts, not final-head or installed
+acceptance. That version already exists publicly; it must not be overwritten.
+
+An additional release blocker is now reproduced, not just source-traced:
+the installed `electron-updater` 6.8.9 GitHub provider, given a synthetic feed
+with `desktop-beta-1.15.36` followed by CLI `v1.15.36`, skips the Desktop tag
+and requests the CLI release's `beta.yml` then `latest.yml`. Both are absent,
+so the update check fails. The probe used the actual provider with a synthetic
+executor and zero network requests. Resolve Desktop-only update selection before
+publication; do not change existing releases or claim the candidate publisher
+alone establishes end-to-end update compatibility.
+
 ## What is left
 
 This is the current checklist; earlier checkpoint paragraphs describe evidence
@@ -1710,6 +1751,8 @@ and limits at the time they were recorded, not a second active backlog.
 - **Release handoff:** document the exact source/artifact cohort and the remaining
   external gates. Candidate construction is read-only/manual; it does not publish
   npm packages, promote updater metadata or deploy website changes.
+- **Updater selection:** correct and test Desktop-only release selection; the
+  current GitHub provider skips namespaced Desktop tags and selects CLI releases.
 
 The two original shell/review-pane fixes remain deliberately unported because
 upstream already fixed them. The vendored renderer client is retained for its
