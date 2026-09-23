@@ -160,8 +160,10 @@ exports[`opencode CLI help-text snapshots every documented command emits stable 
 import data from another BharatCode or OpenCode installation
 
 Commands:
-  bharatcode migrate      list installations that can be imported                          [default]
-  bharatcode migrate run  import sessions and configuration from another installation
+  bharatcode migrate               list installations that can be imported                 [default]
+  bharatcode migrate run           import sessions and configuration from another installation
+  bharatcode migrate capabilities  explicitly import marketplace choices from a previous Desktop
+                                   profile
 
 Options:
   -h, --help        show help                                                              [boolean]

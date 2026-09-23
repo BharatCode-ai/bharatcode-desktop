@@ -54,8 +54,7 @@ async function start(command: StartCommand) {
     ensureLoopbackNoProxy()
     useSystemCertificates()
     useEnvProxy()
-    const { Server, migrateDesktopCapabilities } = await import("virtual:opencode-server")
-    await migrateDesktopCapabilities(command.userDataPath)
+    const { Server } = await import("virtual:opencode-server")
 
     listener = await Server.listen({
       port: command.port,

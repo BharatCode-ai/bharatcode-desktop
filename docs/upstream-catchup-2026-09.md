@@ -10,6 +10,29 @@ than resolving 499 overlapping files at once.
 
 ## Current checkpoint — September 24
 
+Windows manual test of candidate 97f40c0938 (1.15.36) failed before local-server
+readiness. Exact installed Electron 42.3.3 / Node 24.15.0 isolated reproduction
+identified the unconditional legacy marketplace import: an inherited-permission
+Desktop profile was rejected by its credential-grade reader. A private synthetic
+profile passed. No real user files, ACLs, credentials or installation were changed.
+
+Correction: remove marketplace migration from sidecar startup and remove the
+old Tauri startup importer entirely, including its unused module. Delete the
+marketplace Node bridge/export/type declaration. Remove the CLI startup journal
+probe; journal inspection remains in the explicit migrate command. Marketplace
+import is opt-in via `bharatcode migrate capabilities --from <absolute-profile>`,
+retaining its security checks and existing-choice preservation. Existing legacy
+files/markers are left untouched and are no longer startup prerequisites.
+Current runtime initialization, credential checks, database schema handling and
+compatibility for already imported choices remain intact.
+
+Focused evidence: rebuilt sidecar entry + exact installed server/Electron reaches
+ready and HTTP health 200 in an isolated Windows home with malformed legacy
+settings under ordinary inherited ACLs. Linux actual-sidecar/compiled-server
+smoke and initialization tests: 3/3; Core capabilities: 13/13. Existing CLI help
+snapshot check passes with only the new command changed. This is not a claim
+that the replacement installer has passed user acceptance.
+
 Release policy corrected by Shrey: build candidates, manually test Windows/Linux/
 macOS, then give explicit approval to publish those exact artifacts. Test,
 typecheck and generated-client workflows are now optional manual diagnostics,

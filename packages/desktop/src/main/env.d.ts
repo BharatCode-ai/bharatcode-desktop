@@ -17,5 +17,4 @@ declare module "virtual:opencode-server" {
     export type Info = import("../../../opencode/dist/types/src/node").Config.Info
   }
   export const bootstrap: typeof import("../../../opencode/dist/types/src/node").bootstrap
-  export const migrateDesktopCapabilities: (userData: string) => Promise<void>
 }

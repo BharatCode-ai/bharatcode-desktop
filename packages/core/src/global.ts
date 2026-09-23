@@ -36,10 +36,8 @@ export async function ensure() {
   )
 }
 
-// Retained from upstream until the startup-recovery work lands. Recovery has to
-// inspect and migrate these roots *before* anything creates them, so that commit
-// drops this import-time call and makes ensure() the only creator. mkdir is
-// idempotent, so running both in the meantime is harmless.
+// Initialize only current runtime directories. Legacy imports are explicit CLI
+// operations and must never be introduced into this startup path.
 await ensure()
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Global") {}

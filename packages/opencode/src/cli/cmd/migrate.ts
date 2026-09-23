@@ -1,5 +1,6 @@
 import { Global } from "@opencode-ai/core/global"
 import type { Argv } from "yargs"
+import path from "node:path"
 
 import { activateMigration, prepareMigration, startFresh } from "@/migration/cutover"
 import { fingerprintMigrationSource } from "@/migration/capture"
@@ -30,11 +31,8 @@ export function discover() {
   })
 }
 
-/**
- * Cheap enough for a startup notice: reads one small JSON file, with no database
- * open and no subprocess. Returns the operation to resume, if any.
- */
-export async function interruptedImport() {
+// Consult recovery state only within the explicit migrate command.
+async function interruptedImport() {
   const journal = await readMigrationJournal(Global.Path.recovery)
   return journal && journal.phase !== "complete" ? journal : undefined
 }
@@ -106,9 +104,27 @@ const MigrateRunCommand = cmd({
   },
 })
 
+const MigrateCapabilitiesCommand = cmd({
+  command: "capabilities",
+  describe: "explicitly import marketplace choices from a previous Desktop profile",
+  builder: (yargs: Argv) =>
+    yargs.option("from", {
+      type: "string",
+      demandOption: true,
+      describe: "absolute path to the previous Desktop profile",
+    }),
+  handler: async (args: { from: string }) => {
+    if (!path.isAbsolute(args.from)) throw new Error("The previous Desktop profile path must be absolute.")
+    const { Capabilities } = await import("@opencode-ai/core/capabilities")
+    await Capabilities.migrateDesktop({ data: Global.Path.data, userData: args.from })
+    console.log("Marketplace import completed; any existing runtime choices were preserved.")
+  },
+})
+
 export const MigrateCommand = cmd({
   command: "migrate",
   describe: "import data from another BharatCode or OpenCode installation",
-  builder: (yargs: Argv) => yargs.command(MigrateStatusCommand).command(MigrateRunCommand),
+  builder: (yargs: Argv) =>
+    yargs.command(MigrateStatusCommand).command(MigrateRunCommand).command(MigrateCapabilitiesCommand),
   handler: () => {},
 })
