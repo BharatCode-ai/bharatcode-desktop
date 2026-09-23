@@ -2,7 +2,8 @@ import { app } from "electron"
 import { join, posix, win32 } from "node:path"
 import { verifyWslArtifact, wslRuntimeFilename } from "./artifact"
 import { provisionWslRuntime, resolveWslIdentity, type WslExecute } from "./provision"
-import { runWsl, wslArgs, type RunWslOptions } from "./runtime"
+import { runWsl, type RunWslOptions } from "./runtime"
+import { wslArgs } from "./args"
 
 export async function bundledWslRuntime(distro: string, install: boolean, options?: RunWslOptions) {
   const arch = process.arch

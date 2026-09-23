@@ -4,6 +4,7 @@ import { join } from "node:path"
 import * as pty from "@lydell/node-pty"
 import type { WslDistroProbe, WslInstalledDistro, WslOnlineDistro, WslRuntimeCheck } from "../../preload/types"
 import { wslTerminalArgs } from "./policy"
+import { wslArgs } from "./args"
 import { nativeT } from "../native-translations"
 
 export type WslCommandLine = {
@@ -33,16 +34,6 @@ export type RunWslOptions = {
 
 const DEFAULT_WSL_TIMEOUT_MS = 20_000
 const DEFAULT_WSL_INSTALL_TIMEOUT_MS = 15 * 60_000
-
-export function wslArgs(args: string[], distro?: string | null, user?: string | null, cwd?: string) {
-  return [
-    ...(distro ? ["-d", distro] : []),
-    ...(user ? ["--user", user] : []),
-    ...(cwd ? ["--cd", cwd] : []),
-    "--",
-    ...args,
-  ]
-}
 
 export function runWsl(args: string[], opts: RunWslOptions = {}) {
   return runCommand("wsl", args, opts)

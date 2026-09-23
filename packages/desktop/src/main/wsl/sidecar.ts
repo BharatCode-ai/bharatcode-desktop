@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto"
 import { createServer } from "node:net"
 import { bundledWslRuntime } from "./bundle"
 import { connectWslChild } from "./transport"
-import { wslArgs } from "./runtime"
+import { wslArgs } from "./args"
 import { nativeT } from "../native-translations"
 
 export type WslSidecar = {

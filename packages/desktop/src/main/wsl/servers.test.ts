@@ -8,7 +8,7 @@ import {
 } from "./policy"
 import { expectOpencodeVersion, pendingRestartAfterWslInstall, wslServerIdsToStartOnInitialize } from "./startup"
 import { createWslServersController, type WslServerConfig } from "./servers"
-import { wslArgs } from "./runtime"
+import { wslArgs } from "./args"
 
 let persistedServers: WslServerConfig[] = []
 let releaseOpencodeResolve: (() => void) | undefined
@@ -21,11 +21,17 @@ test("launch working directory is the verified Linux home, not the Windows app f
     "fixture",
     "--cd",
     "/home/Fixture Name",
-    "--",
+    "--exec",
     "/runtime",
     "serve",
   ])
-  expect(wslArgs(["/bin/true"], "Ubuntu")).toEqual(["-d", "Ubuntu", "--", "/bin/true"])
+  expect(wslArgs(["/bin/true"], "Ubuntu")).toEqual(["-d", "Ubuntu", "--exec", "/bin/true"])
+})
+
+test("WSL commands bypass the implicit shell without rewriting literal arguments", () => {
+  const args = ["/usr/bin/wslpath", "-u", "--", String.raw`C:\Users\Fixture Name\runtime & $literal.exe`]
+  expect(wslArgs(args, "Ubuntu")).toEqual(["-d", "Ubuntu", "--exec", ...args])
+  expect(wslArgs(["sh", "-lc", "printf test"])).toEqual(["--exec", "sh", "-lc", "printf test"])
 })
 
 test("bundled-runtime check does not require curl", async () => {

@@ -5,8 +5,9 @@ import { spawn, execFileSync } from "node:child_process"
 import { createHash } from "node:crypto"
 import { readFile } from "node:fs/promises"
 import { createServer } from "node:net"
-import { posix } from "node:path"
+import { posix, win32 } from "node:path"
 import { connectWslChild } from "../src/main/wsl/transport"
+import { wslArgs } from "../src/main/wsl/args"
 import { parseWslRuntimeManifest } from "../src/main/wsl/artifact"
 import { provisionWslRuntime, resolveWslIdentity } from "../src/main/wsl/provision"
 
@@ -30,7 +31,7 @@ const hostEnv = Object.fromEntries(
   ),
 )
 const run = (args: string[], user?: string) =>
-  execFileSync("wsl.exe", ["--distribution", distro, ...(user ? ["--user", user] : []), "--exec", ...args], {
+  execFileSync("wsl.exe", wslArgs(args, distro, user), {
     env: hostEnv,
     windowsHide: true,
     encoding: "utf8",
@@ -38,6 +39,18 @@ const run = (args: string[], user?: string) =>
   }).trimEnd()
 const uid = Number(run(["/usr/bin/id", "-u"]))
 assert.equal(Number.isSafeInteger(uid) && uid > 0, true)
+// Exercise the production argv builder across the real native boundary, not a
+// separately corrected test launcher. These values must never become shell code.
+const literal = String.raw`C:\Users\Fixture Name\runtime & $HOME; 'quoted'.exe`
+assert.equal(run(["/usr/bin/printf", "%s", literal]), literal)
+assert.equal(run(["sh", "-c", "printf explicit-shell"]), "explicit-shell")
+assert.ok(process.env.TEMP)
+assert.equal(
+  win32
+    .normalize(run(["/usr/bin/wslpath", "-w", "--", run(["/usr/bin/wslpath", "-u", "--", process.env.TEMP])]))
+    .toLowerCase(),
+  win32.normalize(process.env.TEMP).toLowerCase(),
+)
 const home = run(["/usr/bin/mktemp", "-d", "/tmp/bharatcode-wsl-windows-smoke.XXXXXXXX"])
 assert.match(home, /^\/tmp\/bharatcode-wsl-windows-smoke\.[A-Za-z0-9]{8}$/)
 const execute = async (_distro: string, args: string[], user?: string) => run(args, user)
@@ -58,71 +71,118 @@ try {
   run(["/usr/bin/rm", "-rf", "--", home])
   throw error
 }
-const port = await new Promise<number>((resolve, reject) => {
-  const socket = createServer()
-  socket.once("error", reject)
-  socket.listen(0, "127.0.0.1", () => {
-    const address = socket.address()
-    assert.equal(typeof address, "object")
-    assert.ok(address && typeof address !== "string")
-    socket.close(() => resolve(address.port))
-  })
-})
-const child = spawn(
-  "wsl.exe",
-  [
-    "--distribution",
-    distro,
-    "--cd",
-    home,
-    "--exec",
-    "/usr/bin/env",
-    "-i",
-    `HOME=${home}`,
-    `USERPROFILE=${home}`,
-    `OPENCODE_TEST_HOME=${home}`,
-    "PATH=/usr/bin:/bin",
-    `XDG_DATA_HOME=${home}/data`,
-    `XDG_STATE_HOME=${home}/state`,
-    `XDG_CONFIG_HOME=${home}/config`,
-    `XDG_CACHE_HOME=${home}/cache`,
-    "OPENCODE_DISABLE_MODELS_FETCH=true",
-    installed,
-    "serve",
-    "--hostname",
-    "127.0.0.1",
-    "--port",
-    String(port),
-    "--desktop-sidecar-stdio",
-  ],
-  { env: hostEnv, stdio: ["pipe", "pipe", "pipe"], windowsHide: true },
-)
-const closed = new Promise<void>((resolve) => child.once("close", () => resolve()))
+let sessionID: string | undefined
 try {
-  const listener = await connectWslChild(child, {
-    port,
-    password: "synthetic-windows-wsl-smoke",
-    identity: {
-      type: "identity",
-      source_sha: sourceSha,
-      version: manifest.version,
-      channel: manifest.channel,
-      executable_sha256: manifest.sha256,
-      uid,
-    },
-  })
-  await listener.stop()
-  await closed
-  assert.equal(child.exitCode, 0)
-  await assert.rejects(fetch(`http://127.0.0.1:${port}/global/health`, { signal: AbortSignal.timeout(2000) }))
-  console.log("WINDOWS_WSL_PROVISION_TRANSPORT_PASS")
+  const project = `${home}/project with spaces`
+  run(["/usr/bin/mkdir", project])
+  run(["/usr/bin/git", "init", "--quiet", project])
+  for (const phase of ["create", "reopen"]) {
+    const port = await new Promise<number>((resolve, reject) => {
+      const socket = createServer()
+      socket.once("error", reject)
+      socket.listen(0, "127.0.0.1", () => {
+        const address = socket.address()
+        assert.equal(typeof address, "object")
+        assert.ok(address && typeof address !== "string")
+        socket.close(() => resolve(address.port))
+      })
+    })
+    const child = spawn(
+      "wsl.exe",
+      wslArgs(
+        [
+          "/usr/bin/env",
+          "-i",
+          `HOME=${home}`,
+          `USERPROFILE=${home}`,
+          `OPENCODE_TEST_HOME=${home}`,
+          "PATH=/usr/bin:/bin",
+          `XDG_DATA_HOME=${home}/data`,
+          `XDG_STATE_HOME=${home}/state`,
+          `XDG_CONFIG_HOME=${home}/config`,
+          `XDG_CACHE_HOME=${home}/cache`,
+          "OPENCODE_DISABLE_MODELS_FETCH=true",
+          "OPENCODE_PURE=1",
+          "OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER=true",
+          installed,
+          "serve",
+          "--hostname",
+          "127.0.0.1",
+          "--port",
+          String(port),
+          "--desktop-sidecar-stdio",
+        ],
+        distro,
+        undefined,
+        project,
+      ),
+      { env: hostEnv, stdio: ["pipe", "pipe", "pipe"], windowsHide: true },
+    )
+    const closed = new Promise<void>((resolve) => child.once("close", () => resolve()))
+    try {
+      const listener = await connectWslChild(child, {
+        port,
+        password: "synthetic-windows-wsl-smoke",
+        identity: {
+          type: "identity",
+          source_sha: sourceSha,
+          version: manifest.version,
+          channel: manifest.channel,
+          executable_sha256: manifest.sha256,
+          uid,
+        },
+      })
+      const request = async (route: string, init?: RequestInit) => {
+        const response = await fetch(`http://127.0.0.1:${port}${route}`, {
+          ...init,
+          redirect: "manual",
+          signal: AbortSignal.timeout(15_000),
+          headers: {
+            authorization: `Basic ${Buffer.from("bharatcode:synthetic-windows-wsl-smoke").toString("base64")}`,
+            "x-opencode-directory": encodeURIComponent(project),
+            "content-type": "application/json",
+          },
+        })
+        assert.equal(response.status, 200, `${phase}:${route}:HTTP status`)
+        return response.json()
+      }
+      assert.equal((await request("/account/status")).state, "signed-out")
+      const paths = await request("/path")
+      assert.equal(paths.directory, project)
+      assert.equal(paths.home, home)
+      if (phase === "create") {
+        const session = await request("/session", {
+          method: "POST",
+          body: JSON.stringify({ title: "WSL persisted fixture" }),
+        })
+        assert.equal(typeof session.id, "string")
+        assert.equal(session.directory, project)
+        sessionID = session.id
+      } else {
+        assert.ok(sessionID)
+        const session = await request(`/session/${sessionID}`)
+        assert.equal(session.title, "WSL persisted fixture")
+        assert.equal(session.directory, project)
+        await request(`/session/${sessionID}`, { method: "DELETE" })
+      }
+      const stopped = listener.stop()
+      assert.equal(listener.stop(), stopped)
+      await stopped
+      await closed
+      assert.equal(child.exitCode, 0)
+      await assert.rejects(fetch(`http://127.0.0.1:${port}/global/health`, { signal: AbortSignal.timeout(2000) }))
+    } finally {
+      child.stdin.end()
+      child.kill()
+      await Promise.race([
+        closed,
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("WSL cleanup timed out")), 5000).unref()),
+      ])
+    }
+  }
+  console.log("WINDOWS_WSL_PROVISION_TRANSPORT_PERSISTENCE_PASS")
 } finally {
-  child.stdin.end()
-  child.kill()
-  await Promise.race([
-    closed,
-    new Promise<never>((_, reject) => setTimeout(() => reject(new Error("WSL cleanup timed out")), 5000).unref()),
-  ])
   // Exact directory created above, never a user profile or an arbitrary path.
+  assert.equal(run(["/usr/bin/realpath", "--", home]), home)
   run(["/usr/bin/rm", "-rf", "--", home])
 }

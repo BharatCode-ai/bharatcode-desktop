@@ -10,6 +10,33 @@ than resolving 499 overlapping files at once.
 
 ## Where it stands
 
+### Native Windows-to-WSL argument boundary — September 23, 2026
+
+A real native Windows launcher test exposed a production defect: `wsl --`
+invokes the default shell, consuming backslashes in Windows artifact paths.
+The same `wslpath` input succeeds with `--exec`. All command callers now share
+the small production argv builder using `--exec`; explicitly requested `sh`
+scripts remain explicit, while interactive terminal launch is unchanged.
+The native smoke previously had its own correct argv construction, masking
+the production defect. It now consumes the production helper instead.
+
+RED: two argv regressions failed. GREEN: WSL source suite **38/38**, full
+Desktop **141/141, 451 assertions**, Desktop typecheck. The native smoke now
+also checks literal backslashes/metacharacters, drive-path translation,
+private runtime provisioning, signed-out account status, project paths with
+spaces, session creation and persistence across two real WSL processes,
+authenticated readiness, idempotent acknowledged shutdown and closed ports.
+It passed with native Windows Node and the compiled non-root Linux runtime
+from clean source `31d8d49650d7767e0d4495a95f0d42e1cd10c154` (SHA-256
+`4c73080e719562d8af2f9d6236860e37c2d7826a76db8fab8d96c568cded7c65`).
+That first pass used the pending corrected Desktop harness, not a same-SHA
+packaged cohort. Exact-source rebuilding follows the corrective commit.
+
+Only freshly created test roots were mutated and removed. No installed app,
+protocol handler, real credentials, model requests or user profile was used.
+Logs: `/tmp/bc-wsl-args-red.log`, `/tmp/bc-wsl-args-green.log`,
+`/tmp/bc-wsl-desktop-full.log`, `/tmp/bc-wsl-args-types.log`.
+
 ### Provider fixtures and refreshed Linux packages — September 23, 2026
 
 The five historical provider failures were reproduced and diagnosed rather than
