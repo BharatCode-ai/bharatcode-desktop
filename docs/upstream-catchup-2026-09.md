@@ -10,6 +10,28 @@ than resolving 499 overlapping files at once.
 
 ## Where it stands
 
+### Retained CI surface — September 23, 2026
+
+Removed eight workflows whose products were already pruned from this re-fork:
+VS Code/GitHub Action publishing and Action release, containers, SST deployment,
+website documentation update/translation, and Storybook. None of their target
+directories/configuration exists in this tree. Historical changelog classification
+is retained because it intentionally reads old commits.
+
+Unit/E2E/typecheck jobs now use standard Ubuntu 24.04 and Windows 2022 runners,
+not the upstream-only Blacksmith runner labels. Playwright's pinned Node version
+is selected after setup-bun, so the composite action cannot overwrite it.
+Generated-client CI is now a read-only drift check of both SDK generations,
+with isolated runtime directories; it no longer commits/pushes changes through
+an upstream app credential. This does not alter candidate signing, source
+admission, artifact policy or grant publication authority. Repository moderation
+bots are outside this build/release cleanup and have not been enabled or run.
+
+Evidence: retained build workflows parse as YAML and their local action/workdir
+references exist; changed YAML passes formatting; both generators ran with zero
+generated diff; candidate/packaging regressions **9/9, 52 assertions**. No hosted
+workflow was dispatched and hosted runner execution remains unverified.
+
 ### Renderer SDK / compiled sidecar compatibility — September 23, 2026
 
 The App's vendored `@opencode-ai/client` is an intentional transitional client,
