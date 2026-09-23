@@ -10,6 +10,33 @@ than resolving 499 overlapping files at once.
 
 ## Where it stands
 
+### Retained Desktop route restoration — September 23, 2026
+
+The new Desktop shell already restores a window-scoped URL through
+`DesktopMemoryRouter`, before shared App layout initialization. The absence of
+the old `app-startup.ts` helper is **not** evidence of lost restoration. Extracted
+that existing router verbatim into `desktop/src/renderer/router.tsx` so a browser
+fixture exercises the actual shipped implementation, rather than a lookalike.
+No startup behavior, storage keys, profile data, or authentication policy changed.
+
+An initial fixture incorrectly used a plain memory router, then omitted the
+Desktop full-height root container. Those failures are fixture defects, **not
+product RED evidence**. The redundant proposed startup fallback was removed
+before commit; it must not compete with the existing router or override a
+deliberately saved Home route.
+
+Real Chromium with the actual router, asynchronously hydrated synthetic Desktop
+storage, and mocked V1 backend passes **5/5**: both layouts reopen the selected
+older conversation and messages after navigation/reload; Home remains Home;
+two window IDs retain independent routes; a failed session lookup preserves the
+saved URL and a later reload recovers. App **745/745**, browser-condition **55/55**,
+Desktop **141/141**, Desktop/E2E typechecks, and production App build pass.
+The E2E typecheck now includes the full imported App surface and extracted router.
+The fixture is not shipped, does not use an authentication bypass, and makes no
+real account/network/model request. This is renderer integration evidence, not
+installed close/reopen or OS window-lifecycle acceptance. Logs:
+`/tmp/bc-startup-{real-router,e2e-types,desktop-tests,desktop-types,app-tests,app-build}.log`.
+
 ### Retained dependency security versions — September 23, 2026
 
 Restored DOMPurify 3.4.11 from accepted `e252c31658` at its new consumer,

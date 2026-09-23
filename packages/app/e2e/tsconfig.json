@@ -2,10 +2,17 @@
   "extends": "../tsconfig.json",
   "compilerOptions": {
     "noEmit": true,
-    "rootDir": "..",
+    "rootDir": "../..",
     "types": ["node", "bun"]
   },
   "include": [
+    "../src",
+    "../package.json",
+    "../playwright.config.ts",
+    "../../desktop/src/renderer/router.tsx",
+    "./startup-restore.spec.ts",
+    "./reproduction/startup/**/*.ts",
+    "./reproduction/startup/**/*.tsx",
     "./markdown-safety.spec.ts",
     "./session-compaction.spec.ts",
     "./performance/timeline/session-timeline-stress.fixture.ts",
