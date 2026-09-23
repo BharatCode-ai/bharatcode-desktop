@@ -300,6 +300,18 @@ test.skipIf(process.platform !== "win32" || !process.env.BHARATCODE_TEST_NATIVE_
       ] as const) {
         const result = spawnSync(process.env.BHARATCODE_TEST_NATIVE_AUTH_EXE!, [], {
           cwd: root,
+          env: {
+            SystemRoot: process.env.SystemRoot,
+            WINDIR: process.env.SystemRoot,
+            HOME: root,
+            USERPROFILE: root,
+            OPENCODE_TEST_HOME: root,
+            TEMP: root,
+            TMP: root,
+            APPDATA: path.join(root, "AppData", "Roaming"),
+            LOCALAPPDATA: path.join(root, "AppData", "Local"),
+            BHARATCODE_CHANNEL: "beta",
+          },
           input: JSON.stringify({ root, action }),
           encoding: "utf8",
           windowsHide: true,

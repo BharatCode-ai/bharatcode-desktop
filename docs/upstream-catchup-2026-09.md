@@ -10,6 +10,34 @@ than resolving 499 overlapping files at once.
 
 ## Where it stands
 
+### Native Windows storage/recovery refresh — September 23, 2026
+
+Fresh Windows execution verifies credential ACL rejection, no-follow/link and
+held-object protections, before/after-publication failures, fail-closed timeout,
+compiled Auth create/read/rotate/logout across processes, ordinary inherited
+first-use paths through both Global and migration initialization, and interrupted
+capture/Start Fresh/partial-role activation retry. Across the targeted runs:
+**31 tests pass** (17 credential, 2 first-use, 12 recovery), plus the compiled
+Node capability fixture's **14 checks**. This is native isolated fixture evidence,
+not installed-package or hardware power-loss certification.
+
+Two harness problems were kept distinct from product failures. Bundling the
+recovery suite turns exports into accessors unsupported by Bun's `spyOn`; all
+12 tests pass using byte-identical staged source modules and their dependency.
+The old compiled Auth test inherited the host environment despite supplying a
+synthetic service layer. Core Global initialization happens at import time, so
+its first attempt failed on default-directory permission validation before the
+fixture action. That attempt was not properly profile-isolated and is not
+claimed as synthetic acceptance. The test now gives its child only explicit
+synthetic HOME/AppData/temp paths plus the required Windows system root; the
+seven-process lifecycle then passes. No app installation, protocol registration,
+OAuth flow or deliberate real-profile repair was performed.
+
+Reproduction sources remain the existing Windows store/first-use and native
+recovery suites plus `packages/core/test/fixture/capabilities-native.ts`.
+The staging helper is `/tmp/bc-native-source-stage.cjs`; it copies only the
+required modules into a new Windows temporary root and validates cleanup scope.
+
 ### Retained CI surface — September 23, 2026
 
 Removed eight workflows whose products were already pruned from this re-fork:
@@ -928,36 +956,34 @@ bearer tokens); I confirmed them against a stashed baseline before and after.
 
 ## What is left
 
-Ordered by dependency, not by size.
+This is the current checklist; earlier checkpoint paragraphs describe evidence
+and limits at the time they were recorded, not a second active backlog.
 
-| Theme              | Scope (our delta since the fork)                                                   | Notes                                                                                                        |
-| ------------------ | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| **cli-core**       | `src/cli` 28 files +1,035; `src/session` 13 files +877; `src/server` 28 files +581 | `prompt.ts` is the hard one: 220 ours over a 667-line upstream rewrite. Unblocks the Goal Mode HTTP handler. |
-| **desktop-shell**  | 338 files, +27,680                                                                 | The single largest body of work, but only ~12% contested.                                                    |
-| **app-ui**         | `packages/app` 86 files +4,112; `packages/ui` 81 files +324                        | Includes re-homing the Goal Mode ribbon.                                                                     |
-| **ci-release**     | `.github` 48 files, +8,471                                                         | Re-author from the current workflows, not commit by commit.                                                  |
-| **tests**          | 75 files, +12,448                                                                  | Prune while replaying.                                                                                       |
-| **sdk + lockfile** | generated                                                                          | Regenerate last, after Goal Mode and bharatcode-core are in.                                                 |
+- **Final retained-feature audit:** reconcile the old release feature inventory
+  with the implemented CLI, account, Goal Mode, marketplace, dictation, renderer,
+  WSL and release changes. Goal routing/ribbon and SDK generation are implemented;
+  do not restart those themes from the original re-fork backlog.
+- **Fresh exact-source packages:** rebuild after the latest branding/runtime/CI
+  commits. The earlier Linux packages and WSL runtime are intermediate evidence,
+  not final-cohort artifacts. Verify Windows package contents and isolated native
+  startup/upgrade/reopen paths; macOS signing/notarization requires a macOS host.
+- **WSL/native boundaries:** exercise the same-source runtime lifecycle and
+  account/error behavior without copying real credentials. Source/unit checks do
+  not replace actual native-to-WSL execution evidence.
+- **Broad test closure:** rerun affected suites, resolve or explicitly classify
+  inherited provider-auth-dependent tests and Bun-versus-Node SQLite differences.
+  Keep compiled Node and native fixture results separate from installed Electron.
+- **Acceptance limits:** real microphone/OAuth/model generation and signed-in
+  installed UI are not established by mocked renderer or signed-out fixtures.
+  No live-profile/install/publication action is authorized by these local checks.
+- **Release handoff:** document the exact source/artifact cohort and the remaining
+  external gates. Candidate construction is read-only/manual; it does not publish
+  npm packages, promote updater metadata or deploy website changes.
 
-### Known follow-ups
-
-- **Goal Mode is not wired end-to-end.** The API accepts a goal payload but
-  nothing routes it. Needs the `ensureGoal*` methods in `prompt.ts` (cli-core)
-  and the HTTP handler. The ribbon needs `packages/app` and a regenerated SDK.
-- **The Goal Mode ribbon still needs re-homing** onto upstream's
-  `session-composer-region-controller.ts`. Doing it before `packages/app` is
-  reconciled means doing it twice.
-- **One test is skipped with a reason** — `provider-policy.test.ts` scans httpapi
-  v2 handler sources that are not on the branch yet.
-- **`toV2Provider` has a semantic gap.** The old provider carried
-  `enabled: { via: "account" }`; the new `ProviderV2.Info` has no equivalent and
-  upstream gates on `request.body.apiKey` or an integration. Decide with the v2
-  handlers.
-- **`lean-migration-recovery.test.ts`**, when replayed, should resolve paths
-  through `StoragePaths.resolve` rather than re-introducing its own
-  `canonicalLayout()`, which now duplicates it.
-- The two shell/review-pane UI bugs are **dropped, not ported** — upstream
-  already fixed both, better than the one-line tweaks we had planned.
+The two original shell/review-pane fixes remain deliberately unported because
+upstream already fixed them. The vendored renderer client is retained for its
+transitional contract, with real bundled-V1 adapter verification; external pure-V2
+Goal execution is not implied by that result.
 
 ## Things worth knowing before continuing
 
