@@ -55,6 +55,30 @@ module as untracked during config evaluation. The generated
 and all other checkout changes remain subject to the original clean-SHA guard.
 This failure was not a reason to disable source identity validation.
 
+Local exact-source build at `cd81b4bc1c2263741919b6e6a043871f57c24878`
+then passed compiled CLI version smoke, Node bundling, Electron main/preload/
+renderer and Linux AppImage/deb packaging. Actual builder output uses
+`linux-x86_64.AppImage` and `linux-amd64.deb`; the candidate verifier was corrected
+from the assumed x64 filenames with a two-failure RED and **17/17 focused GREEN,
+84 assertions**. Direct helper typecheck passes. Updater verification checks
+both the files array and legacy primary path/digest, and staged copies are
+rehashed before receipt creation.
+
+Read-only Debian extraction verified embedded package version 1.15.35, the exact
+source string in compiled main, and identical bundled CLI/app.asar bytes against
+the builder output. Artifact SHA-256:
+
+- AppImage: `daae8eea8e9835c1e58ec2c90ed318e976d91d5109d67f0ab4179c171ca86cd9`.
+- Debian: `f183f91bda196a481a38ee06086c9d8ca63721b5e63fad68a4586d82d93165ed`.
+- Bundled CLI: `fff5b4a42ecdf39a446833c6e26acd5f0b1a374de0cd9db36687df4b9e2db3e7`.
+- app.asar: `d906bf328918c723b0574739ebc94b0a7447bf27761021aa73ce7d9f7349bbc2`.
+
+This is local Linux package evidence, not a hosted producer receipt or installed/
+visible UI acceptance. No application was installed or launched by extraction.
+Logs: `/tmp/bc-candidate-{prebuild,electron,linux-package}.log`,
+`/tmp/bc-candidate-linux-inspection.json`; extraction helper:
+`/tmp/bc-inspect-linux-candidate.ts`. The isolated extraction directory was removed.
+
 ### MCP authorization browser handoff — September 23, 2026
 
 The upstream project-scoped MCP controls already connect, disconnect and run

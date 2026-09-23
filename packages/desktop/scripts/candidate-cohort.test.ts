@@ -3,7 +3,13 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { createHash } from "node:crypto"
-import { assembleCohort, collectCohort, validateIdentity, type Receipt } from "./candidate-cohort"
+import {
+  assembleCohort,
+  collectCohort,
+  inspectPackageOutputs,
+  validateIdentity,
+  type Receipt,
+} from "./candidate-cohort"
 
 const identity = {
   source: "a".repeat(40),
@@ -68,7 +74,11 @@ async function fixture(root: string) {
     const suffixes = target === "windows-x64" ? ["exe"] : target.startsWith("darwin") ? ["zip"] : ["AppImage", "deb"]
     const files: Receipt["files"] = []
     for (const ext of suffixes) {
-      const name = `bharatcode-desktop-${target.replace("windows", "win").replace("darwin", "mac")}.${ext}`
+      const platform =
+        target === "linux-x64"
+          ? `linux-${ext === "deb" ? "amd64" : "x86_64"}`
+          : target.replace("windows", "win").replace("darwin", "mac")
+      const name = `bharatcode-desktop-${platform}.${ext}`
       const bytes = Buffer.from(`synthetic ${target} ${ext}`)
       await fs.writeFile(path.join(dir, name), bytes)
       files.push({ name, bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") })
@@ -114,7 +124,7 @@ test("cohort requires every architecture, exact source/run and immutable verifie
     expect(cohort.files).toHaveLength(9)
     expect(cohort.acceptance).toBe("pending")
     expect(cohort.publication).toBe("not-authorized")
-    await fs.appendFile(path.join(root, "linux-x64", "bharatcode-desktop-linux-x64.deb"), "drift")
+    await fs.appendFile(path.join(root, "linux-x64", "bharatcode-desktop-linux-amd64.deb"), "drift")
     await expect(assembleCohort(root, identity)).rejects.toThrow()
     await fs.rm(path.join(root, "darwin-arm64"), { recursive: true })
     await expect(assembleCohort(root, identity)).rejects.toThrow()
@@ -140,8 +150,35 @@ test("download collection rejects missing, extra and stale-attempt producers", a
   }
 })
 
+test("producer inspection recognizes native Linux aliases and validates updater bytes", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "bc-cohort-"))
+  try {
+    await fixture(root)
+    const dir = path.join(root, "linux-x64")
+    await fs.rename(path.join(dir, "linux-x64-beta-linux.yml"), path.join(dir, "beta-linux.yml"))
+    expect((await inspectPackageOutputs(dir, "linux-x64", identity)).map((file) => file.name)).toEqual([
+      "beta-linux.yml",
+      "bharatcode-desktop-linux-amd64.deb",
+      "bharatcode-desktop-linux-x86_64.AppImage",
+    ])
+    await expect(inspectPackageOutputs(dir, "linux-x64", { ...identity, version: "1.0.0" })).rejects.toThrow()
+    await fs.rename(
+      path.join(dir, "bharatcode-desktop-linux-amd64.deb"),
+      path.join(dir, "bharatcode-desktop-linux-x64.deb"),
+    )
+    await expect(inspectPackageOutputs(dir, "linux-x64", identity)).rejects.toThrow()
+  } finally {
+    await fs.rm(root, { recursive: true, force: true })
+  }
+})
+
 test("updater metadata cannot redirect outside or misidentify packaged bytes", async () => {
-  for (const change of [{ version: "1.0.0" }, { files: [] }, { files: [{ url: "../outside.zip" }] }]) {
+  for (const change of [
+    { version: "1.0.0" },
+    { files: [] },
+    { files: [{ url: "../outside.zip" }] },
+    { path: "../outside.zip", sha512: "invalid" },
+  ]) {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "bc-cohort-"))
     try {
       await fixture(root)

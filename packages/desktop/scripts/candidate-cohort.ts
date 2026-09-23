@@ -63,16 +63,20 @@ function stem(target: Target) {
   return `bharatcode-desktop-${target.replace("windows", "win").replace("darwin", "mac")}`
 }
 function required(target: Target) {
+  // electron-builder applies target-specific architecture aliases to Linux.
+  if (target === "linux-x64") return ["bharatcode-desktop-linux-x86_64.AppImage", "bharatcode-desktop-linux-amd64.deb"]
   const extensions = target.startsWith("darwin") ? ["zip"] : target === "windows-x64" ? ["exe"] : ["AppImage", "deb"]
   return extensions.map((ext) => `${stem(target)}.${ext}`)
 }
 function updater(target: Target, channel: Identity["channel"]) {
   return `${target}-${channel === "beta" ? "beta" : "latest"}${target.startsWith("darwin") ? "-mac" : target === "linux-x64" ? "-linux" : ""}.yml`
 }
-async function verifyUpdater(directory: string, name: string, files: File[], identity: Identity) {
+async function verifyUpdater(directory: string, name: string, files: File[], identity: Pick<Identity, "version">) {
   const metadata = Bun.YAML.parse((await bytes(path.join(directory, name))).toString()) as {
     version: string
     files: Array<{ url: string; sha512: string; size: number }>
+    path?: string
+    sha512?: string
   }
   if (metadata.version !== identity.version || !Array.isArray(metadata.files) || !metadata.files.length) throw fail()
   for (const file of metadata.files) {
@@ -81,6 +85,33 @@ async function verifyUpdater(directory: string, name: string, files: File[], ide
     if (file.size !== artifact.length || file.sha512 !== createHash("sha512").update(artifact).digest("base64"))
       throw fail()
   }
+  if (metadata.path !== undefined || metadata.sha512 !== undefined) {
+    const primary = metadata.files.find((file) => file.url === metadata.path)
+    if (!primary || primary.sha512 !== metadata.sha512) throw fail()
+  }
+}
+
+export async function inspectPackageOutputs(
+  dist: string,
+  target: Target,
+  identity: Pick<Identity, "version" | "channel">,
+) {
+  const packages = required(target)
+  const entries = await fs.readdir(dist)
+  if (packages.some((name) => !entries.includes(name))) throw fail()
+  const metadata = updater(target, identity.channel).slice(target.length + 1)
+  if (!entries.includes(metadata)) throw fail()
+  const names = entries.filter(
+    (name) => packages.includes(name) || packages.some((item) => name === `${item}.blockmap`),
+  )
+  names.push(metadata)
+  const files: File[] = []
+  for (const name of names.sort()) {
+    const content = await bytes(path.join(dist, name))
+    files.push({ name, bytes: content.length, sha256: hash(content) })
+  }
+  await verifyUpdater(dist, metadata, files, identity)
+  return files
 }
 async function bytes(file: string) {
   const stat = await fs.lstat(file)
@@ -229,35 +260,19 @@ async function record(root: string, target: Target, identity: Identity) {
   const desktop = path.resolve(import.meta.dir, "..")
   const dist = path.join(desktop, "dist")
   const signing = await verifySigning(target, dist, identity)
+  const artifacts = await inspectPackageOutputs(dist, target, identity)
   const directory = path.join(root, target)
   await fs.mkdir(root, { recursive: true })
   await fs.mkdir(directory)
-  const names = (await fs.readdir(dist)).filter((name) => name.startsWith(`${stem(target)}.`))
-  if (required(target).some((name) => !names.includes(name))) throw fail()
   const files: File[] = []
-  for (const name of names.sort()) {
-    const content = await bytes(path.join(dist, name))
-    await fs.copyFile(path.join(dist, name), path.join(directory, name), constants.COPYFILE_EXCL)
-    files.push({ name, bytes: content.length, sha256: hash(content) })
-  }
   // Keep each platform's raw updater metadata distinct. Final promotion must
   // merge and validate it against this complete cohort; builds never upload it.
-  for (const name of (await fs.readdir(dist)).filter((name) => name.endsWith(".yml") && !name.startsWith("builder-"))) {
-    const content = await bytes(path.join(dist, name))
-    const metadata = Bun.YAML.parse(content.toString()) as {
-      version: string
-      files: Array<{ url: string; sha512: string; size: number }>
-    }
-    if (metadata.version !== identity.version || !metadata.files?.length) throw fail()
-    for (const file of metadata.files) {
-      if (!names.includes(file.url)) throw fail()
-      const artifact = await bytes(path.join(dist, file.url))
-      if (file.size !== artifact.length || file.sha512 !== createHash("sha512").update(artifact).digest("base64"))
-        throw fail()
-    }
-    const output = `${target}-${name}`
-    await fs.copyFile(path.join(dist, name), path.join(directory, output), constants.COPYFILE_EXCL)
-    files.push({ name: output, bytes: content.length, sha256: hash(content) })
+  for (const file of artifacts) {
+    const name = file.name.endsWith(".yml") ? `${target}-${file.name}` : file.name
+    await fs.copyFile(path.join(dist, file.name), path.join(directory, name), constants.COPYFILE_EXCL)
+    const content = await bytes(path.join(directory, name))
+    if (content.length !== file.bytes || hash(content) !== file.sha256) throw fail()
+    files.push({ ...file, name })
   }
   if (!files.some((file) => file.name === updater(target, identity.channel))) throw fail()
   await verifyUpdater(directory, updater(target, identity.channel), files, identity)
