@@ -10,6 +10,26 @@ than resolving 499 overlapping files at once.
 
 ## Where it stands
 
+### First hosted CI pass — September 23, 2026
+
+PR #58 is open against `dev`; no merge/publication/installation has occurred.
+At `30e25cf680`, hosted typecheck and generated-client drift checks passed.
+The generated-client workflow originally used `runner.temp` at job-level env,
+which GitHub rejects; it now initializes isolated paths in a runner step.
+
+Hosted unit tests exposed a real build graph race: the SDK generator cleans
+`src/v2/gen` while the independent App build reads it. Build tasks now depend
+on dependency builds (`^build`). A forced local App build through Turbo passes
+all five tasks with SDK generation ordered before consumers, without cached
+results (`/tmp/bc-ci-ordered-build.log`). No generation checks were removed.
+
+Other hosted failures remain open: Windows credential-parent initialization
+during unit setup, Babel dependency resolution in the WSL producer, and browser
+timeline-interruption/markdown failures. Native packaging was skipped after
+the WSL producer failed, so it has not passed. The re-fork also needs explicit
+integration with current `dev` before the PR can merge. These are unresolved
+gates, not waived failures.
+
 ### Retained Desktop route restoration — September 23, 2026
 
 The new Desktop shell already restores a window-scoped URL through
