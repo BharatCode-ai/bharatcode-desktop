@@ -9,6 +9,18 @@ import { SettingsListV2 } from "./settings-v2/parts/list"
 import { SettingsServerPicker, SettingsServerScope } from "./settings-server-picker"
 import { createMarketplaceController } from "./marketplace-controller"
 
+const permissions = {
+  workspace_files: "marketplace.permission.files",
+  oauth_account: "marketplace.permission.account",
+  network: "marketplace.permission.network",
+  browser_automation: "marketplace.permission.browser",
+  local_process: "marketplace.permission.process",
+  background_process: "marketplace.permission.background",
+  monitoring_data: "marketplace.permission.monitoring",
+  database_data: "marketplace.permission.database",
+  billing_data: "marketplace.permission.billing",
+} as const
+
 export function SettingsMarketplace(props: { v2?: boolean }) {
   return (
     <SettingsServerScope>
@@ -174,19 +186,45 @@ function MarketplaceContent(props: { v2?: boolean }) {
                             )}
                           </p>
                           <p class="text-13-regular text-text-base break-words">{item.description}</p>
+                          <Show when={controller.state.snapshot?.configuration?.entries[item.id]?.custom}>
+                            <p class="text-12-regular text-text-base">
+                              {language.t(
+                                controller.state.snapshot?.configuration?.entries[item.id]?.enabled
+                                  ? "marketplace.custom.enabled"
+                                  : "marketplace.custom.disabled",
+                              )}
+                            </p>
+                          </Show>
                           <Show when={item.requiresSetup && installed()?.enabled}>
                             <p class="text-12-regular text-text-base">{language.t("marketplace.setupNote")}</p>
                           </Show>
-                          <Show when={item.requirements.length}>
-                            <details class="text-12-regular text-text-base">
-                              <summary class="cursor-pointer hover:text-text-strong focus-visible:outline-2">
-                                {language.t("marketplace.requirements")}
-                              </summary>
+                          <details class="text-12-regular text-text-base">
+                            <summary class="cursor-pointer hover:text-text-strong focus-visible:outline-2">
+                              {language.t("marketplace.access")}
+                            </summary>
+                            <p class="pt-1">
+                              {language.t(item.trust === "bundled" ? "marketplace.bundled" : "marketplace.thirdParty")}
+                            </p>
+                            <p class="pt-1">{language.t("marketplace.declaredAccess")}</p>
+                            <ul class="list-disc ps-4 pt-1">
+                              <For each={item.permissions}>
+                                {(permission) => (
+                                  <li>
+                                    {language.t(
+                                      permissions[permission as keyof typeof permissions] ??
+                                        "marketplace.permission.other",
+                                    )}
+                                  </li>
+                                )}
+                              </For>
+                            </ul>
+                            <Show when={item.requirements.length}>
+                              <p class="pt-1">{language.t("marketplace.requirements")}</p>
                               <ul class="list-disc ps-4 pt-1">
                                 <For each={item.requirements}>{(requirement) => <li>{requirement}</li>}</For>
                               </ul>
-                            </details>
-                          </Show>
+                            </Show>
+                          </details>
                         </div>
                         <div class="flex flex-wrap items-start gap-2">
                           <Action

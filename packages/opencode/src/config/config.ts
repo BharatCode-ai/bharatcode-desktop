@@ -126,6 +126,7 @@ type State = {
 export interface Interface {
   readonly get: () => Effect.Effect<Info>
   readonly getGlobal: () => Effect.Effect<Info>
+  readonly getGlobalStrict: () => Effect.Effect<Info>
   readonly getConsoleState: () => Effect.Effect<ConsoleState>
   readonly update: (config: Info) => Effect.Effect<void>
   readonly updateGlobal: (config: Info) => Effect.Effect<{ info: Info; changed: boolean }>
@@ -309,6 +310,13 @@ const layer = Layer.effect(
 
     const getGlobal = Effect.fn("Config.getGlobal")(function* () {
       return yield* cachedGlobal
+    })
+
+    // Reporting must distinguish a failed load from a genuinely empty config.
+    // Read again on Refresh so a repaired file is recoverable without restart.
+    // Ordinary callers retain their existing cache/defaults-on-error behavior.
+    const getGlobalStrict = Effect.fn("Config.getGlobalStrict")(function* () {
+      return yield* loadGlobal().pipe(Effect.orDie)
     })
 
     const ensureGitignore = Effect.fn("Config.ensureGitignore")(function* (dir: string) {
@@ -687,6 +695,7 @@ const layer = Layer.effect(
     return Service.of({
       get,
       getGlobal,
+      getGlobalStrict,
       getConsoleState,
       update,
       updateGlobal,

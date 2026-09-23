@@ -20,6 +20,26 @@ async function main() {
     await store.change("superpowers-obra", "enable")
     const overlay = await store.overlay()
     assert.ok(await fs.readFile(path.join(overlay.skills!.paths![0], "using-superpowers/SKILL.md"), "utf8"))
+    assert.deepEqual(Capabilities.configuration(await store.read(), overlay, data)["superpowers-obra"], {
+      enabled: true,
+      custom: false,
+    })
+    assert.deepEqual(
+      Capabilities.configuration(
+        await store.read(),
+        {
+          mcp: {
+            github: {
+              type: "remote",
+              url: "https://synthetic.invalid",
+              headers: { Authorization: "synthetic-secret" },
+            },
+          },
+        },
+        data,
+      ).github,
+      { enabled: true, custom: true },
+    )
     const userData = path.join(root, "electron-private")
     const oldFile = path.join(userData, "bharatcode.capabilities")
     const oldStore = windowsCredentialStore(oldFile)
@@ -68,7 +88,7 @@ async function main() {
       message: "Capability state is unavailable. Re-read state before retrying.",
     })
     assert.equal(oldStore.read(), "malformed synthetic source")
-    process.stdout.write(JSON.stringify({ platform: process.platform, passed: 12, privateRoot: true }) + "\n")
+    process.stdout.write(JSON.stringify({ platform: process.platform, passed: 14, privateRoot: true }) + "\n")
   } finally {
     const resolved = await fs.realpath(root)
     if (path.dirname(resolved) !== parent || !path.basename(resolved).startsWith("bc-capabilities-native-"))

@@ -2072,6 +2072,15 @@ export type BharatCodeCapabilityState = {
 export type BharatCodeCapabilitySnapshot = {
   catalog: Array<BharatCodeCapabilityCatalogItem>
   state: BharatCodeCapabilityState
+  configuration?: {
+    scope: "runtime-defaults"
+    entries: {
+      [key: string]: {
+        enabled: boolean
+        custom: boolean
+      }
+    }
+  }
 }
 
 export type ServiceUnavailableError = {

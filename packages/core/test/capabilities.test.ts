@@ -4,6 +4,49 @@ import os from "node:os"
 import path from "node:path"
 import { Capabilities } from "../src/capabilities"
 
+test("configuration reporting distinguishes saved choices from runtime defaults without exposing secrets", () => {
+  const state: Capabilities.State = { version: 1, installed: { github: { enabled: true }, figma: { enabled: false } } }
+  const config = {
+    mcp: {
+      github: { type: "remote" as const, url: "https://api.githubcopilot.com/mcp/", enabled: false },
+      figma: { type: "remote" as const, url: "https://private.invalid", headers: { Authorization: "private-token" } },
+      unrelated: { type: "local" as const, command: ["/private/command"] },
+    },
+  }
+  const before = JSON.stringify(config)
+  const report = Capabilities.configuration(state, config, "/private/data")
+  expect(report.github).toEqual({ enabled: false, custom: true })
+  expect(report.figma).toEqual({ enabled: true, custom: true })
+  expect(report.linear).toEqual({ enabled: false, custom: false })
+  expect(report.unrelated).toBeUndefined()
+  expect(JSON.stringify(report)).not.toMatch(/private|Authorization|command|https/)
+  expect(JSON.stringify(config)).toBe(before)
+})
+
+test("configuration reporting recognizes unchanged defaults and the exact bundled skill directory", async () => {
+  const data = await fs.mkdtemp(path.join(os.tmpdir(), "bc-capability-"))
+  try {
+    const store = Capabilities.store({ data, desktop: true })
+    await store.change("github", "enable")
+    const state = await store.read()
+    const config = await store.overlay()
+    expect(Capabilities.configuration(state, config, data).github).toEqual({ enabled: true, custom: false })
+    expect(Capabilities.configuration(state, config, data)["superpowers-obra"]).toEqual({
+      enabled: true,
+      custom: false,
+    })
+    const disabled = { version: 1 as const, installed: {} }
+    expect(Capabilities.configuration(disabled, config, data).github).toEqual({ enabled: true, custom: true })
+    expect(
+      Capabilities.configuration(state, { skills: { paths: ["/unrelated/superpowers/skills"] } }, data)[
+        "superpowers-obra"
+      ],
+    ).toEqual({ enabled: false, custom: true })
+  } finally {
+    await fs.rm(data, { recursive: true, force: true })
+  }
+})
+
 test("native Desktop imports only its own previous store, once, without changing source bytes", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "bc-capability-"))
   try {

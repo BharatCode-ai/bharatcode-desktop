@@ -10,6 +10,49 @@ than resolving 499 overlapping files at once.
 
 ## Where it stands
 
+### Marketplace configuration overrides and access disclosure — September 23, 2026
+
+Marketplace responses now include a secret-free projection of the selected
+runtime's **global defaults**, distinct from saved marketplace choices. Only
+known IDs and enabled/custom booleans are returned; endpoints, headers, OAuth
+options, commands and paths stay in the runtime. Both settings layouts disclose
+custom overrides, including a separately configured connector remaining enabled
+after its marketplace entry is removed. Project settings may still differ, and
+these flags deliberately do not claim that a live connection is healthy.
+An old runtime may omit this additive field. A successful mutation invalidates
+the displayed projection until Refresh, rather than showing stale override data.
+
+The shared global config loader has a strict fresh-read entry point for reporting.
+Existing cached/defaults-on-error callers are unchanged. Malformed config gives a
+safe failure, not a false all-disabled report; after the file is repaired, Refresh
+recovers without restarting. The loaded defaults still require the explicit
+runtime reload to apply to existing instances. No connector is started by this
+projection and no project configuration is rewritten by the marketplace.
+
+The existing expandable row now lists bundled/third-party origin, declared access
+and requirements, using incumbent components and localization keys. Declared
+access is not presented as a guarantee of limited permissions or an actual grant.
+
+RED/GREEN covers custom disabled/alternate endpoints, independently configured
+entries, unchanged defaults, bundled Windows skill paths, secret omission,
+malformed-config recovery, and stale projection invalidation. Verification:
+**30/30 Core/config tests, 150 assertions**; **238/238 OpenCode config/HTTP/OpenAPI
+tests, 508 assertions** (three existing platform-specific skips); **742/742 App
+tests, 3,076 assertions**; **55/55 browser-controller tests, 170 assertions**;
+and **2/2 rendered marketplace flows**. Core, OpenCode, App, Desktop and legacy
+SDK typechecks and the production frontend build pass. The actual legacy SDK was
+regenerated, not hand-edited. Current-client generation adds no delta and its
+typecheck passes. The Node sidecar rebuilt and its isolated Desktop runtime
+smoke passes **2/2**. The compiled native Windows fixture passes **14 checks**,
+including the configuration projection and unchanged migration/lifecycle checks.
+
+Logs: `/tmp/bc-capability-configuration-{core,opencode,http-green}.log`,
+`/tmp/bc-capability-config-retry-red.log`,
+`/tmp/bc-marketplace-config-{app-tests,browser,build,e2e}.log` and corresponding
+typecheck files. All fixtures are isolated; no install, account or real-profile
+mutation. Connector OAuth/setup, live connection health, final branding/release
+integration and installed-package acceptance remain open.
+
 ### Marketplace lifecycle controls in both settings layouts — September 23, 2026
 
 Both settings layouts now expose the selected runtime's marketplace through the

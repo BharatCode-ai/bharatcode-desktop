@@ -83,6 +83,32 @@ function legacyState(value: unknown): Stored {
 
 const publicState = (state: Stored): State => ({ version: 1, installed: state.installed })
 
+// Project only configuration facts, never credentials, endpoints or process
+// arguments. These defaults are not proof that an MCP connection is healthy.
+export function configuration(state: State, config: typeof ConfigV1.Info.Type, data: string) {
+  return Object.fromEntries(
+    catalog.map((item) => {
+      const desired = state.installed[item.id]?.enabled === true
+      const modules = item.modules.map((module) => {
+        if (module.type === "mcp" && "name" in module && "config" in module) {
+          const actual = config.mcp?.[module.name]
+          const enabled = !!actual && "type" in actual && actual.enabled !== false
+          const matching =
+            !!actual && isDeepStrictEqual({ ...actual, enabled: true }, { ...module.config, enabled: true })
+          return { enabled, custom: actual ? !desired || !enabled || !matching : desired }
+        }
+        const directory = path.join(data, "capabilities", `superpowers-${bundleID}`, "skills")
+        const enabled = config.skills?.paths?.includes(directory) === true
+        return { enabled, custom: enabled !== desired }
+      })
+      return [
+        item.id,
+        { enabled: modules.every((entry) => entry.enabled), custom: modules.some((entry) => entry.custom) },
+      ]
+    }),
+  )
+}
+
 async function ensureDirectory(directory: string) {
   await fs.mkdir(directory, { recursive: true, mode: 0o700 })
   const stat = await fs.lstat(directory)

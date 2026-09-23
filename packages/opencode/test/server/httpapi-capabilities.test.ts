@@ -8,6 +8,7 @@ import { HttpApiApp } from "@/server/routes/instance/httpapi/server"
 import { createOpencodeClient } from "@opencode-ai/sdk/v2"
 
 const state = path.join(Global.Path.data, "bharatcode-capabilities.json")
+const config = path.join(Global.Path.config, "opencode.jsonc")
 const auth = { authorization: `Basic ${Buffer.from("bharatcode:secret").toString("base64")}` }
 const handlers: Array<{ dispose: () => Promise<void> }> = []
 function app() {
@@ -28,6 +29,7 @@ function app() {
 afterEach(async () => {
   await Promise.all(handlers.splice(0).map((handler) => handler.dispose()))
   await rm(state, { force: true })
+  await rm(config, { force: true })
 })
 const action = (body: unknown): RequestInit => ({
   method: "POST",
@@ -44,7 +46,39 @@ test("marketplace read and writes require sidecar authorization", async () => {
   const body = await response.json()
   expect(body.catalog).toHaveLength(9)
   expect(body.state).toEqual({ version: 1, installed: {} })
+  expect(body.configuration.scope).toBe("runtime-defaults")
+  expect(body.configuration.entries.github).toEqual({ enabled: false, custom: false })
   expect(JSON.stringify(body)).not.toMatch(/clientSecret|environment|command|headers|\/home\//)
+})
+
+test("runtime configuration overrides are projected safely, not reported as connection health", async () => {
+  await writeFile(
+    config,
+    JSON.stringify({
+      $schema: "https://opencode.ai/config.json",
+      mcp: { github: { type: "remote", url: "https://private.invalid", headers: { Authorization: "private-token" } } },
+    }),
+  )
+  const request = app()
+  const response = await request("/capabilities", { headers: auth })
+  expect(response.status).toBe(200)
+  const body = await response.json()
+  expect(body.state.installed).toEqual({})
+  expect(body.configuration).toMatchObject({
+    scope: "runtime-defaults",
+    entries: { github: { enabled: true, custom: true } },
+  })
+  expect(JSON.stringify(body)).not.toMatch(/private-token|private.invalid|connected/)
+})
+
+test("invalid runtime configuration cannot masquerade as disabled marketplace defaults", async () => {
+  await writeFile(config, "{invalid: private-token}")
+  const request = app()
+  const response = await request("/capabilities", { headers: auth })
+  expect(response.status).toBe(503)
+  expect(await response.text()).not.toMatch(/private-token|opencode.jsonc/)
+  await writeFile(config, '{"$schema":"https://opencode.ai/config.json"}')
+  expect((await request("/capabilities", { headers: auth })).status).toBe(200)
 })
 
 test("install stays disabled, uninstall persists, and reload is explicit", async () => {
@@ -85,7 +119,9 @@ test("generated SDK reads and changes marketplace state through the protected ha
     { throwOnError: true },
   )
   expect(result.data).toEqual({ state: { version: 1, installed: { github: { enabled: true } } }, reloadRequired: true })
-  expect((await client.v2.capabilities.get({ throwOnError: true })).data.state.installed.github.enabled).toBe(true)
+  const enabled = (await client.v2.capabilities.get({ throwOnError: true })).data
+  expect(enabled.state.installed.github.enabled).toBe(true)
+  expect(enabled.configuration?.entries.github).toEqual({ enabled: true, custom: false })
 })
 
 test("invalid actions and unknown IDs are rejected; storage errors expose no payload", async () => {

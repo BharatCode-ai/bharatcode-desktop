@@ -2,7 +2,11 @@ import { expect, test } from "bun:test"
 import { createRoot, createSignal } from "solid-js"
 import { createMarketplaceController } from "@/components/marketplace-controller"
 
-const snapshot = () => ({ catalog: [], state: { version: 1 as const, installed: {} } })
+const snapshot = () => ({
+  catalog: [],
+  state: { version: 1 as const, installed: {} },
+  configuration: { scope: "runtime-defaults" as const, entries: {} },
+})
 
 test("marketplace suppresses duplicate mutations and reloads only on explicit action", async () => {
   let finish!: () => void
@@ -33,6 +37,7 @@ test("marketplace suppresses duplicate mutations and reloads only on explicit ac
   await first
   expect(app.controller.state.snapshot?.state.installed.github.enabled).toBe(true)
   expect(app.controller.state.reloadRequired).toBe(true)
+  expect(app.controller.state.snapshot?.configuration).toBeUndefined()
   expect(reloads).toBe(0)
   await app.controller.reload()
   expect(reloads).toBe(1)
@@ -94,7 +99,7 @@ test("runtime switch and disposal reject delayed results without mutating the ne
   app.setScope("wsl")
   await app.controller.refresh()
   expect(signal.aborted).toBe(true)
-  finish({ catalog: [], state: { version: 1, installed: { github: { enabled: true } } } })
+  finish({ ...snapshot(), state: { version: 1, installed: { github: { enabled: true } } } })
   await first
   expect(app.controller.state.snapshot?.state.installed).toEqual({})
   app.dispose()

@@ -75,6 +75,7 @@ export function createMarketplaceController<Scope>(options: {
       (scope, signal) => options.change(scope, id, action, signal),
       (result) => {
         setState("snapshot", "state", result)
+        setState("snapshot", "configuration", undefined)
         setState("reloadRequired", true)
       },
       "change",

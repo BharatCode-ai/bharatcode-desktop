@@ -32,7 +32,17 @@ for (const modern of [false, true]) {
     await page.route("**/capabilities**", async (route) => {
       const url = new URL(route.request().url())
       if (!url.pathname.startsWith("/capabilities")) return route.fallback()
-      if (route.request().method() === "GET") return route.fulfill({ json: { catalog, state } })
+      if (route.request().method() === "GET")
+        return route.fulfill({
+          json: {
+            catalog,
+            state,
+            configuration: {
+              scope: "runtime-defaults",
+              entries: { github: { enabled: true, custom: mutations === 4 } },
+            },
+          },
+        })
       mutations++
       const id = url.pathname.split("/")[2]
       const action = route.request().postDataJSON().action
@@ -75,6 +85,13 @@ for (const modern of [false, true]) {
     await expect(github).toContainText("Disabled in settings")
     await github.getByRole("button", { name: "Remove GitHub", exact: true }).click()
     await expect(github.getByRole("button", { name: "Install GitHub", exact: true })).toBeEnabled()
+    await page.getByRole("button", { name: "Refresh", exact: true }).click()
+    await expect(github).toContainText(
+      "Custom runtime configuration enables this capability. Project settings may differ.",
+    )
+    await github.getByText("Access and requirements", { exact: true }).click()
+    await expect(github).toContainText("Third-party connector")
+    await expect(github).toContainText("Connected account access")
     await page.getByRole("button", { name: "Reload runtime", exact: true }).click()
     await expect(
       page.getByText("Reloading interrupts active sessions on this runtime. Continue?", { exact: true }),

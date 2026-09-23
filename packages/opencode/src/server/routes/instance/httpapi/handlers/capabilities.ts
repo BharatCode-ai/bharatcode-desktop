@@ -32,7 +32,28 @@ export const capabilitiesHandlers = HttpApiBuilder.group(InstanceHttpApi, "v2.ca
     const config = yield* Config.Service
     const store = () => Capabilities.store({ data: Global.Path.data, desktop: Flag.OPENCODE_CLIENT === "desktop" })
     return handlers
-      .handle("get", () => storage(async () => ({ catalog, state: await store().read() })))
+      .handle("get", () =>
+        Effect.gen(function* () {
+          const state = yield* storage(() => store().read())
+          const defaults = yield* config.getGlobalStrict()
+          return {
+            catalog,
+            state,
+            configuration: {
+              scope: "runtime-defaults" as const,
+              entries: Capabilities.configuration(state, defaults, Global.Path.data),
+            },
+          }
+        }).pipe(
+          Effect.catchCause(() =>
+            Effect.fail(
+              new ServiceUnavailableError({
+                message: "Capability state is unavailable. Re-read state before retrying.",
+              }),
+            ),
+          ),
+        ),
+      )
       .handle("change", (ctx) =>
         Effect.gen(function* () {
           if (!catalog.some((item) => item.id === ctx.params.id))

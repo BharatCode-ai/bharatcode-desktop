@@ -25,6 +25,12 @@ export const CapabilityCatalogItem = Schema.Struct({
 export const CapabilitySnapshot = Schema.Struct({
   catalog: Schema.Array(CapabilityCatalogItem),
   state: CapabilityState,
+  configuration: Schema.optional(
+    Schema.Struct({
+      scope: Schema.Literal("runtime-defaults"),
+      entries: Schema.Record(Schema.String, Schema.Struct({ enabled: Schema.Boolean, custom: Schema.Boolean })),
+    }),
+  ),
 }).annotate({ identifier: "BharatCodeCapabilitySnapshot" })
 export const CapabilityChange = Schema.Struct({
   action: Schema.Literals(["install", "enable", "disable", "uninstall"]),
