@@ -25,7 +25,7 @@ import { isRecord } from "@/util/record"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { Database } from "@opencode-ai/core/database/database"
 import { Usage, type LLMEvent } from "@opencode-ai/llm"
-import * as ToolLoopGuard from "@opencode-ai/core/session/tool-loop-guard"
+import { ToolLoopGuard } from "@opencode-ai/core/session/tool-loop-guard"
 
 const DOOM_LOOP_THRESHOLD = 3
 export type Result = "compact" | "stop" | "continue"

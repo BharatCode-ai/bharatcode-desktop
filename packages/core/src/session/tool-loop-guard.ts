@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto"
+export * as ToolLoopGuard from "./tool-loop-guard"
 
 export interface Failure {
   tool: string

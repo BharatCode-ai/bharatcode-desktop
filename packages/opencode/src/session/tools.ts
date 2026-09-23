@@ -24,7 +24,7 @@ import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { isRecord } from "@/util/record"
 import { RuntimeFlags } from "@/effect/runtime-flags"
-import * as ToolLoopGuard from "@opencode-ai/core/session/tool-loop-guard"
+import { ToolLoopGuard } from "@opencode-ai/core/session/tool-loop-guard"
 
 const MCP_RESOURCE_TOOLS = {
   list: "list_mcp_resources",
