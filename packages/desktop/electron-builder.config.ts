@@ -35,14 +35,7 @@ const config: Configuration = {
   directories: { output: "dist", buildResources: "resources" },
   extraMetadata: { desktopName: `${appId}.desktop` },
   files: ["out/**/*", "resources/**/*", "!resources/bharatcode-cli*", "!resources/wsl-runtime/**/*"],
-  extraResources: [
-    { from: "resources/", to: "", filter: ["bharatcode-cli*"] },
-    {
-      from: "native/",
-      to: "native/",
-      filter: ["index.js", "index.d.ts", "build/Release/mac_window.node", "swift-build/**"],
-    },
-  ],
+  extraResources: [{ from: "resources/", to: "", filter: ["bharatcode-cli*"] }],
   beforePack: async (context) => {
     assertPackagingPolicy(context.electronPlatformName)
     if (context.electronPlatformName !== "win32") return

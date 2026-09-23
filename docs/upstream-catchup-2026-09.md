@@ -10,6 +10,44 @@ than resolving 499 overlapping files at once.
 
 ## Where it stands
 
+### Candidate release workflow reconciliation — September 23, 2026
+
+The inherited release workflow still targeted the upstream repository, referenced
+the removed CLI package, required Azure signing, and invoked version/tag/npm and
+asset-overwrite publication scripts. It is replaced by a manual-only,
+contents-read candidate workflow: the selected workflow SHA must equal the exact
+checkout SHA, committed CLI/Desktop versions must match, and the checkout must
+remain clean. No version rewriting or publication is performed.
+
+The four producers cover five required packages: unsigned Windows x64 NSIS,
+Developer-ID-signed/notarized macOS arm64 and x64 ZIPs, and unsigned Linux x64
+AppImage/deb. Windows receives a same-source Linux WSL runtime, restores transport
+read-only attributes, then uses the existing strict manifest/hash verifier.
+macOS verification extracts the final ZIP and checks Developer ID certificate
+class, strict signature, stapled ticket, and bundle version. It does not claim
+independent team-ownership verification. No DMG is required by this cohort.
+
+Producer receipts and aggregation bind source/tree/version/channel/run/attempt,
+package SHA-256/size and signing policy. Missing producers, stale attempts, path
+traversal, altered bytes, malformed or cross-artifact updater metadata fail
+closed. Raw updater metadata stays separate per architecture; automatic
+publication/promotion and final cross-architecture updater merging are not part
+of this candidate workflow. Receipts explicitly say **package-build-only** and
+**acceptance pending**.
+
+Removed the now-unreferenced version-mutating prepare script, bundle copier,
+old publication/version orchestrators and asset-clobbering updater finalizers,
+plus the nonexistent native-addon build/resource reference. The manual
+`script/release` helper now accepts an explicit remote ref, exact SHA and channel
+and dispatches candidate construction only.
+
+Evidence so far: missing-helper RED; **16/16 focused candidate/packaging/WSL
+tests, 80 assertions**; Desktop typecheck and a separate direct typecheck of the
+new build helpers pass. No hosted job, Windows/macOS signature check, installer,
+protocol registration, real account or publication has been executed. Exact
+native package contents, installed lifecycle, other inherited CI workflows and
+the final completion audit remain open.
+
 ### MCP authorization browser handoff — September 23, 2026
 
 The upstream project-scoped MCP controls already connect, disconnect and run
@@ -436,12 +474,12 @@ benchmark passed before and after the recovery-row change. One trial per scenari
 (72 review diffs) is a bounded regression smoke, not a statistical performance
 claim. All trials had zero wrong-destination, blank and unknown samples.
 
-| Scenario | Before stable (ms) | After stable (ms) |
-|---|---:|---:|
-| Review closed, cold | 47.7 | 48.0 |
-| Review closed, hot | 29.6 | 28.9 |
-| Review open, cold | 70.8 | 69.5 |
-| Review open, hot | 61.2 | 54.9 |
+| Scenario            | Before stable (ms) | After stable (ms) |
+| ------------------- | -----------------: | ----------------: |
+| Review closed, cold |               47.7 |              48.0 |
+| Review closed, hot  |               29.6 |              28.9 |
+| Review open, cold   |               70.8 |              69.5 |
+| Review open, hot    |               61.2 |              54.9 |
 
 Raw local benchmark logs: `/tmp/bc-catchup-timeline-before.log` and
 `/tmp/bc-catchup-timeline-after.log`. These run the production-built renderer with
@@ -713,12 +751,12 @@ Fresh evidence:
 
 Production session-tab benchmark (one trial per scenario, 72 review diffs):
 
-| Scenario | Before stable (ms) | After stable (ms) |
-|---|---:|---:|
-| Review closed, cold | 53.1 | 59.9 |
-| Review closed, hot | 32.4 | 31.5 |
-| Review open, cold | 55.8 | 63.0 |
-| Review open, hot | 46.5 | 60.4 |
+| Scenario            | Before stable (ms) | After stable (ms) |
+| ------------------- | -----------------: | ----------------: |
+| Review closed, cold |               53.1 |              59.9 |
+| Review closed, hot  |               32.4 |              31.5 |
+| Review open, cold   |               55.8 |              63.0 |
+| Review open, hot    |               46.5 |              60.4 |
 
 All trials had zero wrong-destination, blank, unknown or replaced-review-host
 samples. This is a bounded regression smoke, not a statistically measured speed
@@ -762,7 +800,7 @@ bearer tokens); I confirmed them against a stashed baseline before and after.
 ## Done
 
 1. **Package prune** — keep 20 workspace packages, drop 11. Re-derived as the
-   dependency closure of what we ship over upstream's *current* graph rather
+   dependency closure of what we ship over upstream's _current_ graph rather
    than replaying the old list.
 2. **Root prune** — the whole SST surface, `github/`, `sdks/vscode`,
    `artifacts/`, `perf/`, and the nix packaging.
@@ -781,14 +819,14 @@ bearer tokens); I confirmed them against a stashed baseline before and after.
 
 Ordered by dependency, not by size.
 
-| Theme | Scope (our delta since the fork) | Notes |
-|---|---|---|
-| **cli-core** | `src/cli` 28 files +1,035; `src/session` 13 files +877; `src/server` 28 files +581 | `prompt.ts` is the hard one: 220 ours over a 667-line upstream rewrite. Unblocks the Goal Mode HTTP handler. |
-| **desktop-shell** | 338 files, +27,680 | The single largest body of work, but only ~12% contested. |
-| **app-ui** | `packages/app` 86 files +4,112; `packages/ui` 81 files +324 | Includes re-homing the Goal Mode ribbon. |
-| **ci-release** | `.github` 48 files, +8,471 | Re-author from the current workflows, not commit by commit. |
-| **tests** | 75 files, +12,448 | Prune while replaying. |
-| **sdk + lockfile** | generated | Regenerate last, after Goal Mode and bharatcode-core are in. |
+| Theme              | Scope (our delta since the fork)                                                   | Notes                                                                                                        |
+| ------------------ | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| **cli-core**       | `src/cli` 28 files +1,035; `src/session` 13 files +877; `src/server` 28 files +581 | `prompt.ts` is the hard one: 220 ours over a 667-line upstream rewrite. Unblocks the Goal Mode HTTP handler. |
+| **desktop-shell**  | 338 files, +27,680                                                                 | The single largest body of work, but only ~12% contested.                                                    |
+| **app-ui**         | `packages/app` 86 files +4,112; `packages/ui` 81 files +324                        | Includes re-homing the Goal Mode ribbon.                                                                     |
+| **ci-release**     | `.github` 48 files, +8,471                                                         | Re-author from the current workflows, not commit by commit.                                                  |
+| **tests**          | 75 files, +12,448                                                                  | Prune while replaying.                                                                                       |
+| **sdk + lockfile** | generated                                                                          | Regenerate last, after Goal Mode and bharatcode-core are in.                                                 |
 
 ### Known follow-ups
 
@@ -819,12 +857,12 @@ both times the code compiled or typechecked before failing:
 
 - **bharatcode-core** (0% overlap) did not build. It needs our `auth`, which
   needs `Global.auth`, which needs `StoragePaths` — a theme the plan had placed
-  two steps *later*. The dependency graph, not the overlap percentage, decides
+  two steps _later_. The dependency graph, not the overlap percentage, decides
   the order.
 - **Goal Mode** (0% overlap) built fine and silently did nothing. Sessions are
   event-sourced now: `Session.patch` publishes `SessionV1.Event.Updated` and a
   projector in `core` writes the row. A new session field has to exist in the
-  schema the *event* carries and be mapped by the projector, or it is dropped on
+  schema the _event_ carries and be mapped by the projector, or it is dropped on
   write. Sessions created, `setGoal` reported success, every read came back
   `undefined`.
 
@@ -865,16 +903,16 @@ copy rather than replaying it.
 
 The same changes recur in every theme:
 
-| Was (fork point) | Is now |
-|---|---|
-| `AppFileSystem` (`core/filesystem`) | `FSUtil` (`core/fs-util`) — old export **gone** |
-| `Schema.Defect` | `Schema.Defect()` |
-| `Schema.Class` for `ProviderV2.Info` / `ModelV2.Info` | `Schema.Struct` — `new X({...})` → `X.make({...})` |
-| `export const layer` / `defaultLayer` | `export const node = LayerNode.make(...)`; compile with `LayerNode.compile(node)` |
-| `core/util/log`, `Log.Default.warn` | `Effect.logWarning(msg, {...})` |
-| `@/effect/service-use` | `@opencode-ai/core/effect/service-use` |
-| `@/provider/schema` (`ProviderID`, `ModelID`) | `ProviderV2.ID`, `ModelV2.ID` |
-| `MessageV2.WithParts` / `TextPart` / `Assistant` / `User` | `SessionV1.*` from `core/v1/session` |
+| Was (fork point)                                          | Is now                                                                            |
+| --------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `AppFileSystem` (`core/filesystem`)                       | `FSUtil` (`core/fs-util`) — old export **gone**                                   |
+| `Schema.Defect`                                           | `Schema.Defect()`                                                                 |
+| `Schema.Class` for `ProviderV2.Info` / `ModelV2.Info`     | `Schema.Struct` — `new X({...})` → `X.make({...})`                                |
+| `export const layer` / `defaultLayer`                     | `export const node = LayerNode.make(...)`; compile with `LayerNode.compile(node)` |
+| `core/util/log`, `Log.Default.warn`                       | `Effect.logWarning(msg, {...})`                                                   |
+| `@/effect/service-use`                                    | `@opencode-ai/core/effect/service-use`                                            |
+| `@/provider/schema` (`ProviderID`, `ModelID`)             | `ProviderV2.ID`, `ModelV2.ID`                                                     |
+| `MessageV2.WithParts` / `TextPart` / `Assistant` / `User` | `SessionV1.*` from `core/v1/session`                                              |
 
 `FSUtil` exposes only `node` — there is no `FSUtil.defaultLayer`. Tests that
 provided `AppFileSystem.defaultLayer` need `LayerNode.compile(FSUtil.node)`.

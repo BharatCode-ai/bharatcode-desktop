@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 
-BUMP_TYPE=${1:-patch}
-
-gh workflow run publish.yml -f bump="$BUMP_TYPE"
+set -euo pipefail
+if [ "$#" -ne 3 ] || [[ ! "$2" =~ ^[a-f0-9]{40}$ ]] || [[ "$3" != beta && "$3" != prod ]]; then
+  echo "Usage: script/release <remote-branch-or-tag> <exact-committed-source-sha> <beta|prod>" >&2
+  echo "Builds a candidate only. Does not publish or promote a release." >&2
+  exit 2
+fi
+gh workflow run publish.yml --repo BharatCode-ai/bharatcode-desktop --ref "$1" -f source_sha="$2" -f channel="$3"
