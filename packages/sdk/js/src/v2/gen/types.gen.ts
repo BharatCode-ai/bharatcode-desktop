@@ -2046,6 +2046,44 @@ export type Config = {
   }
 }
 
+export type BharatCodeCapabilityCatalogItem = {
+  id: string
+  name: string
+  description: string
+  publisher: string
+  version: string
+  category: string
+  trust: "bundled" | "curated" | "local"
+  defaultEnabled: boolean
+  requiresSetup: boolean
+  requirements: Array<string>
+  permissions: Array<string>
+}
+
+export type BharatCodeCapabilityState = {
+  version: 1
+  installed: {
+    [key: string]: {
+      enabled: boolean
+    }
+  }
+}
+
+export type BharatCodeCapabilitySnapshot = {
+  catalog: Array<BharatCodeCapabilityCatalogItem>
+  state: BharatCodeCapabilityState
+}
+
+export type ServiceUnavailableError = {
+  _tag: "ServiceUnavailableError"
+  message: string
+  service?: string
+}
+
+export type BharatCodeCapabilityChange = {
+  action: "install" | "enable" | "disable" | "uninstall"
+}
+
 export type BharatCodeDictationStatus = {
   available: boolean
   maxBytes?: number
@@ -2061,12 +2099,6 @@ export type UpstreamError = {
   message: string
   service?: string
   status?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
-}
-
-export type ServiceUnavailableError = {
-  _tag: "ServiceUnavailableError"
-  message: string
-  service?: string
 }
 
 export type ForbiddenError = {
@@ -7489,6 +7521,69 @@ export type EventSubscribeResponses = {
 }
 
 export type EventSubscribeResponse = EventSubscribeResponses[keyof EventSubscribeResponses]
+
+export type V2CapabilitiesGetData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/capabilities"
+}
+
+export type V2CapabilitiesGetErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * ServiceUnavailableError
+   */
+  503: ServiceUnavailableError
+}
+
+export type V2CapabilitiesGetError = V2CapabilitiesGetErrors[keyof V2CapabilitiesGetErrors]
+
+export type V2CapabilitiesGetResponses = {
+  /**
+   * BharatCodeCapabilitySnapshot
+   */
+  200: BharatCodeCapabilitySnapshot
+}
+
+export type V2CapabilitiesGetResponse = V2CapabilitiesGetResponses[keyof V2CapabilitiesGetResponses]
+
+export type V2CapabilitiesChangeData = {
+  body?: BharatCodeCapabilityChange
+  path: {
+    id: string
+  }
+  query?: never
+  url: "/capabilities/{id}"
+}
+
+export type V2CapabilitiesChangeErrors = {
+  /**
+   * InvalidRequestError
+   */
+  400: InvalidRequestError
+  /**
+   * ServiceUnavailableError
+   */
+  503: ServiceUnavailableError
+}
+
+export type V2CapabilitiesChangeError = V2CapabilitiesChangeErrors[keyof V2CapabilitiesChangeErrors]
+
+export type V2CapabilitiesChangeResponses = {
+  /**
+   * Success
+   */
+  200: {
+    state: BharatCodeCapabilityState
+    reloadRequired: true
+  }
+}
+
+export type V2CapabilitiesChangeResponse = V2CapabilitiesChangeResponses[keyof V2CapabilitiesChangeResponses]
 
 export type V2AccountDictationStatusData = {
   body?: never

@@ -9,6 +9,7 @@ import { InstanceDisposed } from "@/server/event"
 import { Question } from "@/question"
 import { ConfigApi } from "./groups/config"
 import { AccountApi } from "./groups/account"
+import { CapabilitiesApi } from "./groups/capabilities"
 import { ControlApi } from "./groups/control"
 import { ControlPlaneApi } from "./groups/control-plane"
 import { EventApi } from "./groups/event"
@@ -60,6 +61,7 @@ export const RootHttpApi = HttpApi.make("opencode-root")
   .middleware(Authorization)
 
 export const InstanceHttpApi = HttpApi.make("opencode-instance")
+  .addHttpApi(CapabilitiesApi)
   .addHttpApi(AccountApi)
   .addHttpApi(ConfigApi)
   .addHttpApi(ExperimentalApi)

@@ -85,6 +85,7 @@ import { PtyConnectApi } from "./groups/pty"
 import { eventHandlers } from "./handlers/event"
 import { configHandlers } from "./handlers/config"
 import { accountHandlers } from "./handlers/account"
+import { capabilitiesHandlers } from "./handlers/capabilities"
 import { BharatCodeAccount } from "../../../../bharatcode/account"
 import { BharatCodeCatalog } from "../../../../bharatcode/catalog"
 import { BharatCodeRuntime } from "../../../../bharatcode/runtime"
@@ -159,6 +160,7 @@ const ptyConnectApiRoutes = HttpApiBuilder.layer(PtyConnectApi).pipe(
 )
 const instanceApiRoutes = HttpApiBuilder.layer(InstanceHttpApi).pipe(
   Layer.provide([
+    capabilitiesHandlers,
     accountHandlers,
     configHandlers,
     experimentalHandlers,

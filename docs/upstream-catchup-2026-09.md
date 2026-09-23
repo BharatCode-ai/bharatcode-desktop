@@ -10,6 +10,38 @@ than resolving 499 overlapping files at once.
 
 ## Where it stands
 
+### Protected marketplace API and SDK — September 23, 2026
+
+The selected runtime now exposes catalog/state reads and bounded capability
+changes through the existing authorized instance HTTP API. Responses contain
+public catalog metadata and enabled flags only, not MCP commands, environment,
+headers, credentials or filesystem paths. Unknown IDs, invalid actions and extra
+payload fields are rejected. Storage failures return a fixed retry-safe message;
+clients must re-read state before retrying an unconfirmed mutation.
+
+Changes invalidate cached configuration but do not dispose active sessions or
+pretend that live MCP connections have changed. The mutation response explicitly
+requires a runtime reload. Both layouts must present and apply that reload
+deliberately when their settings integration is completed.
+
+The legacy SDK was regenerated and its actual client exercised against the
+protected handler. Current-client regeneration produced no delta (these instance
+routes belong to the legacy SDK transport). **58/58 HTTP/account/config/OpenAPI/
+SDK tests, 283 assertions** passed. OpenCode, legacy SDK and current-client
+typechecks pass using the current local Node runtime; the first current-client
+typecheck picked up obsolete system Node and failed before checking source.
+Logs: `/tmp/bc-capability-http-final.log`,
+`/tmp/bc-capability-http-types-final.log`,
+`/tmp/bc-capability-client-types.log`, and
+`/tmp/bc-capability-sdk-types.log`.
+
+No connectors were launched and no real profile or installed application was
+changed. UI, migration and installed acceptance remain open. In particular,
+importing old enabled flags alone is insufficient: old generated MCP entries in
+user config can override a later Disable action. Migration must distinguish
+those managed entries from custom settings while preserving original config
+bytes and prior disabled choices.
+
 ### Runtime-owned marketplace foundation — September 23, 2026
 
 The retained main-process marketplace deleted every recognized MCP name from the
@@ -49,7 +81,7 @@ temporary root and cleaned it afterward. Reproducible fixture:
 target, then run with native Node). No connector or real account was contacted.
 
 Logs: `/tmp/bc-capabilities-{red,core-final,legacy,types,opencode-types}.log`.
-**Not yet complete:** protected marketplace endpoints, both settings layouts,
+**Not yet complete:** both settings layouts,
 prior Electron-store choice migration, effective override/status presentation,
 connector authentication/setup, and matching installed-package acceptance.
 Do not recommend a replacement package before prior disabled choices are carried

@@ -17,6 +17,7 @@ import type {
   AuthSetResponses,
   BharatCodeAuthorizeRequest,
   BharatCodeCallbackRequest,
+  BharatCodeCapabilityChange,
   BharatCodeDictationRequest,
   CommandListErrors,
   CommandListResponses,
@@ -281,6 +282,10 @@ import type {
   V2AccountStatusResponses,
   V2AgentListErrors,
   V2AgentListResponses,
+  V2CapabilitiesChangeErrors,
+  V2CapabilitiesChangeResponses,
+  V2CapabilitiesGetErrors,
+  V2CapabilitiesGetResponses,
   V2CommandListErrors,
   V2CommandListResponses,
   V2CredentialRemoveErrors,
@@ -1426,6 +1431,49 @@ export class Event extends HeyApiClient {
       url: "/event",
       ...options,
       ...params,
+    })
+  }
+}
+
+export class Capabilities2 extends HeyApiClient {
+  public get<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<V2CapabilitiesGetResponses, V2CapabilitiesGetErrors, ThrowOnError>({
+      url: "/capabilities",
+      ...options,
+    })
+  }
+
+  public change<ThrowOnError extends boolean = false>(
+    parameters: {
+      id: string
+      bharatCodeCapabilityChange?: BharatCodeCapabilityChange
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "id" },
+            { key: "bharatCodeCapabilityChange", map: "body" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<
+      V2CapabilitiesChangeResponses,
+      V2CapabilitiesChangeErrors,
+      ThrowOnError
+    >({
+      url: "/capabilities/{id}",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
     })
   }
 }
@@ -3478,6 +3526,11 @@ export class ProjectCopy2 extends HeyApiClient {
 }
 
 export class V2 extends HeyApiClient {
+  private _capabilities?: Capabilities2
+  get capabilities(): Capabilities2 {
+    return (this._capabilities ??= new Capabilities2({ client: this.client }))
+  }
+
   private _account?: Account
   get account(): Account {
     return (this._account ??= new Account({ client: this.client }))
