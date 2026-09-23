@@ -1754,6 +1754,23 @@ or install packages, register protocols, touch profiles, or publish anything.
 The correction still needs the final candidate build and isolated update-path
 acceptance; live discovery alone does not establish successful installation.
 
+### September 24: preserve retirement of upstream repository automation
+
+The retained-feature audit traced `d40bcb9230` (`disable upstream workflows in
+fork`) on the release lineage. The re-fork had reintroduced 12 of those retired
+workflows: issue/PR closing, compliance, duplicate detection, review/triage agents,
+PR standards/management, Discord, stats, the upstream coding action and SST
+unlock. These are removed again, not ported as application features. In particular,
+the catch-up must not reactivate issue-writing bots or upstream infrastructure
+credentials merely by merging their workflow files.
+
+The six curated workflows remain: tests, typechecks, generated clients, Desktop
+candidate, CLI build/tested publication, and tested Desktop publication. Their
+README now describes that actual set. A bounded parse/audit passed for all six,
+with no issue/schedule/pull_request_target triggers or retired upstream secret
+references. Desktop candidate/publication tests passed 15/15 (144 assertions).
+No hosted workflow was changed or dispatched; this is a local source correction.
+
 ## What is left
 
 This is the current checklist; earlier checkpoint paragraphs describe evidence
