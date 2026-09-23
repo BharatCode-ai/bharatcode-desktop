@@ -48,7 +48,8 @@ const TOP_LEVEL = [
   "attach",
   "run",
   "debug",
-  "providers", // aliased to `auth`
+  "auth",
+  "migrate",
   "agent",
   "upgrade",
   "uninstall",
@@ -73,9 +74,11 @@ const SUBCOMMANDS = [
   ["mcp", "add"],
   ["mcp", "auth"],
   ["mcp", "logout"],
-  ["providers", "list"],
-  ["providers", "login"],
-  ["providers", "logout"],
+  ["auth", "status"],
+  ["auth", "login"],
+  ["auth", "logout"],
+  ["auth", "reconnect"],
+  ["migrate", "run"],
   ["agent", "create"],
   ["agent", "list"],
   ["session", "list"],
@@ -126,6 +129,7 @@ describe("opencode CLI help-text snapshots", () => {
         )
 
         for (const { argv, result } of results) {
+          expect(result.stderr.trimStart()).toMatch(new RegExp(`^bharatcode ${argv.join(" ")}(?:\\s|$)`))
           // yargs writes --help to stderr, not stdout. Snapshotting stderr
           // means our test catches the help body; stdout for these commands
           // is expected to be empty.

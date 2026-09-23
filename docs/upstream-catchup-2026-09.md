@@ -10,6 +10,22 @@ than resolving 499 overlapping files at once.
 
 ## Current checkpoint — September 24
 
+Latest audit correction: the Turbo task was still named `opencode#test`, but
+the CLI package is `bharatcode`. An actual `bun turbo test --dry=json` showed
+the CLI test task was absent. Therefore the prior hosted unit job successes
+must not be interpreted as CLI-suite acceptance. The local task-name correction
+adds `bharatcode#test` with its build dependencies; a direct full CLI run is now
+in progress, with failures still to resolve. No checks have been waived.
+
+The direct CLI help audit also exposed stale upstream snapshots and an obsolete
+`providers` inventory which silently returned root help. The test now verifies
+the requested command's usage prefix and covers the actual `auth` and `migrate`
+surface. Branded command descriptions were restored without changing legacy
+environment names or protocol defaults. RED: the prefix assertion rejected
+`providers` root-help fallback. GREEN: ordinary (non-update) help and installation
+tests passed 19/19, 37 snapshots, 121 assertions; OpenCode typecheck passed.
+The full snapshot diff was reviewed, including account and catalog semantics.
+
 The runtime/UI/SDK ports and candidate/publication paths are implemented locally;
 the retained-feature/ancestry audit and final exact-source package acceptance are
 not yet complete. Desktop-only beta updater selection and retired upstream

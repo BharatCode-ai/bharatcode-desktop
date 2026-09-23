@@ -1,7 +1,7 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
 exports[`opencode CLI help-text snapshots every documented command emits stable help text: opencode acp --help 1`] = `
-"opencode acp
+"bharatcode acp
 
 start ACP (Agent Client Protocol) server
 
@@ -22,16 +22,16 @@ Options:
 `;
 
 exports[`opencode CLI help-text snapshots every documented command emits stable help text: opencode mcp --help 1`] = `
-"opencode mcp
+"bharatcode mcp
 
 manage MCP (Model Context Protocol) servers
 
 Commands:
-  opencode mcp add [name]     add an MCP server
-  opencode mcp list           list MCP servers and their status                        [aliases: ls]
-  opencode mcp auth [name]    authenticate with an OAuth-enabled MCP server
-  opencode mcp logout [name]  remove OAuth credentials for an MCP server
-  opencode mcp debug <name>   debug OAuth connection for an MCP server
+  bharatcode mcp add [name]     add an MCP server
+  bharatcode mcp list           list MCP servers and their status                      [aliases: ls]
+  bharatcode mcp auth [name]    authenticate with an OAuth-enabled MCP server
+  bharatcode mcp logout [name]  remove OAuth credentials for an MCP server
+  bharatcode mcp debug <name>   debug OAuth connection for an MCP server
 
 Options:
   -h, --help        show help                                                              [boolean]
@@ -42,9 +42,9 @@ Options:
 `;
 
 exports[`opencode CLI help-text snapshots every documented command emits stable help text: opencode attach --help 1`] = `
-"opencode attach <url>
+"bharatcode attach <url>
 
-attach to a running opencode server
+attach to a running BharatCode server
 
 Positionals:
   url  http://localhost:4096                                                     [string] [required]
@@ -68,9 +68,9 @@ Options:
 `;
 
 exports[`opencode CLI help-text snapshots every documented command emits stable help text: opencode run --help 1`] = `
-"opencode run [message..]
+"bharatcode run [message..]
 
-run opencode with a message
+run BharatCode with a message
 
 Positionals:
   message  message to send                                                     [array] [default: []]
@@ -92,7 +92,7 @@ Options:
                                           [string] [choices: "default", "json"] [default: "default"]
   -f, --file         file(s) to attach to message                                            [array]
       --title        title for the session (uses truncated prompt if no value provided)     [string]
-      --attach       attach to a running opencode server (e.g., http://localhost:4096)      [string]
+      --attach       attach to a running BharatCode server (e.g., http://localhost:4096)    [string]
   -p, --password     basic auth password (defaults to OPENCODE_SERVER_PASSWORD)             [string]
   -u, --username     basic auth username (defaults to OPENCODE_SERVER_USERNAME or 'opencode')
                                                                                             [string]
@@ -108,24 +108,24 @@ Options:
 `;
 
 exports[`opencode CLI help-text snapshots every documented command emits stable help text: opencode debug --help 1`] = `
-"opencode debug
+"bharatcode debug
 
 debugging and troubleshooting tools
 
 Commands:
-  opencode debug config        show resolved configuration
-  opencode debug lsp           LSP debugging utilities
-  opencode debug rg            ripgrep debugging utilities
-  opencode debug file          file system debugging utilities
-  opencode debug scrap         list all known projects
-  opencode debug skill         list all available skills
-  opencode debug snapshot      snapshot debugging utilities
-  opencode debug startup       print startup timing
-  opencode debug agent <name>  show agent configuration details
-  opencode debug v2            debug v2 catalog and built-in plugins
-  opencode debug info          show debug information
-  opencode debug paths         show global paths (data, config, cache, state)
-  opencode debug wait          wait indefinitely (for debugging)
+  bharatcode debug config        show resolved configuration
+  bharatcode debug lsp           LSP debugging utilities
+  bharatcode debug rg            ripgrep debugging utilities
+  bharatcode debug file          file system debugging utilities
+  bharatcode debug scrap         list all known projects
+  bharatcode debug skill         list all available skills
+  bharatcode debug snapshot      snapshot debugging utilities
+  bharatcode debug startup       print startup timing
+  bharatcode debug agent <name>  show agent configuration details
+  bharatcode debug v2            debug v2 catalog and built-in plugins
+  bharatcode debug info          show debug information
+  bharatcode debug paths         show global paths (data, config, cache, state)
+  bharatcode debug wait          wait indefinitely (for debugging)
 
 Options:
   -h, --help        show help                                                              [boolean]
@@ -135,15 +135,33 @@ Options:
       --pure        run without external plugins                                           [boolean]"
 `;
 
-exports[`opencode CLI help-text snapshots every documented command emits stable help text: opencode providers --help 1`] = `
-"opencode providers
+exports[`opencode CLI help-text snapshots every documented command emits stable help text: opencode auth --help 1`] = `
+"bharatcode auth
 
-manage AI providers and credentials
+manage your BharatCode account
 
 Commands:
-  opencode providers list               list providers and credentials                 [aliases: ls]
-  opencode providers login [url]        log in to a provider
-  opencode providers logout [provider]  log out from a configured provider
+  bharatcode auth login      sign in to BharatCode
+  bharatcode auth status     show safe BharatCode account status
+  bharatcode auth logout     remove the BharatCode session from this device
+  bharatcode auth reconnect  retry the saved BharatCode session
+
+Options:
+  -h, --help        show help                                                              [boolean]
+  -v, --version     show version number                                                    [boolean]
+      --print-logs  print logs to stderr                                                   [boolean]
+      --log-level   log level                   [string] [choices: "DEBUG", "INFO", "WARN", "ERROR"]
+      --pure        run without external plugins                                           [boolean]"
+`;
+
+exports[`opencode CLI help-text snapshots every documented command emits stable help text: opencode migrate --help 1`] = `
+"bharatcode migrate
+
+import data from another BharatCode or OpenCode installation
+
+Commands:
+  bharatcode migrate      list installations that can be imported                          [default]
+  bharatcode migrate run  import sessions and configuration from another installation
 
 Options:
   -h, --help        show help                                                              [boolean]
@@ -154,13 +172,13 @@ Options:
 `;
 
 exports[`opencode CLI help-text snapshots every documented command emits stable help text: opencode agent --help 1`] = `
-"opencode agent
+"bharatcode agent
 
 manage agents
 
 Commands:
-  opencode agent create  create a new agent
-  opencode agent list    list all available agents
+  bharatcode agent create  create a new agent
+  bharatcode agent list    list all available agents
 
 Options:
   -h, --help        show help                                                              [boolean]
@@ -171,9 +189,9 @@ Options:
 `;
 
 exports[`opencode CLI help-text snapshots every documented command emits stable help text: opencode upgrade --help 1`] = `
-"opencode upgrade [target]
+"bharatcode upgrade [target]
 
-upgrade opencode to the latest or a specific version
+upgrade BharatCode to the latest or a specific version
 
 Positionals:
   target  version to upgrade to, for ex '0.1.48' or 'v0.1.48'                               [string]
@@ -189,9 +207,9 @@ Options:
 `;
 
 exports[`opencode CLI help-text snapshots every documented command emits stable help text: opencode uninstall --help 1`] = `
-"opencode uninstall
+"bharatcode uninstall
 
-uninstall opencode and remove all related files
+uninstall BharatCode and remove all related files
 
 Options:
   -h, --help         show help                                                             [boolean]
@@ -206,9 +224,9 @@ Options:
 `;
 
 exports[`opencode CLI help-text snapshots every documented command emits stable help text: opencode serve --help 1`] = `
-"opencode serve
+"bharatcode serve
 
-starts a headless opencode server
+starts a headless BharatCode server
 
 Options:
   -h, --help         show help                                                             [boolean]
@@ -226,9 +244,9 @@ Options:
 `;
 
 exports[`opencode CLI help-text snapshots every documented command emits stable help text: opencode web --help 1`] = `
-"opencode web
+"bharatcode web
 
-start opencode server and open web interface
+start BharatCode server and open web interface
 
 Options:
   -h, --help         show help                                                             [boolean]
@@ -246,12 +264,12 @@ Options:
 `;
 
 exports[`opencode CLI help-text snapshots every documented command emits stable help text: opencode models --help 1`] = `
-"opencode models [provider]
+"bharatcode models [provider]
 
-list all available models
+list available BharatCode coding models
 
 Positionals:
-  provider  provider ID to filter models by                                                 [string]
+  provider  must be bharatcode when provided                                                [string]
 
 Options:
   -h, --help        show help                                                              [boolean]
@@ -259,12 +277,12 @@ Options:
       --print-logs  print logs to stderr                                                   [boolean]
       --log-level   log level                   [string] [choices: "DEBUG", "INFO", "WARN", "ERROR"]
       --pure        run without external plugins                                           [boolean]
-      --verbose     use more verbose model output (includes metadata like costs)           [boolean]
-      --refresh     refresh the models cache from models.dev                               [boolean]"
+      --verbose     include the public serving contract and capabilities                   [boolean]
+      --refresh     refresh the authenticated BharatCode model catalog                     [boolean]"
 `;
 
 exports[`opencode CLI help-text snapshots every documented command emits stable help text: opencode stats --help 1`] = `
-"opencode stats
+"bharatcode stats
 
 show token usage and cost statistics
 
@@ -282,7 +300,7 @@ Options:
 `;
 
 exports[`opencode CLI help-text snapshots every documented command emits stable help text: opencode export --help 1`] = `
-"opencode export [sessionID]
+"bharatcode export [sessionID]
 
 export session data as JSON
 
@@ -299,7 +317,7 @@ Options:
 `;
 
 exports[`opencode CLI help-text snapshots every documented command emits stable help text: opencode import --help 1`] = `
-"opencode import <file>
+"bharatcode import <file>
 
 import session data from JSON file or URL
 
@@ -315,13 +333,13 @@ Options:
 `;
 
 exports[`opencode CLI help-text snapshots every documented command emits stable help text: opencode github --help 1`] = `
-"opencode github
+"bharatcode github
 
 manage GitHub agent
 
 Commands:
-  opencode github install  install the GitHub agent
-  opencode github run      run the GitHub agent
+  bharatcode github install  install the GitHub agent
+  bharatcode github run      run the GitHub agent
 
 Options:
   -h, --help        show help                                                              [boolean]
@@ -332,9 +350,9 @@ Options:
 `;
 
 exports[`opencode CLI help-text snapshots every documented command emits stable help text: opencode pr --help 1`] = `
-"opencode pr <number>
+"bharatcode pr <number>
 
-fetch and checkout a GitHub PR branch, then run opencode
+fetch and checkout a GitHub PR branch, then run BharatCode
 
 Positionals:
   number  PR number to checkout                                                  [number] [required]
@@ -348,13 +366,13 @@ Options:
 `;
 
 exports[`opencode CLI help-text snapshots every documented command emits stable help text: opencode session --help 1`] = `
-"opencode session
+"bharatcode session
 
 manage sessions
 
 Commands:
-  opencode session list                list sessions
-  opencode session delete <sessionID>  delete a session
+  bharatcode session list                list sessions
+  bharatcode session delete <sessionID>  delete a session
 
 Options:
   -h, --help        show help                                                              [boolean]
@@ -365,7 +383,7 @@ Options:
 `;
 
 exports[`opencode CLI help-text snapshots every documented command emits stable help text: opencode plugin --help 1`] = `
-"opencode plugin <module>
+"bharatcode plugin <module>
 
 install plugin and update config
 
@@ -383,13 +401,13 @@ Options:
 `;
 
 exports[`opencode CLI help-text snapshots every documented command emits stable help text: opencode db --help 1`] = `
-"opencode db
+"bharatcode db
 
 database tools
 
 Commands:
-  opencode db [query]     open an interactive sqlite3 shell or run a query                 [default]
-  opencode db path        print the database path
+  bharatcode db [query]     open an interactive sqlite3 shell or run a query               [default]
+  bharatcode db path        print the database path
 
 Positionals:
   query  SQL query to execute                                                               [string]
@@ -404,7 +422,7 @@ Options:
 `;
 
 exports[`opencode CLI help-text snapshots every documented command emits stable help text: opencode mcp list --help 1`] = `
-"opencode mcp list
+"bharatcode mcp list
 
 list MCP servers and their status
 
@@ -417,7 +435,7 @@ Options:
 `;
 
 exports[`opencode CLI help-text snapshots every documented command emits stable help text: opencode mcp add --help 1`] = `
-"opencode mcp add [name]
+"bharatcode mcp add [name]
 
 add an MCP server
 
@@ -436,12 +454,12 @@ Options:
 `;
 
 exports[`opencode CLI help-text snapshots every documented command emits stable help text: opencode mcp auth --help 1`] = `
-"opencode mcp auth [name]
+"bharatcode mcp auth [name]
 
 authenticate with an OAuth-enabled MCP server
 
 Commands:
-  opencode mcp auth list  list OAuth-capable MCP servers and their auth status         [aliases: ls]
+  bharatcode mcp auth list  list OAuth-capable MCP servers and their auth status       [aliases: ls]
 
 Positionals:
   name  name of the MCP server                                                              [string]
@@ -455,7 +473,7 @@ Options:
 `;
 
 exports[`opencode CLI help-text snapshots every documented command emits stable help text: opencode mcp logout --help 1`] = `
-"opencode mcp logout [name]
+"bharatcode mcp logout [name]
 
 remove OAuth credentials for an MCP server
 
@@ -470,10 +488,10 @@ Options:
       --pure        run without external plugins                                           [boolean]"
 `;
 
-exports[`opencode CLI help-text snapshots every documented command emits stable help text: opencode providers list --help 1`] = `
-"opencode providers list
+exports[`opencode CLI help-text snapshots every documented command emits stable help text: opencode auth status --help 1`] = `
+"bharatcode auth status
 
-list providers and credentials
+show safe BharatCode account status
 
 Options:
   -h, --help        show help                                                              [boolean]
@@ -483,13 +501,50 @@ Options:
       --pure        run without external plugins                                           [boolean]"
 `;
 
-exports[`opencode CLI help-text snapshots every documented command emits stable help text: opencode providers login --help 1`] = `
-"opencode providers login [url]
+exports[`opencode CLI help-text snapshots every documented command emits stable help text: opencode auth login --help 1`] = `
+"bharatcode auth login
 
-log in to a provider
+sign in to BharatCode
 
-Positionals:
-  url  opencode auth provider                                                               [string]
+Options:
+  -h, --help            show help                                                          [boolean]
+  -v, --version         show version number                                                [boolean]
+      --print-logs      print logs to stderr                                               [boolean]
+      --log-level       log level               [string] [choices: "DEBUG", "INFO", "WARN", "ERROR"]
+      --pure            run without external plugins                                       [boolean]
+      --switch-account  ask BharatCode to show an account chooser         [boolean] [default: false]"
+`;
+
+exports[`opencode CLI help-text snapshots every documented command emits stable help text: opencode auth logout --help 1`] = `
+"bharatcode auth logout
+
+remove the BharatCode session from this device
+
+Options:
+  -h, --help        show help                                                              [boolean]
+  -v, --version     show version number                                                    [boolean]
+      --print-logs  print logs to stderr                                                   [boolean]
+      --log-level   log level                   [string] [choices: "DEBUG", "INFO", "WARN", "ERROR"]
+      --pure        run without external plugins                                           [boolean]"
+`;
+
+exports[`opencode CLI help-text snapshots every documented command emits stable help text: opencode auth reconnect --help 1`] = `
+"bharatcode auth reconnect
+
+retry the saved BharatCode session
+
+Options:
+  -h, --help        show help                                                              [boolean]
+  -v, --version     show version number                                                    [boolean]
+      --print-logs  print logs to stderr                                                   [boolean]
+      --log-level   log level                   [string] [choices: "DEBUG", "INFO", "WARN", "ERROR"]
+      --pure        run without external plugins                                           [boolean]"
+`;
+
+exports[`opencode CLI help-text snapshots every documented command emits stable help text: opencode migrate run --help 1`] = `
+"bharatcode migrate run
+
+import sessions and configuration from another installation
 
 Options:
   -h, --help        show help                                                              [boolean]
@@ -497,28 +552,12 @@ Options:
       --print-logs  print logs to stderr                                                   [boolean]
       --log-level   log level                   [string] [choices: "DEBUG", "INFO", "WARN", "ERROR"]
       --pure        run without external plugins                                           [boolean]
-  -p, --provider    provider id or name to log in to (skips provider selection)             [string]
-  -m, --method      login method label (skips method selection)                             [string]"
-`;
-
-exports[`opencode CLI help-text snapshots every documented command emits stable help text: opencode providers logout --help 1`] = `
-"opencode providers logout [provider]
-
-log out from a configured provider
-
-Positionals:
-  provider  provider id or name to log out from                                             [string]
-
-Options:
-  -h, --help        show help                                                              [boolean]
-  -v, --version     show version number                                                    [boolean]
-      --print-logs  print logs to stderr                                                   [boolean]
-      --log-level   log level                   [string] [choices: "DEBUG", "INFO", "WARN", "ERROR"]
-      --pure        run without external plugins                                           [boolean]"
+      --source      id of the installation to import, from \`bharatcode migrate\`             [string]
+      --resume      resume an interrupted import                          [boolean] [default: false]"
 `;
 
 exports[`opencode CLI help-text snapshots every documented command emits stable help text: opencode agent create --help 1`] = `
-"opencode agent create
+"bharatcode agent create
 
 create a new agent
 
@@ -538,7 +577,7 @@ Options:
 `;
 
 exports[`opencode CLI help-text snapshots every documented command emits stable help text: opencode agent list --help 1`] = `
-"opencode agent list
+"bharatcode agent list
 
 list all available agents
 
@@ -551,7 +590,7 @@ Options:
 `;
 
 exports[`opencode CLI help-text snapshots every documented command emits stable help text: opencode session list --help 1`] = `
-"opencode session list
+"bharatcode session list
 
 list sessions
 
@@ -566,7 +605,7 @@ Options:
 `;
 
 exports[`opencode CLI help-text snapshots every documented command emits stable help text: opencode session delete --help 1`] = `
-"opencode session delete <sessionID>
+"bharatcode session delete <sessionID>
 
 delete a session
 
@@ -582,7 +621,7 @@ Options:
 `;
 
 exports[`opencode CLI help-text snapshots every documented command emits stable help text: opencode github install --help 1`] = `
-"opencode github install
+"bharatcode github install
 
 install the GitHub agent
 
@@ -595,7 +634,7 @@ Options:
 `;
 
 exports[`opencode CLI help-text snapshots every documented command emits stable help text: opencode github run --help 1`] = `
-"opencode github run
+"bharatcode github run
 
 run the GitHub agent
 
@@ -610,7 +649,7 @@ Options:
 `;
 
 exports[`opencode CLI help-text snapshots every documented command emits stable help text: opencode db path --help 1`] = `
-"opencode db path
+"bharatcode db path
 
 print the database path
 

@@ -8,6 +8,7 @@ import path from "path"
 import os from "os"
 import { Filesystem } from "@/util/filesystem"
 import { Process } from "@/util/process"
+import { DISTRIBUTION } from "../../../script/distribution.mjs"
 
 interface UninstallArgs {
   keepConfig: boolean
@@ -24,7 +25,7 @@ interface RemovalTargets {
 
 export const UninstallCommand = {
   command: "uninstall",
-  describe: "uninstall opencode and remove all related files",
+  describe: `uninstall ${DISTRIBUTION.displayName} and remove all related files`,
   builder: (yargs: Argv) =>
     yargs
       .option("keep-config", {
@@ -55,7 +56,7 @@ export const UninstallCommand = {
     UI.empty()
     UI.println(UI.logo("  "))
     UI.empty()
-    prompts.intro("Uninstall OpenCode")
+    prompts.intro(`Uninstall ${DISTRIBUTION.displayName}`)
 
     const method = await Installation.method()
     prompts.log.info(`Installation method: ${method}`)
