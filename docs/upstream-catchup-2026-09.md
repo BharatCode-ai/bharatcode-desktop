@@ -12,6 +12,31 @@ than resolving 499 overlapping files at once.
 
 ### Hosted follow-up corrections — September 23, 2026
 
+Run 35888740783 at `670949a9c7` reached actual macOS arm64 keychain import,
+then failed `security set-key-partition-list` with `SecKeychainUnlock`. The pinned
+Electron Builder 26.15.2 passes the certificate import password to that command,
+not the random password it just created for the keychain. This exactly matches
+[upstream #10172](https://github.com/electron-userland/electron-builder/pull/10172),
+released in 26.16.1. Updated only the Desktop builder pin and its lockfile closure.
+A temporary platform-independent probe executes the installed builder's real
+`createKeychain` with intercepted security commands and synthetic certificate
+paths: 26.15.2 fails the password-routing assertion; 26.16.1 passes for both one
+and two certificates. No real keychain/certificate was used. Frozen installation,
+9 candidate/cohort tests (54 assertions) and Desktop typecheck pass. Hosted
+signing/notarization with the updated builder remains unverified.
+
+Run 35888737269 completes the Linux unit/generated-client/HTTP gates, but shows
+the earlier Windows preparation-only timeout diagnosis was incomplete: preparation
+passes in 28,213 ms, then the definite-missing read times out in 15,020 ms.
+Do not describe the Windows issue as closed or widen the read/publication limits
+without further evidence. A temporary single-job diagnostic records only fixed
+phase names and numeric durations before/after compilation, stdin parsing and
+the native operation. It compares Bun and Node after the ordinary dependency
+setup, with a diagnostic-only 90-second bound; the production helper is unchanged.
+Local native synthetic preparation/read/publication/logout passes with all phase
+markers, but does not reproduce the hosted delay. The diagnostic must be removed
+once that boundary is identified. No app/profile/protocol action is involved.
+
 At `c9c5cc0a3a`, hosted Linux unit tasks all passed, as did generated-client drift.
 The following HTTP exerciser failed on eight missing BharatCode route scenarios.
 Added account status/PKCE URL creation, unknown-state rejection, idempotent logout,
