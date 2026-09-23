@@ -6,6 +6,7 @@ import { pathToFileURL } from "url"
 import os from "os"
 import { mergeDeep } from "remeda"
 import { Global } from "@opencode-ai/core/global"
+import { Capabilities } from "@opencode-ai/core/capabilities"
 import fsNode from "fs/promises"
 import { Flag } from "@opencode-ai/core/flag/flag"
 import { Auth } from "../auth"
@@ -258,7 +259,14 @@ const layer = Layer.effect(
     })
 
     const loadGlobal = Effect.fnUntraced(function* (env?: Record<string, string>) {
-      let result: Info = {}
+      // Marketplace defaults belong to this runtime, below explicit user config.
+      const managed = yield* Effect.promise(() =>
+        Capabilities.store({
+          data: Global.Path.data,
+          desktop: Flag.OPENCODE_CLIENT === "desktop",
+        }).overlay(),
+      )
+      let result: Info = Object.keys(managed.mcp ?? {}).length || managed.skills?.paths?.length ? managed : {}
       // Seed the default global config with the schema for editor completion, but avoid writing when the user
       // explicitly routes config through env-provided paths or content.
       if (!Flag.OPENCODE_CONFIG && !Flag.OPENCODE_CONFIG_DIR && !Flag.OPENCODE_CONFIG_CONTENT) {

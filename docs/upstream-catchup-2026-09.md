@@ -10,6 +10,51 @@ than resolving 499 overlapping files at once.
 
 ## Where it stands
 
+### Runtime-owned marketplace foundation — September 23, 2026
+
+The retained main-process marketplace deleted every recognized MCP name from the
+Windows config before rewriting it, and could not target a WSL runtime safely.
+Its replacement keeps a bounded, validated install/enable record inside the
+selected runtime's data root. It does not edit user configuration. Both the legacy
+configuration loader and new core configuration loader now place these defaults
+below explicit user settings. Custom MCP endpoints, disabled entries, unrelated
+servers and original config bytes are preserved by the scoped tests.
+
+The nine retained catalog entries are carried forward. Curated connectors install
+disabled; enabling is explicit. Superpowers remains the Desktop default, not an
+automatic new CLI default, and an explicit disable survives restart. Its 61
+retained assets were compared byte-for-byte with `origin/dev` at `3d8360d79261`;
+the previously missing [upstream MIT license](https://github.com/obra/superpowers/blob/main/LICENSE)
+is also bundled. Assets are embedded as data so the same compiled runtime can
+materialize its own content-addressed skill directory on Windows, Linux/WSL or
+macOS. Materialization executes no bundled scripts and rejects altered/link
+targets rather than overwriting them.
+
+State changes serialize with the existing filesystem lock. POSIX publication
+flushes a sibling temporary file, renames and syncs the parent. Native Windows
+reuses the existing held-object/private-publication helper, with private-parent
+preparation before lock creation. An unconfirmed publication remains an error;
+there is no automatic mutation replay. Existing ACLs are not rewritten. This is
+the tested protocol, not hardware power-loss certification.
+
+Evidence: missing-module RED; **22/22 core/config tests, 102 assertions**, and
+**109/109 legacy config tests, 187 assertions** GREEN. Core and OpenCode typechecks
+pass. Tests include restart, independent runtime roots, concurrent changes,
+uninstall, disabled defaults, malformed state, altered bundled files and POSIX
+hardlink/symlink/broad-permission rejection. A compiled native Windows fixture
+first failed first-use storage ordering, then passed all five lifecycle checks
+after private-parent preparation moved before lock creation. It used only a new
+temporary root and cleaned it afterward. Reproducible fixture:
+`packages/core/test/fixture/capabilities-native.ts` (bundle with Bun's Node/CJS
+target, then run with native Node). No connector or real account was contacted.
+
+Logs: `/tmp/bc-capabilities-{red,core-final,legacy,types,opencode-types}.log`.
+**Not yet complete:** protected marketplace endpoints, both settings layouts,
+prior Electron-store choice migration, effective override/status presentation,
+connector authentication/setup, and matching installed-package acceptance.
+Do not recommend a replacement package before prior disabled choices are carried
+over; this checkpoint establishes the runtime/config foundation only.
+
 ### Dictation composer and microphone permission — September 23, 2026
 
 Both composer layouts now use the selected runtime's generated account API for

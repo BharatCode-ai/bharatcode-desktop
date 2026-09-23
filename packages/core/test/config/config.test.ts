@@ -4,6 +4,7 @@ import { describe, expect } from "bun:test"
 import { Effect, Layer, Schema } from "effect"
 import { FastCheck } from "effect/testing"
 import { Config } from "@opencode-ai/core/config"
+import { Capabilities } from "@opencode-ai/core/capabilities"
 import { ConfigProvider } from "@opencode-ai/core/config/provider"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
@@ -38,7 +39,7 @@ function testLayer(
   )
   return AppNodeBuilder.build(LayerNode.group([Config.node, Policy.node]), [
     [Location.node, locationLayer],
-    [Global.node, Global.layerWith({ config: globalDirectory })],
+    [Global.node, Global.layerWith({ config: globalDirectory, data: path.join(directory, "global-data") })],
   ])
 }
 
@@ -52,6 +53,36 @@ const provider = {
 }
 
 describe("Config", () => {
+  it.live("places marketplace defaults below explicit user configuration without rewriting it", () =>
+    Effect.acquireRelease(
+      Effect.promise(() => tmpdir()),
+      (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+    ).pipe(
+      Effect.flatMap((tmp) =>
+        Effect.gen(function* () {
+          yield* Effect.promise(() =>
+            Capabilities.store({ data: path.join(tmp.path, "global-data"), desktop: false }).change("github", "enable"),
+          )
+          const file = path.join(tmp.path, "opencode.json")
+          const text = JSON.stringify({
+            mcp: { servers: { github: { type: "remote", url: "https://custom.invalid", disabled: true } } },
+          })
+          yield* Effect.promise(() => fs.writeFile(file, text))
+          yield* Effect.gen(function* () {
+            const config = yield* Config.Service
+            const entries = yield* config.entries()
+            const documents = entries.filter((entry) => entry.type === "document")
+            expect(documents[0]?.info.mcp?.servers?.github?.type).toBe("remote")
+            expect(Config.latest(entries, "mcp")?.servers?.github).toMatchObject({
+              url: "https://custom.invalid",
+              disabled: true,
+            })
+          }).pipe(Effect.provide(testLayer(tmp.path)))
+          expect(yield* Effect.promise(() => fs.readFile(file, "utf8"))).toBe(text)
+        }),
+      ),
+    ),
+  )
   it.effect("returns the latest defined scalar from priority-ordered documents", () =>
     Effect.sync(() => {
       const entries = [

@@ -18,6 +18,8 @@ import { ConfigExperimental } from "./config/experimental"
 import { ConfigFormatter } from "./config/formatter"
 import { ConfigLSP } from "./config/lsp"
 import { ConfigMCP } from "./config/mcp"
+import { Capabilities } from "./capabilities"
+import { Flag } from "./flag/flag"
 import { ConfigPlugin } from "./config/plugin"
 import { ConfigProvider } from "./config/provider"
 import { ConfigReference } from "./config/reference"
@@ -200,7 +202,17 @@ const layer = Layer.effect(
     const supplementary = yield* Effect.forEach(directories, loadDirectory).pipe(Effect.orDie)
     // Apply general settings first and more specific settings last:
     // global config, project files, then `.opencode` files.
-    const configs = [...(supplementary[0] ?? []), ...direct, ...supplementary.slice(1).flat()]
+    const managed = yield* Effect.promise(() =>
+      Capabilities.store({
+        data: global.data,
+        desktop: Flag.OPENCODE_CLIENT === "desktop",
+      }).overlay(),
+    )
+    const defaults =
+      Object.keys(managed.mcp ?? {}).length || managed.skills?.paths?.length
+        ? [new Document({ type: "document", info: Schema.decodeUnknownSync(Info)(ConfigMigrateV1.migrate(managed)) })]
+        : []
+    const configs = [...defaults, ...(supplementary[0] ?? []), ...direct, ...supplementary.slice(1).flat()]
     // Rules use the opposite order so a user-global rule can override a
     // repository rule. Statement order inside each file stays unchanged.
     yield* policy.load(

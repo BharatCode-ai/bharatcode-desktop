@@ -1,0 +1,197 @@
+[
+  {
+    "id": "superpowers-obra",
+    "name": "Superpowers by Obra",
+    "description": "Use Obra's development workflow skills inside BharatCode.",
+    "publisher": "Obra",
+    "version": "1.0.0",
+    "category": "workflow",
+    "trust": "bundled",
+    "defaultEnabled": true,
+    "requirements": [],
+    "permissions": ["workspace_files"],
+    "modules": [
+      {
+        "type": "skill",
+        "id": "superpowers",
+        "path": "bundled-superpowers"
+      }
+    ]
+  },
+  {
+    "id": "github",
+    "name": "GitHub",
+    "description": "Let BharatCode inspect pull requests, issues, Actions, releases, and repository metadata.",
+    "publisher": "GitHub",
+    "version": "1.0.0",
+    "category": "code-hosting",
+    "trust": "curated",
+    "requiresSetup": true,
+    "requirements": ["GitHub account", "Remote MCP OAuth"],
+    "permissions": ["oauth_account", "network"],
+    "modules": [
+      {
+        "type": "mcp",
+        "name": "github",
+        "config": {
+          "type": "remote",
+          "url": "https://api.githubcopilot.com/mcp/"
+        }
+      }
+    ]
+  },
+  {
+    "id": "playwright",
+    "name": "Playwright",
+    "description": "Use browser automation for screenshots, accessibility snapshots, and UI smoke tests.",
+    "publisher": "Microsoft",
+    "version": "1.0.0",
+    "category": "browser",
+    "trust": "curated",
+    "requiresSetup": true,
+    "requirements": ["Node.js 18 or newer", "npx available on PATH"],
+    "permissions": ["browser_automation", "local_process", "network", "background_process"],
+    "modules": [
+      {
+        "type": "mcp",
+        "name": "playwright",
+        "config": {
+          "type": "local",
+          "command": ["npx", "@playwright/mcp@latest"]
+        }
+      }
+    ]
+  },
+  {
+    "id": "figma",
+    "name": "Figma",
+    "description": "Add Figma design context for selected files and frames.",
+    "publisher": "Figma",
+    "version": "1.0.0",
+    "category": "design",
+    "trust": "curated",
+    "requiresSetup": true,
+    "requirements": ["Figma account", "Remote MCP OAuth"],
+    "permissions": ["oauth_account", "network"],
+    "modules": [
+      {
+        "type": "mcp",
+        "name": "figma",
+        "config": {
+          "type": "remote",
+          "url": "https://mcp.figma.com/mcp"
+        }
+      }
+    ]
+  },
+  {
+    "id": "linear",
+    "name": "Linear",
+    "description": "Bring issues, projects, comments, and planning context into BharatCode.",
+    "publisher": "Linear",
+    "version": "1.0.0",
+    "category": "planning",
+    "trust": "curated",
+    "requiresSetup": true,
+    "requirements": ["Linear account", "Remote MCP OAuth"],
+    "permissions": ["oauth_account", "network"],
+    "modules": [
+      {
+        "type": "mcp",
+        "name": "linear",
+        "config": {
+          "type": "remote",
+          "url": "https://mcp.linear.app/mcp"
+        }
+      }
+    ]
+  },
+  {
+    "id": "sentry",
+    "name": "Sentry",
+    "description": "Inspect errors, traces, releases, and issue context from Sentry.",
+    "publisher": "Sentry",
+    "version": "1.0.0",
+    "category": "monitoring",
+    "trust": "curated",
+    "requiresSetup": true,
+    "requirements": ["Sentry account", "Remote MCP OAuth"],
+    "permissions": ["oauth_account", "network", "monitoring_data"],
+    "modules": [
+      {
+        "type": "mcp",
+        "name": "sentry",
+        "config": {
+          "type": "remote",
+          "url": "https://mcp.sentry.dev/mcp"
+        }
+      }
+    ]
+  },
+  {
+    "id": "supabase",
+    "name": "Supabase",
+    "description": "Inspect project schema, migrations, logs, and SQL context after you connect Supabase.",
+    "publisher": "Supabase",
+    "version": "1.0.0",
+    "category": "database",
+    "trust": "curated",
+    "requiresSetup": true,
+    "requirements": ["Supabase account", "Remote MCP OAuth"],
+    "permissions": ["oauth_account", "network", "database_data"],
+    "modules": [
+      {
+        "type": "mcp",
+        "name": "supabase",
+        "config": {
+          "type": "remote",
+          "url": "https://mcp.supabase.com/mcp"
+        }
+      }
+    ]
+  },
+  {
+    "id": "stripe",
+    "name": "Stripe",
+    "description": "Inspect billing, product, customer, payment, and subscription context.",
+    "publisher": "Stripe",
+    "version": "1.0.0",
+    "category": "billing",
+    "trust": "curated",
+    "requiresSetup": true,
+    "requirements": ["Stripe account", "OAuth or restricted API key"],
+    "permissions": ["oauth_account", "network", "billing_data"],
+    "modules": [
+      {
+        "type": "mcp",
+        "name": "stripe",
+        "config": {
+          "type": "remote",
+          "url": "https://mcp.stripe.com"
+        }
+      }
+    ]
+  },
+  {
+    "id": "cloudflare-docs",
+    "name": "Cloudflare Docs",
+    "description": "Search current Cloudflare documentation without granting account access.",
+    "publisher": "Cloudflare",
+    "version": "1.0.0",
+    "category": "docs",
+    "trust": "curated",
+    "requirements": [],
+    "permissions": ["network"],
+    "modules": [
+      {
+        "type": "mcp",
+        "name": "cloudflare-docs",
+        "config": {
+          "type": "remote",
+          "url": "https://docs.mcp.cloudflare.com/mcp",
+          "oauth": false
+        }
+      }
+    ]
+  }
+]

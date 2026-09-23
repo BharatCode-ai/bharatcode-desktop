@@ -36,6 +36,7 @@ import fs from "fs/promises"
 import os from "os"
 import { pathToFileURL } from "url"
 import { Global } from "@opencode-ai/core/global"
+import { Capabilities } from "@opencode-ai/core/capabilities"
 import { ProjectV2 } from "@opencode-ai/core/project"
 import { Filesystem } from "@/util/filesystem"
 import { ConfigPlugin } from "@/config/plugin"
@@ -318,6 +319,38 @@ it.effect("creates global jsonc config with schema when no global configs exist"
       const content = yield* FSUtil.use.readFileString(path.join(dir, "opencode.jsonc"))
       expect(content).toContain('"$schema": "https://opencode.ai/config.json"')
     }).pipe(Effect.provide(testInstanceStoreLayer), Effect.provide(LayerNode.compile(CrossSpawnSpawner.node))),
+  ),
+)
+
+it.effect("marketplace defaults preserve explicit global MCP overrides and unrelated entries", () =>
+  withGlobalConfig(
+    {
+      config: {
+        mcp: {
+          github: { type: "remote", url: "https://custom.invalid", enabled: false },
+          custom: { type: "remote", url: "https://example.invalid/mcp" },
+        },
+      },
+    },
+    () =>
+      Effect.gen(function* () {
+        const temporary = yield* tmpdirScoped()
+        const previous = Global.Path.data
+        ;(Global.Path as { data: string }).data = temporary
+        try {
+          const store = Capabilities.store({ data: temporary, desktop: false })
+          yield* Effect.promise(() => store.change("github", "enable"))
+          yield* Effect.promise(() => store.change("figma", "enable"))
+          yield* Config.use.invalidate()
+          const config = yield* Config.use.getGlobal()
+          expect(config.mcp?.github).toMatchObject({ url: "https://custom.invalid", enabled: false })
+          expect(config.mcp?.figma).toMatchObject({ url: "https://mcp.figma.com/mcp", enabled: true })
+          expect(config.mcp?.custom).toMatchObject({ url: "https://example.invalid/mcp" })
+        } finally {
+          ;(Global.Path as { data: string }).data = previous
+          yield* Config.use.invalidate()
+        }
+      }),
   ),
 )
 
