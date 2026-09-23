@@ -9,6 +9,25 @@ import { reply } from "../../lib/llm-server"
 import { cliIt } from "../../lib/cli-process"
 
 describe("opencode run (non-interactive subprocess)", () => {
+  for (const attached of [false, true]) {
+    cliIt.concurrent(
+      `drains large terminal output before exiting (attach=${attached})`,
+      ({ llm, opencode }) =>
+        Effect.gen(function* () {
+          const text = "large output ".repeat(100_000) + "final-output-sentinel"
+          yield* llm.text(text)
+          const server = attached ? yield* opencode.serve() : undefined
+          const result = yield* opencode.run("produce the fixture", {
+            extraArgs: server ? ["--attach", server.url] : [],
+          })
+          opencode.expectExit(result, 0)
+          expect(result.stdout.length).toBe(text.length + 1)
+          expect(result.stdout.endsWith("final-output-sentinel\n")).toBe(true)
+        }),
+      60_000,
+    )
+  }
+
   // Happy path: prompt completes, output reaches stdout, process exits 0.
   // If this fails, all the others likely will too — debug here first.
   cliIt.concurrent(

@@ -25,6 +25,7 @@ import { Filesystem } from "@/util/filesystem"
 import { createOpencodeClient, type OpencodeClient, type ToolPart } from "@opencode-ai/sdk/v2"
 import { FormatError, FormatUnknownError } from "../error"
 import { INTERACTIVE_INPUT_ERROR, resolveInteractiveStdin } from "./run/runtime.stdin"
+import { settleNonInteractiveTurn } from "./run/noninteractive-turn"
 
 type ModelInput = Parameters<OpencodeClient["session"]["prompt"]>[0]["model"]
 
@@ -675,9 +676,19 @@ export const RunCommand = effectCmd({
         }
         const sessionID = sess.id
 
+        let stdout = Promise.resolve()
+        function writeStdout(value: string) {
+          stdout = stdout.then(
+            () =>
+              new Promise<void>((resolve, reject) => {
+                process.stdout.write(value, (error) => (error ? reject(error) : resolve()))
+              }),
+          )
+        }
+
         function emit(type: string, data: Record<string, unknown>) {
           if (args.format === "json") {
-            process.stdout.write(
+            writeStdout(
               JSON.stringify({
                 type,
                 timestamp: Date.now(),
@@ -696,8 +707,10 @@ export const RunCommand = effectCmd({
         // created, and replies issued from inside the loop must use that client.
         async function loop(client: OpencodeClient, events: Awaited<ReturnType<typeof sdk.event.subscribe>>) {
           const toggles = new Map<string, boolean>()
+          const announcedSteps = new Set<string>()
           const sessions = new Set([sessionID])
           let error: string | undefined
+          let idle = false
 
           for await (const event of events.stream) {
             if (event.type === "session.created" && event.properties.info.parentID) {
@@ -743,6 +756,10 @@ export const RunCommand = effectCmd({
               }
 
               if (part.type === "step-start") {
+                // Deferred capture updates this same part with its snapshot hash;
+                // that is not a second step in the CLI's append-only JSON output.
+                if (announcedSteps.has(part.id)) continue
+                announcedSteps.add(part.id)
                 if (emit("step_start", { part })) continue
               }
 
@@ -755,7 +772,7 @@ export const RunCommand = effectCmd({
                 const text = part.text.trim()
                 if (!text) continue
                 if (!process.stdout.isTTY) {
-                  process.stdout.write(text + EOL)
+                  writeStdout(text + EOL)
                   continue
                 }
                 UI.empty()
@@ -774,7 +791,7 @@ export const RunCommand = effectCmd({
                   UI.empty()
                   continue
                 }
-                process.stdout.write(line + EOL)
+                writeStdout(line + EOL)
               }
             }
 
@@ -795,6 +812,7 @@ export const RunCommand = effectCmd({
               event.properties.sessionID === sessionID &&
               event.properties.status.type === "idle"
             ) {
+              idle = true
               break
             }
 
@@ -820,6 +838,7 @@ export const RunCommand = effectCmd({
               }
             }
           }
+          if (!idle) throw new Error("BharatCode event stream closed before the session became idle.")
           return error
         }
         const cwd = args.attach ? (directory ?? sess.directory ?? (await current(sdk))) : (directory ?? root)
@@ -831,49 +850,50 @@ export const RunCommand = effectCmd({
         await share(client, sessionID)
 
         if (!interactive) {
-          const events = await client.event.subscribe()
-          const completed = loop(client, events).catch((e) => {
-            console.error(e)
-            process.exitCode = 1
-          })
-          async function finish() {
-            if (args.attach) return
-            const error = await completed
-            if (error) process.exitCode = 1
-          }
-
-          if (args.command) {
-            const result = await client.session.command({
-              sessionID,
-              agent,
-              model: args.model,
-              command: args.command,
-              arguments: message,
-              variant: args.variant,
+          const controller = new AbortController()
+          const events = await client.event.subscribe(undefined, { signal: controller.signal })
+          try {
+            const result = await settleNonInteractiveTurn({
+              submit: () =>
+                args.command
+                  ? client.session.command(
+                      {
+                        sessionID,
+                        agent,
+                        model: args.model,
+                        command: args.command,
+                        arguments: message,
+                        variant: args.variant,
+                      },
+                      { signal: controller.signal },
+                    )
+                  : client.session.prompt(
+                      {
+                        sessionID,
+                        agent,
+                        model: pick(args.model),
+                        variant: args.variant,
+                        parts: [...files, { type: "text", text: message }],
+                      },
+                      { signal: controller.signal },
+                    ),
+              terminal: loop(client, events),
+              cancel: () => controller.abort(),
+              onPromptError: (error) => {
+                if (!emit("error", { error })) UI.error(formatRunError(error))
+              },
+              drain: () => stdout,
+              timeoutMs: 30 * 60 * 1_000,
             })
-            if (result.error) {
-              if (!emit("error", { error: result.error })) UI.error(formatRunError(result.error))
-              process.exitCode = 1
-              return
+            if ("promptError" in result || result.terminal) process.exitCode = 1
+          } catch (error) {
+            const message = error instanceof Error && error.message ? error.message : formatRunError(error)
+            if (!emit("error", { error: { name: "RunError", data: { message } } })) {
+              UI.error(message)
             }
-            await finish()
-            return
-          }
-
-          const model = pick(args.model)
-          const result = await client.session.prompt({
-            sessionID,
-            agent,
-            model,
-            variant: args.variant,
-            parts: [...files, { type: "text", text: message }],
-          })
-          if (result.error) {
-            if (!emit("error", { error: result.error })) UI.error(formatRunError(result.error))
             process.exitCode = 1
-            return
+            await stdout
           }
-          await finish()
           return
         }
 

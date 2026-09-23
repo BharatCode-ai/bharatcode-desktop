@@ -10,6 +10,31 @@ than resolving 499 overlapping files at once.
 
 ## Where it stands
 
+### CLI terminal completion and output — September 23, 2026
+
+The subprocess audit exposed a deferred-capture integration regression: updating
+the stored step's snapshot emitted a second `step_start` JSON record. CLI output
+now announces each step ID once without discarding the stored snapshot update.
+Existing JSON-ordering tests went from **10 pass / 3 fail** to **13/13**.
+
+The accepted `b6db9d469d` completion policy was also missing. A new 1.3 MB reply
+fixture reproduced attached CLI exit with zero output; merely awaiting terminal
+idle still truncated output to 219,264 bytes. Restored the small completion helper
+and its tests: both submission and terminal completion must settle, prompt errors
+do not wait for nonexistent idle events, early stream closure fails, the deadline
+includes submission, cleanup cancels the event/request subscription, and queued
+stdout writes drain before return. Local and attached subprocesses now retain the
+entire reply and final sentinel. No interactive-runtime redesign was made.
+
+GREEN: **27/27, 72 assertions** across completion-helper and actual subprocess
+tests, including JSON/text/reasoning/tool order, unknown model, permission denial,
+attached file handling and SIGINT. OpenCode typecheck passes. Logs:
+`/tmp/bc-cli-retained-{baseline,green,types}.log`,
+`/tmp/bc-cli-step-green.log`, `/tmp/bc-cli-output-{red,green}.log`.
+The intermediate output-green filename contains the deliberately insufficient
+wait-only attempt, not final passing evidence; final GREEN is retained-green.
+All HTTP/model traffic was local synthetic fixture traffic.
+
 ### Downloaded search-tool integrity — September 23, 2026
 
 The accepted `58ef562c50` checksum policy was missing from upstream's relocated
@@ -108,10 +133,9 @@ Correct product identity does not assert a public brew/Scoop/Chocolatey package
 currently exists. Logs: `/tmp/bc-install-identity-red.log`,
 `/tmp/bc-final-retained-guards.log`, `/tmp/bc-final-retained-types.log`.
 
-The checkpoints above close overflow compaction (`3392af2a3c`) and deferred
-workspace capture (`9343b71ea3`). The retained-feature audit continues with
-downloaded-tool integrity and noninteractive CLI termination against their new
-upstream owners; neither is assumed preserved merely because paths moved.
+The checkpoints above close overflow compaction (`3392af2a3c`), deferred
+workspace capture (`9343b71ea3`), downloaded-tool integrity (`58ef562c50`) and
+noninteractive CLI termination (`b6db9d469d`) against their new upstream owners.
 
 ### Retained sharing and DNS safeguards — September 23, 2026
 
