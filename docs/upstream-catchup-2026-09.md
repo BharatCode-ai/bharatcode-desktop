@@ -10,6 +10,28 @@ than resolving 499 overlapping files at once.
 
 ## Where it stands
 
+### Deferred workspace capture — September 23, 2026
+
+Ported the accepted `9343b71ea3` behavior to the current Effect processor without
+copying its old lifetime/deduplication mechanism. Processor creation no longer
+waits on workspace capture; text streams while one cached capture runs. Every
+local tool execution awaits that capture, including SDK callbacks which precede
+`step-start`. The owning fiber starts immediately, and the callback bridge retains
+workspace context. Step records receive the original tree before final snapshot
+and patch computation. Each step resets capture state even when snapshots are
+disabled. Cleanup cancels unfinished filesystem work; tools cannot execute after
+abort/completion or a capture failure.
+
+RED: all three initial slow-capture fixtures timed out at processor creation.
+GREEN: seven added regressions cover early text, concurrent tools, abort, capture
+failure, provider failure, pre-event execution, multiple steps and disabled
+snapshots. The session/snapshot suites passed **497 tests / 8 existing skips /
+1 existing todo / 0 failures, 1,974 assertions**, including actual isolated Git
+snapshot/tool diff behavior. OpenCode typecheck passed. Logs:
+`/tmp/bc-snapshot-{red,edge,session-suite,final,types}.log`.
+All model responses are synthetic and filesystem operations use isolated roots;
+this is not a production latency measurement or installed-package acceptance.
+
 ### Overflow compaction context and timeline — September 23, 2026
 
 Reproduced the accepted `3392af2a3c` regression against the current upstream
@@ -69,11 +91,10 @@ Correct product identity does not assert a public brew/Scoop/Chocolatey package
 currently exists. Logs: `/tmp/bc-install-identity-red.log`,
 `/tmp/bc-final-retained-guards.log`, `/tmp/bc-final-retained-types.log`.
 
-The overflow-compaction checkpoint above closes `3392af2a3c`. The next audit item
-is deferred workspace snapshots (`9343b71ea3`): current processor creation blocks
-on the initial snapshot before streaming. A correct port must let text arrive
-early while retaining the pre-tool-write snapshot barrier and cancellation
-ownership; no snapshot behavior correction is claimed yet.
+The checkpoints above close overflow compaction (`3392af2a3c`) and deferred
+workspace capture (`9343b71ea3`). The retained-feature audit continues with
+downloaded-tool integrity and noninteractive CLI termination against their new
+upstream owners; neither is assumed preserved merely because paths moved.
 
 ### Retained sharing and DNS safeguards — September 23, 2026
 

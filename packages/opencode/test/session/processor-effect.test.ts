@@ -26,6 +26,7 @@ import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { SessionProjector } from "@opencode-ai/core/session/projector"
 import { LLMEvent } from "@opencode-ai/llm"
+import { Snapshot } from "@/snapshot"
 
 const summary = Layer.succeed(
   SessionSummary.Service,
@@ -103,7 +104,7 @@ function defer<T>() {
   return { promise, resolve }
 }
 
-const waitFor = <A>(check: Effect.Effect<A | undefined>, message: string) =>
+const waitFor = <A, R>(check: Effect.Effect<A | undefined, never, R>, message: string) =>
   Effect.gen(function* () {
     const stop = Date.now() + 500
     while (Date.now() < stop) {
@@ -233,9 +234,260 @@ const boot = Effect.fn("test.boot")(function* () {
   return { processors, session, provider }
 })
 
+for (const mode of ["text", "tool", "abort", "snapshot-failure", "provider-failure"] as const) {
+  const gate = defer<void>()
+  let tracks = 0
+  let interrupted = false
+  let executions = 0
+  const slowSnapshot = Layer.succeed(
+    Snapshot.Service,
+    Snapshot.Service.of({
+      init: () => Effect.void,
+      cleanup: () => Effect.void,
+      track: () =>
+        Effect.gen(function* () {
+          const index = ++tracks
+          if (index === 1) {
+            yield* Effect.promise(() => gate.promise).pipe(
+              Effect.onInterrupt(() =>
+                Effect.sync(() => {
+                  interrupted = true
+                }),
+              ),
+            )
+          }
+          if (mode === "snapshot-failure") return yield* Effect.die(new Error("Snapshot capture failed"))
+          return `snapshot-${index}`
+        }),
+      patch: (hash) => Effect.succeed({ hash, files: [] }),
+      restore: () => Effect.void,
+      revert: () => Effect.void,
+      diff: () => Effect.succeed(""),
+      diffFull: () => Effect.succeed([]),
+    }),
+  )
+  const test = testEffect(
+    LayerNode.compile(
+      LayerNode.group([root, LayerNode.make({ service: TestLLMServer, layer: TestLLMServer.layer, deps: [] })]),
+      [...replacements, [Snapshot.node, slowSnapshot]],
+    ),
+  )
+  test.live(`deferred snapshot: ${mode} streams without allowing premature or aborted tools`, () =>
+    provideTmpdirServer(
+      ({ dir, llm }) =>
+        Effect.gen(function* () {
+          const { processors, session, provider } = yield* boot()
+          if (mode === "text") yield* llm.text("hello before snapshot")
+          else if (mode === "provider-failure") yield* llm.error(400, { error: { message: "Invalid request" } })
+          else
+            yield* llm.push(
+              raw({
+                head: [
+                  {
+                    id: "chatcmpl-snapshot",
+                    object: "chat.completion.chunk",
+                    choices: [
+                      {
+                        delta: {
+                          role: "assistant",
+                          tool_calls: [0, 1].map((index) => ({
+                            index,
+                            id: `snapshot-tool-${index}`,
+                            type: "function",
+                            function: { name: "lookup", arguments: JSON.stringify({ query: `query-${index}` }) },
+                          })),
+                        },
+                      },
+                    ],
+                  },
+                ],
+                tail: [
+                  {
+                    id: "chatcmpl-snapshot",
+                    object: "chat.completion.chunk",
+                    choices: [{ delta: {}, finish_reason: "tool_calls" }],
+                  },
+                ],
+              }),
+            )
+          const chat = yield* session.create({})
+          const parent = yield* user(chat.id, "hi")
+          const msg = yield* assistant(chat.id, parent.id, path.resolve(dir))
+          const mdl = yield* provider.getModel(ref.providerID, ref.modelID)
+          const handle = yield* processors
+            .create({ assistantMessage: msg, sessionID: chat.id, model: mdl })
+            .pipe(Effect.timeout("1 second"))
+          expect(tracks).toBe(0)
+          const process = yield* handle
+            .process({
+              user: parent,
+              sessionID: chat.id,
+              model: mdl,
+              agent: agent(),
+              system: [],
+              messages: [{ role: "user", content: "hi" }],
+              tools: {
+                lookup: tool({
+                  description: "Look up information",
+                  inputSchema: z.object({ query: z.string() }),
+                  execute: async () => {
+                    executions++
+                    return { title: "Lookup", output: "result", metadata: {} }
+                  },
+                }),
+              },
+            })
+            .pipe(Effect.forkScoped)
+          if (mode === "provider-failure") {
+            expect(yield* Fiber.join(process).pipe(Effect.timeout("1 second"))).toBe("stop")
+            expect(interrupted).toBe(true)
+            gate.resolve()
+            expect(executions).toBe(0)
+            expect(handle.message.error).toBeDefined()
+            return
+          }
+          yield* waitFor(
+            MessageV2.parts(msg.id).pipe(
+              Effect.map((parts) =>
+                parts.find((part) =>
+                  mode === "text"
+                    ? part.type === "text" && part.text === "hello before snapshot"
+                    : part.type === "tool",
+                ),
+              ),
+            ),
+            "stream did not advance while the initial snapshot was pending",
+          )
+          expect(tracks).toBe(1)
+          expect(executions).toBe(0)
+          if (mode === "abort") {
+            yield* Fiber.interrupt(process).pipe(Effect.timeout("1 second"))
+            expect(interrupted).toBe(true)
+            gate.resolve()
+            yield* Effect.sleep("20 millis")
+            expect(executions).toBe(0)
+            expect(tracks).toBe(1)
+            expect(handle.message.error).toBeDefined()
+            return
+          }
+          gate.resolve()
+          if (mode === "snapshot-failure") {
+            expect(yield* Fiber.join(process).pipe(Effect.timeout("1 second"))).toBe("stop")
+            expect(executions).toBe(0)
+            expect(tracks).toBe(1)
+            expect(handle.message.error).toBeDefined()
+            return
+          }
+          expect(yield* Fiber.join(process).pipe(Effect.timeout("1 second"))).toBe("continue")
+          expect(tracks).toBe(2)
+          expect(executions).toBe(mode === "tool" ? 2 : 0)
+          const parts = yield* MessageV2.parts(msg.id)
+          expect(parts.find((part) => part.type === "step-start")?.snapshot).toBe("snapshot-1")
+          expect(parts.find((part) => part.type === "step-finish")?.snapshot).toBe("snapshot-2")
+        }).pipe(Effect.ensuring(Effect.sync(() => gate.resolve()))),
+      { config: (url) => providerCfg(url) },
+    ),
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+for (const enabled of [true, false]) {
+  let tracks = 0
+  const executedAt: number[] = []
+  let forwarded: LLM.StreamInput | undefined
+  const snapshots = Layer.succeed(
+    Snapshot.Service,
+    Snapshot.Service.of({
+      init: () => Effect.void,
+      cleanup: () => Effect.void,
+      track: () =>
+        Effect.sync(() => {
+          tracks++
+          return enabled ? `tree-${tracks}` : undefined
+        }),
+      patch: (hash) => Effect.succeed({ hash, files: [] }),
+      restore: () => Effect.void,
+      revert: () => Effect.void,
+      diff: () => Effect.succeed(""),
+      diffFull: () => Effect.succeed([]),
+    }),
+  )
+  const earlyTools = Layer.succeed(
+    LLM.Service,
+    LLM.Service.of({
+      stream: (input) => {
+        forwarded = input
+        return Stream.fromIterable([0, 1]).pipe(
+          Stream.flatMap((index) =>
+            Stream.fromEffect(
+              Effect.promise(() =>
+                Promise.all(
+                  [0, 1].map((call) =>
+                    input.tools.lookup.execute!({}, { toolCallId: `${index}-${call}`, messages: [] }),
+                  ),
+                ),
+              ),
+            ).pipe(
+              Stream.flatMap(() =>
+                Stream.make(LLMEvent.stepStart({ index }), LLMEvent.stepFinish({ index, reason: "stop" })),
+              ),
+            ),
+          ),
+        )
+      },
+    }),
+  )
+  const test = testEffect(
+    LayerNode.compile(root, [...replacements, [Snapshot.node, snapshots], [LLM.node, earlyTools]]),
+  )
+  test.live(`deferred snapshot: pre-event tools share each step capture (enabled=${enabled})`, () =>
+    provideTmpdirInstance(
+      (dir) =>
+        Effect.gen(function* () {
+          const { processors, session, provider } = yield* boot()
+          const chat = yield* session.create({})
+          const parent = yield* user(chat.id, "hi")
+          const msg = yield* assistant(chat.id, parent.id, path.resolve(dir))
+          const mdl = yield* provider.getModel(ref.providerID, ref.modelID)
+          const handle = yield* processors.create({ assistantMessage: msg, sessionID: chat.id, model: mdl })
+          const result = yield* handle.process({
+            user: parent,
+            sessionID: chat.id,
+            model: mdl,
+            agent: agent(),
+            system: [],
+            messages: [{ role: "user", content: "hi" }],
+            tools: {
+              lookup: tool({
+                inputSchema: z.object({}),
+                execute: async () => {
+                  executedAt.push(tracks)
+                  return "done"
+                },
+              }),
+            },
+          })
+          expect(result).toBe("continue")
+          expect(tracks).toBe(4)
+          expect(executedAt).toEqual([1, 1, 3, 3])
+          const parts = yield* MessageV2.parts(msg.id)
+          expect(parts.filter((part) => part.type === "step-start").map((part) => part.snapshot)).toEqual(
+            enabled ? ["tree-1", "tree-3"] : [undefined, undefined],
+          )
+          const late = yield* Effect.tryPromise(async () => {
+            return await forwarded!.tools.lookup.execute!({}, { toolCallId: "late", messages: [] })
+          }).pipe(Effect.exit)
+          expect(Exit.isFailure(late)).toBe(true)
+          expect(tracks).toBe(4)
+          expect(executedAt).toEqual([1, 1, 3, 3])
+        }),
+      { config: cfg },
+    ),
+  )
+}
 
 it.live("session.processor effect tests capture llm input cleanly", () =>
   provideTmpdirServer(

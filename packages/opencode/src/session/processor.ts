@@ -2,7 +2,7 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { Image } from "@/image/image"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
-import { Cause, Deferred, Effect, Exit, Layer, Context, Scope, Schema } from "effect"
+import { Cause, Deferred, Effect, Exit, Fiber, Layer, Context, Scope, Schema } from "effect"
 import * as Stream from "effect/Stream"
 import { Agent } from "@/agent/agent"
 import { Config } from "@/config/config"
@@ -26,6 +26,7 @@ import { EventV2Bridge } from "@/event-v2-bridge"
 import { Database } from "@opencode-ai/core/database/database"
 import { Usage, type LLMEvent } from "@opencode-ai/llm"
 import { ToolLoopGuard } from "@opencode-ai/core/session/tool-loop-guard"
+import { EffectBridge } from "@/effect/bridge"
 
 const DOOM_LOOP_THRESHOLD = 3
 export type Result = "compact" | "stop" | "continue"
@@ -75,6 +76,7 @@ interface ProcessorContext extends Input {
   snapshot: string | undefined
   blocked: boolean
   needsCompaction: boolean
+  currentStepStart: SessionV1.StepStartPart | undefined
   currentText: SessionV1.TextPart | undefined
   reasoningMap: Record<string, SessionV1.ReasoningPart>
 }
@@ -101,23 +103,78 @@ const layer = Layer.effect(
     const database = yield* Database.Service
 
     const create = Effect.fn("SessionProcessor.create")(function* (input: Input) {
-      // Pre-capture snapshot before the LLM stream starts. The AI SDK
-      // may execute tools internally before emitting start-step events,
-      // so capturing inside the event handler can be too late.
-      const initialSnapshot = yield* snapshot.track()
+      const bridge = yield* EffectBridge.make()
       const ctx: ProcessorContext = {
         assistantMessage: input.assistantMessage,
         sessionID: input.sessionID,
         model: input.model,
         toolcalls: {},
         shouldBreak: false,
-        snapshot: initialSnapshot,
+        snapshot: undefined,
         blocked: false,
         needsCompaction: false,
+        currentStepStart: undefined,
         currentText: undefined,
         reasoningMap: {},
       }
       let aborted = false
+      let active = false
+      let capture:
+        | {
+            read: Effect.Effect<string | undefined>
+            fiber: Fiber.Fiber<string | undefined>
+          }
+        | undefined
+
+      const startSnapshot = Effect.fn("SessionProcessor.startSnapshot")(function* () {
+        if (capture) return
+        const read = yield* snapshot.track().pipe(
+          Effect.tap((hash) =>
+            Effect.sync(() => {
+              ctx.snapshot = hash
+            }),
+          ),
+          Effect.cached,
+        )
+        // Start the owner immediately so a tool callback cannot become the cached
+        // computation's owner. Cleanup must be able to cancel the filesystem work.
+        capture = { read, fiber: yield* read.pipe(Effect.forkIn(scope, { startImmediately: true })) }
+      })
+
+      const ensureSnapshot = Effect.fn("SessionProcessor.ensureSnapshot")(function* () {
+        yield* startSnapshot()
+        return yield* capture!.read
+      })
+
+      const persistStepSnapshot = Effect.fn("SessionProcessor.persistStepSnapshot")(function* () {
+        if (!ctx.snapshot || !ctx.currentStepStart || ctx.currentStepStart.snapshot) return
+        ctx.currentStepStart.snapshot = ctx.snapshot
+        yield* session.updatePart(ctx.currentStepStart)
+      })
+
+      const guardToolSnapshots = (streamInput: LLM.StreamInput): LLM.StreamInput => ({
+        ...streamInput,
+        tools: Object.fromEntries(
+          Object.entries(streamInput.tools).map(([name, tool]) => {
+            const execute = tool.execute
+            if (!execute) return [name, tool]
+            return [
+              name,
+              {
+                ...tool,
+                execute: async (...args: Parameters<typeof execute>) => {
+                  if (!active || args[1].abortSignal?.aborted) throw new DOMException("Aborted", "AbortError")
+                  // The SDK can invoke tools before emitting step-start. Guard the actual
+                  // execution boundary, not the event notification, while text streams freely.
+                  await bridge.promise(ensureSnapshot())
+                  if (!active || args[1].abortSignal?.aborted) throw new DOMException("Aborted", "AbortError")
+                  return execute(...args)
+                },
+              },
+            ]
+          }),
+        ),
+      })
 
       const parse = (e: unknown) =>
         MessageV2.fromError(e, {
@@ -455,17 +512,20 @@ const layer = Layer.effect(
             throw new Error(value.message)
 
           case "step-start":
-            if (!ctx.snapshot) ctx.snapshot = yield* snapshot.track()
-            yield* session.updatePart({
+            yield* startSnapshot()
+            ctx.currentStepStart = {
               id: PartID.ascending(),
               messageID: ctx.assistantMessage.id,
               sessionID: ctx.sessionID,
               snapshot: ctx.snapshot,
               type: "step-start",
-            })
+            }
+            yield* session.updatePart(ctx.currentStepStart)
             return
 
           case "step-finish": {
+            yield* ensureSnapshot()
+            yield* persistStepSnapshot()
             const completedSnapshot = yield* snapshot.track()
             yield* Effect.forEach(Object.keys(ctx.reasoningMap), finishReasoning)
             // Anthropic reports thinking blocks it removed before the model saw the
@@ -515,6 +575,8 @@ const layer = Layer.effect(
               }
               ctx.snapshot = undefined
             }
+            capture = undefined
+            ctx.currentStepStart = undefined
             yield* summary
               .summarize({
                 sessionID: ctx.sessionID,
@@ -584,6 +646,18 @@ const layer = Layer.effect(
       })
 
       const cleanup = Effect.fn("SessionProcessor.cleanup")(function* () {
+        active = false
+        if (capture) {
+          // An unfinished capture cannot have released a local tool. Cancel it
+          // rather than letting an error/abort finalizer wait on filesystem work.
+          yield* Fiber.interrupt(capture.fiber)
+          const result = yield* Fiber.await(capture.fiber)
+          if (Exit.isFailure(result) && !Cause.hasInterruptsOnly(result.cause) && !ctx.assistantMessage.error)
+            yield* halt(Cause.squash(result.cause))
+          capture = undefined
+        }
+        yield* persistStepSnapshot()
+        ctx.currentStepStart = undefined
         if (ctx.snapshot) {
           const patch = yield* snapshot.patch(ctx.snapshot)
           if (patch.files.length) {
@@ -677,6 +751,7 @@ const layer = Layer.effect(
           messageID: input.assistantMessage.id,
         })
         ctx.needsCompaction = false
+        active = true
         ctx.shouldBreak = (yield* config.get()).experimental?.continue_loop_on_deny !== true
 
         return yield* Effect.gen(function* () {
@@ -684,7 +759,8 @@ const layer = Layer.effect(
             ctx.currentText = undefined
             ctx.reasoningMap = {}
             yield* status.set(ctx.sessionID, { type: "busy" })
-            const stream = llm.stream(streamInput)
+            yield* startSnapshot()
+            const stream = llm.stream(guardToolSnapshots(streamInput))
 
             yield* stream.pipe(
               Stream.tap((event) => handleEvent(event)),
@@ -695,6 +771,7 @@ const layer = Layer.effect(
             Effect.onInterrupt(() =>
               Effect.gen(function* () {
                 aborted = true
+                active = false
                 if (!ctx.assistantMessage.error) {
                   yield* halt(new DOMException("Aborted", "AbortError"))
                 }
