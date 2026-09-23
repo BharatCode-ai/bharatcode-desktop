@@ -31,7 +31,13 @@ export default [
         optimizeDeps: {
           // Worker-only imports are otherwise discovered after the first render,
           // leaving the cold markdown worker waiting for another optimization pass.
-          include: ["@opencode-ai/session-ui > @shikijs/stream", "@opencode-ai/ui > marked-shiki"],
+          include: [
+            "@opencode-ai/session-ui > @shikijs/stream",
+            "@opencode-ai/ui > marked-shiki",
+            "@opencode-ai/ui > marked",
+            "@opencode-ai/ui > katex",
+            "@opencode-ai/session-ui > remend",
+          ],
         },
         worker: {
           format: "es",

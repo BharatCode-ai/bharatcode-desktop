@@ -94,7 +94,7 @@ describe("opencode run (non-interactive subprocess)", () => {
           model: "test/nonexistent-model",
           timeoutMs: 15_000,
         })
-        expect(result.exitCode).not.toBe(0)
+        opencode.expectExit(result, 1)
         expect(result.durationMs).toBeLessThan(15_000)
       }),
     30_000,

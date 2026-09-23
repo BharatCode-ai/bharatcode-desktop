@@ -10,6 +10,37 @@ than resolving 499 overlapping files at once.
 
 ## Current checkpoint — September 24
 
+Hosted run 35914141928 at 578c5f8fa1 completed, not hung: typecheck and Linux E2E
+passed; Windows codegen tests, one Linux CLI deadline, and Windows legacy-markdown
+readiness failed. The following bounded corrections retain all existing deadlines
+and security assertions; they still require fresh hosted verification:
+
+- Codegen fixtures used URL `.pathname` as a native path and expected POSIX path
+  separators. Exact source staged in an isolated Windows temp directory reproduced
+  all three failures (63 pass / 3 fail). `fileURLToPath` and platform-native expected
+  paths now pass 66/66 (122 assertions) on native Windows and Linux; codegen
+  typecheck passes. No production generator code changed.
+- The CLI subprocess file launches many cold processes concurrently (Bun's default
+  is 20 concurrent tests). Two-CPU reproduction produced ten timeouts/failures;
+  the same file with test concurrency bounded to two passed 15/15. The package
+  test command now uses that bound. The unknown-model regression keeps its
+  15-second deadline and now requires exact exit code 1, not any nonzero exit.
+  This changes test resource scheduling, not application concurrency or timeouts.
+  Final exact-source two-CPU rerun: 15/15, 50 assertions, 50.83 seconds; OpenCode
+  typecheck passed. An intervening repeat failed the separate JSON unknown-finish
+  continuation case by emitting six extra turns. That assertion is unchanged and
+  the failure remains recorded at `/tmp/bc-578-cli-two-cpu-final.log`; the successful
+  repeat does not establish that intermittent behavior is resolved. Fresh full
+  hosted CI is still required before any candidate recommendation.
+- The Windows trace showed escaped fallback text and unresolved worker imports
+  for `marked`, `katex`, and `remend`. Those imports were missing from the existing
+  Vite pre-optimization list. They are now explicitly included. The focused
+  browser run passed all eight markdown/review tests with retries disabled;
+  App typecheck passes. This is local browser evidence, not Windows E2E clearance.
+  A preliminary manually launched dev-server probe had an incorrect server-port
+  environment and is not counted as an application regression; the passing run
+  used the normal Playwright-managed server and its configured environment.
+
 Final bounded policy correction: compiled beta/prod/latest builds now keep the
 shipped product policy regardless of runtime channel or generic-policy overrides.
 Local builds retain both surfaces for upstream integration tests. Actual compiled
