@@ -11,7 +11,7 @@
   },
   "scripts": {
     "test": "bun test src",
-    "typecheck": "tsgo -b",
+    "typecheck": "tsgo -b && tsgo -p tsconfig.release.json",
     "predev": "bun ./scripts/predev.ts",
     "dev": "electron-vite dev",
     "prebuild": "bun ./scripts/prebuild.ts",

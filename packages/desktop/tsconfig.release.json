@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "types": ["bun", "node"]
+  },
+  "include": [
+    "scripts/candidate-cohort.ts",
+    "scripts/candidate-cohort.test.ts",
+    "scripts/stage-tested-release.ts",
+    "scripts/tested-release.test.ts"
+  ]
+}

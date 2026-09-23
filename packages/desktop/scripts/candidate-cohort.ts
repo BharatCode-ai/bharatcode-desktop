@@ -28,6 +28,13 @@ export type Receipt = {
 }
 const fail = () => new Error("Candidate identity, policy or artifact verification failed")
 const hash = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex")
+type Updater = {
+  version: string
+  files: Array<{ url: string; sha512: string; size: number; blockMapSize?: number }>
+  path?: string
+  sha512?: string
+  releaseDate?: string
+}
 
 export function validateIdentity(
   value: Identity,
@@ -72,13 +79,11 @@ function updater(target: Target, channel: Identity["channel"]) {
   return `${target}-${channel === "beta" ? "beta" : "latest"}${target.startsWith("darwin") ? "-mac" : target === "linux-x64" ? "-linux" : ""}.yml`
 }
 async function verifyUpdater(directory: string, name: string, files: File[], identity: Pick<Identity, "version">) {
-  const metadata = Bun.YAML.parse((await bytes(path.join(directory, name))).toString()) as {
-    version: string
-    files: Array<{ url: string; sha512: string; size: number }>
-    path?: string
-    sha512?: string
-  }
+  const metadata = Bun.YAML.parse((await bytes(path.join(directory, name))).toString()) as Updater
   if (metadata.version !== identity.version || !Array.isArray(metadata.files) || !metadata.files.length) throw fail()
+  if (new Set(metadata.files.map((file) => file.url)).size !== metadata.files.length) throw fail()
+  const packages = files.filter((file) => /\.(exe|zip|AppImage)$/.test(file.name))
+  if (packages.some((file) => !metadata.files.some((entry) => entry.url === file.name))) throw fail()
   for (const file of metadata.files) {
     if (!files.some((known) => known.name === file.url) || !/^[a-zA-Z0-9._-]+$/.test(file.url)) throw fail()
     const artifact = await bytes(path.join(directory, file.url))
@@ -120,6 +125,8 @@ async function bytes(file: string) {
 }
 
 export async function assembleCohort(root: string, identity: Identity) {
+  const entries = await fs.readdir(root)
+  if (entries.some((name) => name !== "cohort.json" && !targets.includes(name as Target))) throw fail()
   const files: Array<File & { producer: Target }> = []
   for (const target of targets) {
     const directory = path.join(root, target)
@@ -141,13 +148,24 @@ export async function assembleCohort(root: string, identity: Identity) {
       )
     )
       throw fail()
+    const names = await fs.readdir(directory)
+    if (
+      names.length !== receipt.files.length + 1 ||
+      names.some((name) => name !== "receipt.json" && !receipt.files.some((file) => file.name === name))
+    )
+      throw fail()
     for (const file of receipt.files) {
       if (
         !/^[a-zA-Z0-9._-]+$/.test(file.name) ||
         file.name === "receipt.json" ||
         !/^[a-f0-9]{64}$/.test(file.sha256) ||
         !Number.isSafeInteger(file.bytes) ||
-        file.bytes <= 0
+        file.bytes <= 0 ||
+        ![
+          ...required(target),
+          ...required(target).map((name) => `${name}.blockmap`),
+          updater(target, identity.channel),
+        ].includes(file.name)
       )
         throw fail()
       const content = await bytes(path.join(directory, file.name))
@@ -158,6 +176,74 @@ export async function assembleCohort(root: string, identity: Identity) {
     await verifyUpdater(directory, updater(target, identity.channel), receipt.files, identity)
   }
   return { schema: 1, identity, files, acceptance: "pending", publication: "not-authorized" }
+}
+
+// Pure artifact preparation: approval and publication belong to the separate
+// manual workflow. In particular, a green package build is not user acceptance.
+export async function stageRelease(root: string, output: string, identity: Identity, candidateSha256: string) {
+  if (identity.channel !== "beta" || !/^[a-f0-9]{64}$/.test(candidateSha256)) throw fail()
+  const manifest = await bytes(path.join(root, "cohort.json"))
+  if (hash(manifest) !== candidateSha256) throw fail()
+  const cohort = await assembleCohort(root, identity)
+  if (JSON.stringify(JSON.parse(manifest.toString())) !== JSON.stringify(cohort)) throw fail()
+  const metadata = await Promise.all(
+    targets.map(async (target) => ({
+      target,
+      value: Bun.YAML.parse(
+        (await bytes(path.join(root, target, updater(target, identity.channel)))).toString(),
+      ) as Updater,
+    })),
+  )
+  const windows = metadata.find((item) => item.target === "windows-x64")!.value
+  const intel = metadata.find((item) => item.target === "darwin-x64")!.value
+  const arm = metadata.find((item) => item.target === "darwin-arm64")!.value
+  const linux = metadata.find((item) => item.target === "linux-x64")!.value
+  const mac = {
+    ...intel,
+    files: [...intel.files, ...arm.files],
+    path: intel.files[0].url,
+    sha512: intel.files[0].sha512,
+  }
+  // Refuse an existing destination; never clobber an earlier staged candidate.
+  await fs.mkdir(output)
+  const files: File[] = []
+  for (const file of cohort.files.filter((item) => !item.name.endsWith(".yml"))) {
+    const content = await bytes(path.join(root, file.producer, file.name))
+    if (content.length !== file.bytes || hash(content) !== file.sha256) throw fail()
+    await fs.writeFile(path.join(output, file.name), content, { flag: "wx" })
+    files.push({ name: file.name, bytes: content.length, sha256: hash(content) })
+  }
+  for (const [name, value] of [
+    ["beta.yml", windows],
+    ["beta-mac.yml", mac],
+    ["beta-linux.yml", linux],
+  ] as const) {
+    const content = Buffer.from(Bun.YAML.stringify(value))
+    await fs.writeFile(path.join(output, name), content, { flag: "wx" })
+    const platformFiles = files.filter((file) => value.files.some((entry) => entry.url === file.name))
+    await verifyUpdater(output, name, platformFiles, identity)
+    files.push({ name, bytes: content.length, sha256: hash(content) })
+  }
+  files.sort((a, b) => a.name.localeCompare(b.name, "en"))
+  const release = {
+    schema: 1,
+    identity,
+    tag: `desktop-beta-${identity.version}`,
+    candidateSha256,
+    files,
+    acceptance: "pending",
+    publication: "not-authorized",
+  }
+  const releaseBytes = Buffer.from(JSON.stringify(release, null, 2) + "\n")
+  await fs.writeFile(path.join(output, "release-manifest.json"), releaseBytes, { flag: "wx" })
+  await fs.writeFile(
+    path.join(output, "SHA256SUMS"),
+    [...files.map((file) => `${file.sha256}  ${file.name}`), `${hash(releaseBytes)}  release-manifest.json`]
+      .sort()
+      .join("\n") + "\n",
+    { flag: "wx" },
+  )
+  return release
 }
 
 export async function collectCohort(root: string, identity: Identity) {

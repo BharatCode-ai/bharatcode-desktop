@@ -1,0 +1,176 @@
+name: BharatCode publish tested candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact source SHA of the tested Desktop candidate
+        required: true
+        type: string
+      build_run_id:
+        description: Successful Desktop candidate workflow run (no rebuild)
+        required: true
+        type: string
+      build_run_attempt:
+        description: Exact successful attempt that produced the tested artifacts
+        required: true
+        type: string
+      candidate_sha256:
+        description: SHA-256 of the tested artifact's cohort.json
+        required: true
+        type: string
+      manual_acceptance_confirmed:
+        description: I approve publication of these exact tested artifacts and documented limitations
+        required: true
+        type: boolean
+        default: false
+      acceptance_notes:
+        description: Tester, date, OS/architectures, checklist results and explicitly approved limitations
+        required: true
+        type: string
+      notify_website:
+        description: Notify the website only after publication and download verification
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: desktop-beta-publication
+  cancel-in-progress: false
+
+env:
+  SOURCE_SHA: ${{ inputs.source_sha }}
+  SOURCE_RUN_ID: ${{ inputs.build_run_id }}
+  SOURCE_RUN_ATTEMPT: ${{ inputs.build_run_attempt }}
+  CANDIDATE_SHA256: ${{ inputs.candidate_sha256 }}
+
+jobs:
+  publish:
+    if: inputs.manual_acceptance_confirmed && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    environment: desktop-beta-release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Verify original producer and explicit acceptance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACCEPTANCE_NOTES: ${{ inputs.acceptance_notes }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REPOSITORY" == 'BharatCode-ai/bharatcode-desktop' ]]
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$SOURCE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$SOURCE_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+          [[ "$CANDIDATE_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ -n "${ACCEPTANCE_NOTES//[[:space:]]/}" ]]
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/attempts/$SOURCE_RUN_ATTEMPT" \
+            | jq -e --arg sha "$SOURCE_SHA" --arg run "$SOURCE_RUN_ID" --arg attempt "$SOURCE_RUN_ATTEMPT" '
+              (.id | tostring) == $run and (.run_attempt | tostring) == $attempt and
+              .head_sha == $sha and .event == "workflow_dispatch" and
+              .status == "completed" and .conclusion == "success" and
+              .repository.full_name == "BharatCode-ai/bharatcode-desktop" and
+              .path == ".github/workflows/publish.yml"
+            ' > /dev/null
+
+      - name: Checkout exact candidate tooling
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+      - name: Setup pinned Bun without installing or rebuilding
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+      - name: Download the exact tested cohort
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.build_run_id }}
+          name: desktop-cohort-${{ inputs.build_run_id }}-${{ inputs.build_run_attempt }}
+          path: ${{ runner.temp }}/tested-cohort
+      - name: Verify all bytes and assemble updater metadata
+        id: stage
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun packages/desktop/scripts/stage-tested-release.ts "$RUNNER_TEMP/tested-cohort" "$RUNNER_TEMP/release-assets"
+          (cd "$RUNNER_TEMP/release-assets" && sha256sum --check SHA256SUMS)
+
+      - name: Create new draft and upload without overwrite
+        id: draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.stage.outputs.tag }}
+          ACCEPTANCE_NOTES: ${{ inputs.acceptance_notes }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^desktop-beta-[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/releases" --paginate --slurp \
+            | jq -e --arg tag "$RELEASE_TAG" '[.[][] | select(.tag_name == $tag)] | length == 0' > /dev/null
+          gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/$RELEASE_TAG" \
+            | jq -e --arg ref "refs/tags/$RELEASE_TAG" '[.[] | select(.ref == $ref)] | length == 0' > /dev/null
+          {
+            echo 'BharatCode Desktop beta. Windows and Linux are unsigned; both macOS architectures are Developer ID signed and notarized.'
+            echo
+            echo "Source: $SOURCE_SHA"
+            echo "Build: https://github.com/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/attempts/$SOURCE_RUN_ATTEMPT"
+            echo "Tested cohort manifest SHA-256: $CANDIDATE_SHA256"
+            echo "Manual acceptance approved by $GITHUB_ACTOR at $(date -u +%FT%TZ):"
+            printf '%s\n' "$ACCEPTANCE_NOTES"
+            echo
+            echo 'Package-build receipts remain acceptance pending; this operator approval does not turn unexecuted automated tests into PASS.'
+          } > "$RUNNER_TEMP/release-notes.md"
+          jq -n --arg tag "$RELEASE_TAG" --arg sha "$SOURCE_SHA" --rawfile notes "$RUNNER_TEMP/release-notes.md" \
+            '{tag_name:$tag,target_commitish:$sha,name:("BharatCode " + $tag),body:$notes,draft:true,prerelease:true}' \
+            | gh api "repos/$GITHUB_REPOSITORY/releases" --method POST --input - > "$RUNNER_TEMP/draft.json"
+          release_id=$(jq -er '.id | select(type == "number")' "$RUNNER_TEMP/draft.json")
+          echo "id=$release_id" >> "$GITHUB_OUTPUT"
+          gh release upload "$RELEASE_TAG" "$RUNNER_TEMP"/release-assets/* --repo "$GITHUB_REPOSITORY"
+
+      - name: Verify uploaded digests before publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.stage.outputs.tag }}
+          RELEASE_ID: ${{ steps.draft.outputs.id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/release-assets"
+          sha256sum --check SHA256SUMS
+          { cat SHA256SUMS; sha256sum SHA256SUMS; } | sort > "$RUNNER_TEMP/expected-digests.txt"
+          gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" > "$RUNNER_TEMP/uploaded.json"
+          jq -e --arg sha "$SOURCE_SHA" --arg tag "$RELEASE_TAG" \
+            '.draft == true and .prerelease == true and .target_commitish == $sha and .tag_name == $tag' "$RUNNER_TEMP/uploaded.json" > /dev/null
+          jq -r '.assets[] | "\(.digest | ltrimstr("sha256:"))  \(.name)"' "$RUNNER_TEMP/uploaded.json" \
+            | sort > "$RUNNER_TEMP/uploaded-digests.txt"
+          diff "$RUNNER_TEMP/expected-digests.txt" "$RUNNER_TEMP/uploaded-digests.txt"
+          gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --method PATCH -F draft=false -F prerelease=true > /dev/null
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > "$RUNNER_TEMP/published.json"
+          jq -e --arg sha "$SOURCE_SHA" --arg tag "$RELEASE_TAG" \
+            '.draft == false and .prerelease == true and .immutable == true and .target_commitish == $sha and .tag_name == $tag' "$RUNNER_TEMP/published.json" > /dev/null
+          jq -r '.assets[] | "\(.digest | ltrimstr("sha256:"))  \(.name)"' "$RUNNER_TEMP/published.json" \
+            | sort > "$RUNNER_TEMP/published-digests.txt"
+          diff "$RUNNER_TEMP/expected-digests.txt" "$RUNNER_TEMP/published-digests.txt"
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir "$RUNNER_TEMP/live-downloads"
+          (cd "$RUNNER_TEMP/live-downloads" && sha256sum --check "$RUNNER_TEMP/expected-digests.txt")
+
+      - name: Notify website only after download verification
+        if: inputs.notify_website
+        env:
+          GH_TOKEN: ${{ secrets.BHARATCODE_WEBSITE_DISPATCH_TOKEN }}
+          RELEASE_TAG: ${{ steps.stage.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$GH_TOKEN"
+          jq -n --arg repo "$GITHUB_REPOSITORY" --arg tag "$RELEASE_TAG" \
+            '{event_type:"desktop_release_published",client_payload:{repo:$repo,tag:$tag,channel:"beta",release_url:("https://github.com/"+$repo+"/releases/tag/"+$tag)}}' \
+            | gh api repos/BharatCode-ai/bharatcode/dispatches --method POST --input -

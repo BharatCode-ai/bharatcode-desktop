@@ -8,6 +8,7 @@ import {
   assembleCohort,
   collectCohort,
   inspectPackageOutputs,
+  stageRelease,
   validateIdentity,
   type Receipt,
 } from "./candidate-cohort"
@@ -67,7 +68,7 @@ test("candidate admission binds the workflow, checkout, committed versions and r
   ).toThrow()
 })
 
-async function fixture(root: string) {
+async function fixture(root: string, value = identity) {
   const targets = ["windows-x64", "darwin-x64", "darwin-arm64", "linux-x64"] as const
   for (const target of targets) {
     const dir = path.join(root, target)
@@ -88,7 +89,7 @@ async function fixture(root: string) {
     const artifact = await fs.readFile(path.join(dir, files[0].name))
     const metadata = Buffer.from(
       Bun.YAML.stringify({
-        version: identity.version,
+        version: value.version,
         files: [
           {
             url: files[0].name,
@@ -106,7 +107,7 @@ async function fixture(root: string) {
     })
     const receipt: Receipt = {
       schema: 1,
-      identity,
+      identity: value,
       target,
       files,
       signing: target.startsWith("darwin") ? "apple-notarized-stapled" : "unsigned",
@@ -116,6 +117,178 @@ async function fixture(root: string) {
     await fs.writeFile(path.join(dir, "receipt.json"), JSON.stringify(receipt))
   }
 }
+
+test("tested-release command binds the original run to a clean exact checkout, not the publishing workflow SHA", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "bc-release-command-"))
+  try {
+    const repo = path.join(root, "repo")
+    const input = path.join(root, "input")
+    await fs.mkdir(repo)
+    await fs.mkdir(input)
+    const env = {
+      ...process.env,
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_CONFIG_GLOBAL: process.platform === "win32" ? "NUL" : "/dev/null",
+    }
+    const git = (...args: string[]) => {
+      const result = spawnSync("git", args, { cwd: repo, env, encoding: "utf8" })
+      expect(result.status).toBe(0)
+      return result.stdout.trim()
+    }
+    git("init", "--quiet")
+    git(
+      "-c",
+      "user.name=Fixture",
+      "-c",
+      "user.email=fixture@example.invalid",
+      "-c",
+      "core.hooksPath=/dev/null",
+      "commit",
+      "--allow-empty",
+      "--quiet",
+      "-m",
+      "fixture",
+    )
+    const value = { ...identity, source: git("rev-parse", "HEAD"), tree: git("rev-parse", "HEAD^{tree}") }
+    await fixture(input, value)
+    const manifest = JSON.stringify(await assembleCohort(input, value))
+    await fs.writeFile(path.join(input, "cohort.json"), manifest)
+    const execute = (output: string, overrides: Record<string, string> = {}) =>
+      spawnSync(
+        process.execPath,
+        [path.join(import.meta.dir, "stage-tested-release.ts"), input, path.join(root, output)],
+        {
+          cwd: repo,
+          encoding: "utf8",
+          env: {
+            ...env,
+            GITHUB_SHA: "f".repeat(40),
+            GITHUB_OUTPUT: "",
+            GITHUB_REPOSITORY: value.repository,
+            SOURCE_SHA: value.source,
+            SOURCE_RUN_ID: value.run,
+            SOURCE_RUN_ATTEMPT: value.attempt,
+            CANDIDATE_SHA256: createHash("sha256").update(manifest).digest("hex"),
+            ...overrides,
+          },
+        },
+      )
+    expect(execute("wrong", { SOURCE_SHA: "a".repeat(40) }).status).not.toBe(0)
+    expect(await fs.exists(path.join(root, "wrong"))).toBe(false)
+    const success = execute("output")
+    expect({ status: success.status, stderr: success.stderr }).toEqual({ status: 0, stderr: "" })
+    expect(JSON.parse(success.stdout)).toMatchObject({ source: value.source, publication: "not-authorized" })
+    await fs.writeFile(path.join(repo, "uncommitted"), "dirty")
+    expect(execute("dirty").status).not.toBe(0)
+    expect(await fs.exists(path.join(root, "dirty"))).toBe(false)
+  } finally {
+    await fs.rm(root, { recursive: true, force: true })
+  }
+})
+
+test("release staging preserves tested bytes and merges both Mac updater architectures without claiming acceptance", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "bc-release-"))
+  try {
+    const input = path.join(root, "input")
+    const output = path.join(root, "output")
+    await fs.mkdir(input)
+    await fixture(input)
+    const manifest = JSON.stringify(await assembleCohort(input, identity))
+    await fs.writeFile(path.join(input, "cohort.json"), manifest)
+    const digest = createHash("sha256").update(manifest).digest("hex")
+    const release = await stageRelease(input, output, identity, digest)
+    expect(release.tag).toBe("desktop-beta-1.15.35")
+    expect(release.acceptance).toBe("pending")
+    expect(release.publication).toBe("not-authorized")
+    expect(release.candidateSha256).toBe(digest)
+    expect(release.files).toHaveLength(8)
+    const mac = Bun.YAML.parse(await fs.readFile(path.join(output, "beta-mac.yml"), "utf8")) as {
+      files: { url: string; sha512: string; size: number }[]
+      path: string
+      sha512: string
+    }
+    expect(mac.files.map((file) => file.url)).toEqual([
+      "bharatcode-desktop-mac-x64.zip",
+      "bharatcode-desktop-mac-arm64.zip",
+    ])
+    expect(mac.path).toBe(mac.files[0].url)
+    expect(mac.sha512).toBe(mac.files[0].sha512)
+    for (const file of release.files) {
+      const content = await fs.readFile(path.join(output, file.name))
+      expect(content.length).toBe(file.bytes)
+      expect(createHash("sha256").update(content).digest("hex")).toBe(file.sha256)
+    }
+    const sums = await fs.readFile(path.join(output, "SHA256SUMS"), "utf8")
+    expect(sums.trim().split("\n")).toHaveLength(9)
+    expect(sums).toContain("  release-manifest.json\n")
+    expect(await fs.readFile(path.join(output, "bharatcode-desktop-mac-arm64.zip"))).toEqual(
+      await fs.readFile(path.join(input, "darwin-arm64", "bharatcode-desktop-mac-arm64.zip")),
+    )
+    await expect(stageRelease(input, output, identity, digest)).rejects.toThrow()
+    expect(await fs.readFile(path.join(output, "SHA256SUMS"), "utf8")).toBe(sums)
+    await expect(stageRelease(input, path.join(root, "wrong-hash"), identity, "0".repeat(64))).rejects.toThrow()
+    await expect(
+      stageRelease(input, path.join(root, "wrong-run"), { ...identity, run: "124" }, digest),
+    ).rejects.toThrow()
+    expect(await fs.readdir(root)).toEqual(["input", "output"])
+  } finally {
+    await fs.rm(root, { recursive: true, force: true })
+  }
+})
+
+test("release staging rejects unreceipted files, links, invented receipt assets and drift before creating output", async () => {
+  for (const mutation of ["extra", "root-extra", "link", "invented", "drift", "manifest", "missing-updater-entry"]) {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "bc-release-"))
+    try {
+      const input = path.join(root, "input")
+      const output = path.join(root, "output")
+      await fs.mkdir(input)
+      await fixture(input)
+      const cohort = await assembleCohort(input, identity)
+      const manifest = JSON.stringify(cohort)
+      await fs.writeFile(path.join(input, "cohort.json"), manifest)
+      const dir = path.join(input, "windows-x64")
+      const installer = path.join(dir, "bharatcode-desktop-win-x64.exe")
+      if (mutation === "extra") await fs.writeFile(path.join(dir, "unreceipted.exe"), "extra")
+      if (mutation === "root-extra") await fs.writeFile(path.join(input, "unreceipted.exe"), "extra")
+      if (mutation === "link") {
+        await fs.rename(installer, path.join(root, "outside.exe"))
+        await fs.link(path.join(root, "outside.exe"), installer)
+      }
+      if (mutation === "drift") await fs.appendFile(installer, "drift")
+      if (mutation === "manifest") {
+        cohort.identity = { ...cohort.identity, run: "999" }
+        await fs.writeFile(path.join(input, "cohort.json"), JSON.stringify(cohort))
+      }
+      if (mutation === "invented" || mutation === "missing-updater-entry") {
+        const receiptPath = path.join(dir, "receipt.json")
+        const receipt = JSON.parse(await fs.readFile(receiptPath, "utf8")) as Receipt
+        if (mutation === "invented") {
+          const content = Buffer.from("unexpected executable")
+          await fs.writeFile(path.join(dir, "unexpected.exe"), content)
+          receipt.files.push({
+            name: "unexpected.exe",
+            bytes: content.length,
+            sha256: createHash("sha256").update(content).digest("hex"),
+          })
+        } else {
+          const metadata = receipt.files.find((file) => file.name.endsWith(".yml"))!
+          const content = Buffer.from(Bun.YAML.stringify({ version: identity.version, files: [] }))
+          await fs.writeFile(path.join(dir, metadata.name), content)
+          metadata.bytes = content.length
+          metadata.sha256 = createHash("sha256").update(content).digest("hex")
+        }
+        await fs.writeFile(receiptPath, JSON.stringify(receipt))
+      }
+      await expect(
+        stageRelease(input, output, identity, createHash("sha256").update(manifest).digest("hex")),
+      ).rejects.toThrow()
+      expect(await fs.exists(output)).toBe(false)
+    } finally {
+      await fs.rm(root, { recursive: true, force: true })
+    }
+  }
+})
 
 test("cohort requires every architecture, exact source/run and immutable verified bytes", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "bc-cohort-"))

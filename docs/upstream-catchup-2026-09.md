@@ -10,6 +10,69 @@ than resolving 499 overlapping files at once.
 
 ## Where it stands
 
+### Tested-candidate publication path restored locally — September 23
+
+Desktop candidate run `35896719902`, attempt 1, completed successfully at exact
+`b04af8981efb43a7e0b3cd26f445a4c8b018d6c0` (tree
+`c06be7b4e459f1b85bcfaf6def3717d95b794f12`). All four native producers, WSL
+runtime and final cohort assembly passed; both macOS ZIPs passed Developer ID
+and stapled-notarization verification. CLI run `35896723529` at that same source
+also passed on its single Linux runner. These are build/package results, not
+installed acceptance or evidence for newer source. Nothing was published.
+
+Restored the separate `bharatcode-publish-tested-candidate.yml` entry point from
+the accepted release design, adapted to the new complete Desktop cohort. It
+requires explicit manual acceptance, notes, default-branch dispatch and the
+`desktop-beta-release` environment. It verifies the original successful producer
+workflow/source/run/attempt, then checks out that exact source and verifies the
+operator-recorded SHA-256 of `cohort.json`. It never rebuilds packages. Artifact
+receipts and all bytes are revalidated; undeclared/unknown assets, links, mixed
+source/attempts and preexisting staging directories fail closed. The staged
+`beta-mac.yml` includes both architecture entries; Windows/Linux metadata retain
+their verified package references. Package receipts remain acceptance pending;
+manual approval is recorded separately rather than inventing automated PASS.
+
+Publication refuses an existing tag/release, uploads to a new draft without
+overwrite, compares GitHub asset digests before publication, then verifies the
+immutable release and redownloaded checksums. Optional website notification is
+last and disabled by default. This workflow has NOT been dispatched; no external
+write or installed-profile operation occurred. CLI npm/tag publication remains
+a separate uncompleted part of the retained release-workflow audit.
+
+Fresh verification: 17/17 release/cohort/packaging tests, 161 assertions; actual
+preflight shell execution against local GitHub response fixtures rejects stale
+attempts, failed/wrong workflows and missing notes. The real staging command was
+executed against a clean synthetic Git checkout and rejects wrong/dirty source.
+Every workflow shell step passes syntax checking. Desktop typecheck now includes
+the release helpers and their tests as well as the existing runtime check;
+both pass. This caught and corrected a fixture environment-override typing error.
+
+The complete real build artifact was downloaded read-only and staged locally:
+`cohort.json` SHA-256
+`46c1ac23ce8e5bba567b118336788c5e314cf46d8ee39bf821ea472dfe6744bf`.
+All 12 checksum entries pass (five packages, three blockmaps, three updater files,
+and the release manifest). The staged Mac metadata contains both real archives.
+This validates assembly against real producer output, not installed behavior.
+The existing `desktop-beta-1.15.35` and `v1.15.35` releases are already published;
+the final frozen candidate needs a new version, never overwrite of these assets.
+
+At this checkpoint, corrected-source test run `35898998270` (`9ea885c785`)
+has green Windows unit and both browser jobs. Windows browser reports 117 passed
+and three retry-recovered flakes, not a flake-free run. Linux unit and generated
+client steps pass, but its HTTP API exerciser remains live and unusually slow;
+do not label the whole run green or restart it merely because observation ends.
+PR #58 still conflicts with `dev`; intentional retained-feature/ancestry
+reconciliation, CLI publication, final-version exact-source build and isolated
+package acceptance remain open.
+
+Operator sequence, only after separate publication authorization: build the
+final exact beta source; download `desktop-cohort-RUN-ATTEMPT`; record the
+`cohort.json` digest while testing those artifacts; dispatch the tested-candidate
+workflow from the default branch with that source/run/attempt/digest and honest
+platform acceptance notes. Leave website notification off unless separately
+authorized. If any staging/upload step fails, investigate the retained draft;
+do not clobber it or rerun publication as an automatic retry.
+
 ### Windows fixture and heartbeat readiness correction — September 23
 
 The capability failures were reproduced locally with the native bundled suite:
@@ -435,6 +498,7 @@ redesign; Impeccable hardening guidance was used to preserve incumbent component
 and copy and check both layouts. Mechanical detector: no findings.
 
 Evidence:
+
 - Compaction RED **55 pass / 1 skip / 1 fail**; GREEN **56 pass / 1 existing skip,
   174 assertions**. The skip is the upstream disabled-v2-projector case, not a
   passing migration result.
