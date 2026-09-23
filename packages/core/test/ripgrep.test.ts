@@ -1,9 +1,10 @@
-import { describe, expect } from "bun:test"
+import { beforeAll, describe, expect } from "bun:test"
 import fs from "fs/promises"
 import path from "path"
 import { Effect } from "effect"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Ripgrep } from "@opencode-ai/core/ripgrep"
+import { RipgrepBinary } from "@opencode-ai/core/ripgrep/binary"
 import { RelativePath } from "@opencode-ai/core/schema"
 import { tmpdir } from "./fixture/tmpdir"
 import { testEffect } from "./lib/effect"
@@ -11,6 +12,19 @@ import { testEffect } from "./lib/effect"
 const it = testEffect(LayerNode.compile(Ripgrep.node))
 
 describe("Ripgrep", () => {
+  // First-use download/extraction is setup, not part of each five-second search.
+  // Resolve through production so checksum and extraction checks remain active.
+  beforeAll(
+    () =>
+      Effect.runPromise(
+        Effect.flatMap(RipgrepBinary.Service, (binary) => binary.filepath).pipe(
+          Effect.provide(LayerNode.compile(RipgrepBinary.node)),
+          Effect.timeout("55 seconds"),
+        ),
+      ),
+    60_000,
+  )
+
   it.live("keeps ignored files out of catch-all find results", () =>
     Effect.acquireUseRelease(
       Effect.promise(() => tmpdir()),

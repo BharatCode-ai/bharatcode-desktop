@@ -1,9 +1,10 @@
-import { describe, expect } from "bun:test"
+import { beforeAll, describe, expect } from "bun:test"
 import fs from "fs/promises"
 import path from "path"
 import { Effect } from "effect"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Ripgrep } from "@opencode-ai/core/ripgrep"
+import { RipgrepBinary } from "@opencode-ai/core/ripgrep/binary"
 import { AbsolutePath, RelativePath } from "@opencode-ai/core/schema"
 import { tmpdir } from "../fixture/tmpdir"
 import { testEffect } from "../lib/effect"
@@ -17,6 +18,17 @@ const withTmp = <A, E, R>(f: (directory: AbsolutePath) => Effect.Effect<A, E, R>
   ).pipe(Effect.flatMap((tmp) => f(AbsolutePath.make(tmp.path))))
 
 describe("Ripgrep", () => {
+  beforeAll(
+    () =>
+      Effect.runPromise(
+        Effect.flatMap(RipgrepBinary.Service, (binary) => binary.filepath).pipe(
+          Effect.provide(LayerNode.compile(RipgrepBinary.node)),
+          Effect.timeout("55 seconds"),
+        ),
+      ),
+    60_000,
+  )
+
   it.live("globs files as an array", () =>
     withTmp((cwd) =>
       Effect.gen(function* () {

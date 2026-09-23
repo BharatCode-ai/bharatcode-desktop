@@ -10,6 +10,43 @@ than resolving 499 overlapping files at once.
 
 ## Where it stands
 
+### Windows fixture and heartbeat readiness correction — September 23
+
+The capability failures were reproduced locally with the native bundled suite:
+six failed even with a 30-second diagnostic bound. Its temporary directories had
+ordinary inherited Windows ACLs, while the fixtures assumed POSIX modes made
+them private. Tests now restrict only their newly created synthetic root, and
+exercise real Everyone-read rejection and native hardlinks rather than treating
+`chmod(0666)` as Windows access-control evidence. Existing production directories
+and the retained native storage checks are unchanged. Multi-operation Windows
+scenarios have an explicit 60-second test bound; individual production helper
+bounds are unchanged. Native capability result: 12 pass, one POSIX-only skip,
+69 assertions; Linux result: 13/13, 59 assertions.
+
+Ripgrep/search tests now resolve the real production downloader in a bounded
+beforeAll (55-second scoped operation, 60-second test setup), leaving each
+five-second search assertion unchanged. The checksum and extractor are not
+mocked or bypassed. A fresh native Windows home with no system ripgrep passes
+all five search tests and runs the downloaded 15.1.0 executable; its whole
+synthetic profile is removed. Linux download-integrity/search tests: 8/8.
+Full Core Linux: 1,123/1,123, 3,125 assertions; Core typecheck passes.
+
+The hosted Linux heartbeat trace confirms late markdown completion: at
+419784.780 the existing part contains bare `steady`; at 419848.653 it contains
+`<p>steady</p>` plus a newline with the identical source hash. The old helper's
+two identical samples were not a rendering-ready barrier. Replaced that helper
+with an assertion for the actual rendered paragraph before the baseline snapshot.
+The exact row/key/part/text comparison after heartbeat is unchanged. The full
+eight-test transport file passes three repeats (24/24, no retries), and is now
+explicitly included in the passing E2E typecheck. No production renderer change.
+
+At hosted source `b04af8981e`, Windows browser finished with 117 passes and three
+retry-recovered flakes; Linux browser's terminal failure is the heartbeat case
+above. Windows, Linux, WSL and Apple Silicon candidate producers have passed;
+Intel macOS is still in signing/notarization at this checkpoint. These artifacts
+predate the local thinking-default and test corrections. Hosted rerun of the
+corrected normal suites and final exact-source artifact verification remain open.
+
 ### Retained thinking preference and current CI — September 23
 
 The final `dev` comparison found that `3d8360d792` had been only partly retained:

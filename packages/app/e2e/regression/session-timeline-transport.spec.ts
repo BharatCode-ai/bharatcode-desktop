@@ -55,7 +55,12 @@ test("delivers server heartbeat without mutating the timeline", async ({ page })
     messages: [userMessage(), assistantMessage([textPart("prt_transport_steady", "steady")])],
   })
   await timeline.waitForPart("prt_transport_steady")
-  const before = await stableTimelineRows(page)
+  // Part visibility can still be the escaped fallback while the markdown worker
+  // loads. Snapshot the rendered paragraph, not a temporarily stable fallback.
+  await expect(page.locator('[data-timeline-part-id="prt_transport_steady"] [data-component="markdown"] p')).toHaveText(
+    "steady",
+  )
+  const before = await timelineRows(page)
 
   await timeline.transport.writeRaw(": heartbeat\n\n")
   await timeline.transport.send(partUpdated(textPart(sentinelID, "heartbeat processed")))
@@ -122,23 +127,6 @@ test("passes through non-event fetches", async ({ page }) => {
   expect(health).toEqual({ healthy: true })
   await expect.poll(async () => (await timeline.transport.connections()).length).toBe(1)
 })
-
-async function stableTimelineRows(page: Page) {
-  let previous: Awaited<ReturnType<typeof timelineRows>> | undefined
-  let stable = 0
-  await expect
-    .poll(
-      async () => {
-        const next = await timelineRows(page)
-        stable = JSON.stringify(next) === JSON.stringify(previous) ? stable + 1 : 0
-        previous = next
-        return stable
-      },
-      { intervals: [50, 50, 100] },
-    )
-    .toBeGreaterThanOrEqual(2)
-  return previous!
-}
 
 function timelineRows(page: Page) {
   return page.locator("[data-timeline-key]").evaluateAll((elements) =>
