@@ -47,6 +47,24 @@ try {
     ...prefix,
     `$ErrorActionPreference = 'Stop'\nAdd-Type -TypeDefinition @'\n${source}\n'@`,
   ])
+  probe("explicit-utility-actual-add-type", powershell, [
+    ...prefix,
+    `$ErrorActionPreference = 'Stop'\n$PSModuleAutoLoadingPreference = 'None'\nImport-Module -Name "$PSHOME\\Modules\\Microsoft.PowerShell.Utility\\Microsoft.PowerShell.Utility.psd1"\nAdd-Type -TypeDefinition @'\n${source}\n'@`,
+  ])
+  probe("codedom-actual-in-memory", powershell, [
+    ...prefix,
+    `$ErrorActionPreference = 'Stop'
+$source = @'
+${source}
+'@
+$provider = [Microsoft.CSharp.CSharpCodeProvider]::new()
+$parameters = [System.CodeDom.Compiler.CompilerParameters]::new()
+$parameters.GenerateInMemory = $true
+[void]$parameters.ReferencedAssemblies.Add('System.dll')
+$compiled = $provider.CompileAssemblyFromSource($parameters, [string[]]@($source))
+if ($compiled.Errors.HasErrors) { exit 1 }
+if ($null -eq $compiled.CompiledAssembly.GetType('BharatCodeCredentialFile')) { exit 1 }`,
+  ])
   probe("compiler-help", csc, ["/nologo", "/help"])
   for (const [name, code] of [
     ["tiny", tiny],

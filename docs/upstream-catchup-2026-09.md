@@ -10,6 +10,34 @@ than resolving 499 overlapping files at once.
 
 ## Where it stands
 
+### Latest hosted checkpoint — source `129b76bce5`
+
+Test run `35893178542`: Linux unit/generated-client/HTTP gates pass. Both
+browser jobs finish with 115 passes and five retry-recovered flakes each, no
+terminal browser failures. This validates the previously failing history/todo
+and markdown cases on the hosted machines, but does not close all flakiness.
+Windows unit execution is still stopped by the pre-unit credential-helper
+missing-read timeout; a successful package build does not waive that failure.
+
+Candidate run `35893182707`: Windows, Linux and same-source WSL producers pass.
+Apple Silicon now passes Developer ID signing, notarization and the artifact
+verifier using Electron Builder 26.16.1. Intel passes keychain import but fails
+codesigning the bundled `pty.node` with "A timestamp was expected but was not
+found." That is a different failure from the fixed keychain-password bug; its
+cause is not established. Mandatory timestamp/signing/notarization requirements
+remain unchanged. The incomplete cohort is withheld and nothing is published.
+
+The temporary Windows diagnostic run `35894584525` separates plain PowerShell,
+tiny/actual `Add-Type`, direct compiler startup and direct tiny/actual source
+compilation. Hosted results: host=181 ms; tiny `Add-Type`=27,391 ms; actual
+`Add-Type`=21,426 ms; compiler help=31 ms; tiny direct compile=1,327 ms; actual
+direct compile=174 ms. Calling the whole interval "compiler startup" was too
+broad: the delay is inside the `Add-Type` path, not plain PowerShell startup or
+the actual C# compiler workload. The next comparison tests explicit built-in
+Utility module import and direct in-memory CodeDOM invocation. Neither is assumed
+to be a fix, and production remains unchanged. See the later detailed checkpoint
+for prior negative evidence.
+
 ### Hosted follow-up corrections — September 23, 2026
 
 Run 35888740783 at `670949a9c7` reached actual macOS arm64 keychain import,
