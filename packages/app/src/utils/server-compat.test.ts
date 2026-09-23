@@ -2,10 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { createApiForServer, createSdkForServer } from "./server"
 import { createCompatibleApi } from "./server-compat"
 
-function setup(
-  protocol: "v1" | "v2" | Promise<"v1" | "v2">,
-  responses?: { vcs?: { branch: string; default_branch: string } },
-) {
+function setup(protocol: "v1" | "v2" | Promise<"v1" | "v2">) {
   const requests: Request[] = []
   const fetcher = Object.assign(
     async (input: string | URL | Request, init?: RequestInit) => {
@@ -35,8 +32,6 @@ function setup(
           delivery: "steer",
         })
       }
-      if (request.method === "GET" && new URL(request.url).pathname === "/vcs")
-        return Response.json(responses?.vcs ?? {})
       if (request.method === "GET") return Response.json([])
       return new Response(undefined, { status: 204 })
     },
@@ -53,19 +48,6 @@ function setup(
 }
 
 describe("createCompatibleApi", () => {
-  /*
-  test("routes V1 archive through the legacy session update", async () => {
-    const { api, requests } = setup("v1")
-    await api.session.archive({ sessionID: "ses_1", directory: "/repo" })
-
-    const url = new URL(requests[0]!.url)
-    expect(url.pathname).toBe("/session/ses_1")
-    expect(requests[0]!.headers.get("x-opencode-directory")).toBe("%2Frepo")
-    expect(requests[0]!.method).toBe("PATCH")
-    expect(await requests[0]!.json()).toMatchObject({ time: { archived: expect.any(Number) } })
-  })
-  */
-
   test("converts current prompts to the V1 prompt contract", async () => {
     const { api, requests } = setup("v1")
     await api.session.prompt({
@@ -147,32 +129,12 @@ describe("createCompatibleApi", () => {
     expect(detections).toBe(1)
   })
 
-  /*
-  test("keeps V2 session actions on the current API", async () => {
-    const { api, requests } = setup("v2")
-    await api.session.archive({ sessionID: "ses_1" })
-
-    expect(new URL(requests[0]!.url).pathname).toBe("/api/session/ses_1/archive")
-    expect(requests[0]!.method).toBe("POST")
-  })
-  */
-
   test("uses the global V1 session search endpoint", async () => {
     const { api, requests } = setup("v1")
     await api.session.list({ parentID: null, search: "session", limit: 50 })
 
     expect(new URL(requests[0]!.url).pathname).toBe("/experimental/session")
   })
-
-  /*
-  test("projects the V1 default branch", async () => {
-    const { api } = setup("v1", { vcs: { branch: "feature", default_branch: "dev" } })
-
-    expect(await api.vcs.get({ location: { directory: "/repo" } })).toMatchObject({
-      data: { branch: "feature", defaultBranch: "dev" },
-    })
-  })
-  */
 
   test("translates current file searches to the V1 dirs parameter", async () => {
     const { api, requests } = setup("v1")

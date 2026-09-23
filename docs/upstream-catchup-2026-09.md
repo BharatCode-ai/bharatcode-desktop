@@ -10,6 +10,33 @@ than resolving 499 overlapping files at once.
 
 ## Where it stands
 
+### Renderer SDK / compiled sidecar compatibility — September 23, 2026
+
+The App's vendored `@opencode-ai/client` is an intentional transitional client,
+not a drop-in alias for the newer workspace client. The bundled server exposes
+both health routes and the renderer deliberately chooses the V1 compatibility
+adapter. Replacing the tarball based only on its version would break the
+`/promise` import and API contract. Production legacy clients use
+`throwOnError: true`, so failed HTTP requests are not silently accepted by the
+adapter. Both SDK generators were rerun with **zero generated diff**.
+
+A new loopback-only test bundles the real renderer SDK factories and adapter,
+then calls the compiled Node sidecar in two independent processes with a fresh
+private home/project. It checks protocol selection, health, project identity,
+session create/rename/list/read, file listing, untracked Git status, worktree
+listing, wrong-credential rejection, persistence after process exit, and delete
+followed by not-found. It makes no provider request or OAuth call; external fetch
+is prohibited. The fixture is included in App typechecking. The first expanded
+test exposed an incorrect fixture field (`path` versus VCS `file`), not a
+production defect. Inactive commented compatibility stubs/tests were removed.
+
+Evidence: focused adapter/protocol **11/11, 20 assertions**; compiled Node SDK,
+account/migration and SQLite draft fixtures **3/3, 10 Bun assertions** plus the
+child-process assertions; App/Desktop typechecks pass. Logs:
+`/tmp/bc-sdk-{runtime-expanded,regeneration,app-typecheck,desktop-typecheck}.log`
+and `/tmp/bc-client-regeneration.log`. This is compiled Linux/Node evidence, not
+installed Windows/macOS, authenticated generation, or pure-V2-server acceptance.
+
 ### Renderer and native asset identity — September 23, 2026
 
 The audit found upstream identity still visible in settings, recovery/native
