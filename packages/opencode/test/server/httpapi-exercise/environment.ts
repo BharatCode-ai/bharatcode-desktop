@@ -7,6 +7,7 @@ import { StoragePaths } from "@opencode-ai/core/storage-paths"
 const preserveExerciseGlobalRoot = !!process.env.OPENCODE_HTTPAPI_EXERCISE_GLOBAL
 export const exerciseGlobalRoot =
   process.env.OPENCODE_HTTPAPI_EXERCISE_GLOBAL ?? path.join(os.tmpdir(), `opencode-httpapi-global-${process.pid}`)
+export const exerciseAuthProject = path.join(exerciseGlobalRoot, "auth-project")
 process.env.XDG_DATA_HOME = path.join(exerciseGlobalRoot, "data")
 process.env.XDG_CONFIG_HOME = path.join(exerciseGlobalRoot, "config")
 process.env.XDG_STATE_HOME = path.join(exerciseGlobalRoot, "state")

@@ -1667,6 +1667,23 @@ tarball hash manifests. It has read-only repository permissions and no npm or
 GitHub publication step. Hosted verification and authorized publication
 integration remain pending.
 
+### September 24: isolate authenticated HTTP probes from the invoking project
+
+The valid-auth route probes supplied authentication but no project directory.
+The real `PATCH /config` probe therefore used the process working directory and
+rewrote its config, despite the harness already isolating global storage and DB.
+A subprocess regression reproduced this against a disposable caller project:
+the original config bytes changed (RED). Probes now explicitly use a project
+inside the harness-owned temporary root. The same regression preserves the
+caller bytes and verifies the write occurs in that isolated project (GREEN).
+The full auth exerciser passed all 216 scenarios, with zero missing/skipped/extra
+routes. No live profile or credentials were used or changed.
+
+This does not establish the cause of the long-running hosted HttpApi gate in
+run `35898998270`. Both unit-test steps and both E2E jobs passed; that Linux
+exerciser step was still in progress at the last check. The local full auth run
+exited normally; a persistent local finalizer hang was not reproduced.
+
 ## What is left
 
 This is the current checklist; earlier checkpoint paragraphs describe evidence

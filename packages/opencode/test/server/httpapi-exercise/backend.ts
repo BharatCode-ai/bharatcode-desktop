@@ -3,6 +3,8 @@ import { HttpRouter } from "effect/unstable/http"
 import { parse } from "./assertions"
 import { runtime, type Runtime } from "./runtime"
 import type { ActiveScenario, BackendApp, CallResult, CaptureMode, SeededContext } from "./types"
+import { mkdir } from "node:fs/promises"
+import { exerciseAuthProject } from "./environment"
 
 type CallOptions = {
   auth?: {
@@ -19,6 +21,8 @@ export function call(scenario: ActiveScenario, ctx: SeededContext<unknown>, opti
 
 export function callAuthProbe(scenario: ActiveScenario, credentials: "missing" | "valid" = "missing") {
   return Effect.promise(async () => {
+    // Valid auth probes can reach mutating routes; never use the caller's cwd.
+    await mkdir(exerciseAuthProject, { recursive: true })
     const controller = new AbortController()
     return Promise.race([
       Promise.resolve(
@@ -94,6 +98,7 @@ function toAuthProbeRequest(scenario: ActiveScenario, credentials: "missing" | "
   const headers = {
     ...(spec.body === undefined ? {} : { "content-type": "application/json" }),
     ...spec.headers,
+    "x-opencode-directory": exerciseAuthProject,
     ...(credentials === "valid" ? { authorization: basic("opencode", "secret") } : {}),
   }
   return new Request(new URL(spec.path, "http://localhost"), {
