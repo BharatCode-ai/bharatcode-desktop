@@ -86,7 +86,9 @@ test("animates todo lifecycle without replaying it across session tabs", async (
   await switchSession(page, otherID, otherTitle)
   await expect(dock).toHaveCount(0)
 
-  const returningOpen = sampleDock(page, 700)
+  const returningOpen = sampleDock(page, 700, { waitForPresence: true })
+  // Prove sampling starts at the first mounted frame, not before a slow tab click.
+  await page.waitForTimeout(850)
   await switchSession(page, sourceID, sourceTitle)
   const openSamples = (await returningOpen).filter((sample) => sample.present)
   expect(openSamples.length).toBeGreaterThan(0)
@@ -170,21 +172,26 @@ async function switchSession(page: Page, sessionID: string, title: string) {
   await expectSessionTitle(page, title)
 }
 
-function sampleDock(page: Page, duration: number) {
-  return page.evaluate(async (duration) => {
-    const samples: { present: boolean; height: number; opacity: number }[] = []
-    const start = performance.now()
-    while (performance.now() - start < duration) {
-      const dock = document.querySelector<HTMLElement>('[data-component="session-todo-dock"]')
-      const clip = dock?.parentElement?.parentElement
-      const label = dock?.querySelector<HTMLElement>('[data-action="session-todo-toggle"] span[aria-label]')
-      samples.push({
-        present: !!dock,
-        height: clip?.getBoundingClientRect().height ?? 0,
-        opacity: label ? Number.parseFloat(getComputedStyle(label).opacity) : 0,
-      })
-      await new Promise(requestAnimationFrame)
-    }
-    return samples
-  }, duration)
+function sampleDock(page: Page, duration: number, options: { waitForPresence?: boolean } = {}) {
+  return page.evaluate(
+    async ({ duration, waitForPresence }) => {
+      const samples: { present: boolean; height: number; opacity: number }[] = []
+      const deadline = performance.now() + 10_000
+      let start = waitForPresence ? undefined : performance.now()
+      while (performance.now() < deadline && (start === undefined || performance.now() - start < duration)) {
+        const dock = document.querySelector<HTMLElement>('[data-component="session-todo-dock"]')
+        if (dock && start === undefined) start = performance.now()
+        const clip = dock?.parentElement?.parentElement
+        const label = dock?.querySelector<HTMLElement>('[data-action="session-todo-toggle"] span[aria-label]')
+        samples.push({
+          present: !!dock,
+          height: clip?.getBoundingClientRect().height ?? 0,
+          opacity: label ? Number.parseFloat(getComputedStyle(label).opacity) : 0,
+        })
+        await new Promise(requestAnimationFrame)
+      }
+      return samples
+    },
+    { duration, waitForPresence: options.waitForPresence },
+  )
 }

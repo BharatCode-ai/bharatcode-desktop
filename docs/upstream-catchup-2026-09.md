@@ -37,6 +37,17 @@ Local native synthetic preparation/read/publication/logout passes with all phase
 markers, but does not reproduce the hosted delay. The diagnostic must be removed
 once that boundary is identified. No app/profile/protocol action is involved.
 
+The same Linux browser run passes both corrected history-terminal cases but fails
+the upstream todo-dock navigation test. Its 700 ms sampler starts before Playwright
+performs the tab click; on a slow host it records no mounted frames at all. Adding
+850 ms synthetic pre-click latency reproduces the identical zero-sample failure
+locally. The returning-open sampler now starts its 700 ms observation at the first
+mounted frame (with a separate bounded 10-second admission wait), preserving the
+strict first-frame opacity/height and subsequent lifecycle assertions. The test
+retains the injected pre-click latency to guard against this race: 3/3 repeated
+local runs pass. No production UI/animation change or skipped assertion. Other
+browser flakes, notably cold markdown-worker readiness, remain under investigation.
+
 At `c9c5cc0a3a`, hosted Linux unit tasks all passed, as did generated-client drift.
 The following HTTP exerciser failed on eight missing BharatCode route scenarios.
 Added account status/PKCE URL creation, unknown-state rejection, idempotent logout,
