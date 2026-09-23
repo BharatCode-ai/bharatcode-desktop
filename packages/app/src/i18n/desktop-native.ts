@@ -1,4 +1,5 @@
 import { BHARATCODE_NATIVE_ENGLISH } from "./bharatcode"
+import { productDictionary } from "./product"
 
 export const DESKTOP_NATIVE_LOCALES = [
   "en",
@@ -324,15 +325,18 @@ const BASE_DESKTOP_NATIVE_ENGLISH = {
 } as const
 
 export type DesktopNativeKey = keyof typeof DESKTOP_NATIVE_ENGLISH
-export const DESKTOP_NATIVE_ENGLISH = { ...BASE_DESKTOP_NATIVE_ENGLISH, ...BHARATCODE_NATIVE_ENGLISH } as const
+export const DESKTOP_NATIVE_ENGLISH = productDictionary({
+  ...BASE_DESKTOP_NATIVE_ENGLISH,
+  ...BHARATCODE_NATIVE_ENGLISH,
+})
 
 export function desktopNativeMessages(values: readonly string[]): DesktopNativeMessages {
-  return {
+  return productDictionary({
     ...BHARATCODE_NATIVE_ENGLISH,
     ...Object.fromEntries(
       Object.entries(BASE_DESKTOP_NATIVE_ENGLISH).map(([key, fallback], index) => [key, values[index] ?? fallback]),
     ),
-  } as DesktopNativeMessages
+  }) as DesktopNativeMessages
 }
 export type DesktopNativeMessages = Record<DesktopNativeKey, string>
 export type DesktopNativeBundle = { locale: DesktopNativeLocale; messages: DesktopNativeMessages }

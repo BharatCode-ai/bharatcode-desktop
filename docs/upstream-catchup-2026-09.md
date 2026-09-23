@@ -10,6 +10,37 @@ than resolving 499 overlapping files at once.
 
 ## Where it stands
 
+### Renderer and native asset identity — September 23, 2026
+
+The audit found upstream identity still visible in settings, recovery/native
+menus, feedback destinations, splash/wordmark and native installer/dock icons.
+The App dictionary now brands an explicit allowlist of product-owned messages,
+preserving translated grammar/placeholders and native positional arrays. It
+does not rewrite OpenCode Zen/provider identity, configuration paths or upstream
+technical documentation. Native English fallback uses the same transformation.
+Windows menu headings now use the typed translated label instead of literal text.
+
+Both help/error feedback actions use the BharatCode issue tracker. Release
+highlights use the prior BharatCode changelog URL; live availability is not
+claimed. The accepted BharatCode SVG components and native icon assets are
+reused from the preserved release line. Browser titles, favicon/manifest and
+notification icons no longer present/fetch upstream branding. Unbranded
+raster/social fallbacks were removed from the application HTML, and the unused
+upstream Linux desktop launcher was deleted. App package/lockfile version now
+matches the committed Desktop/CLI 1.15.35 rather than displaying upstream 1.18.31.
+
+Evidence: missing-helper RED; native/product tests **11/11, 469 assertions**;
+full App **744/744, 3,087 assertions**; browser-component suite **55/55,
+170 assertions**; App, Desktop and UI typechecks and production App build pass.
+Rendered loopback-only fixtures pass in both settings layouts, including
+BharatCode page/footer identity and unchanged marketplace mutation/reload
+behavior. The Impeccable refinement pass preserved layout and components; no
+visual redesign or translation invention was introduced.
+
+This remains rendered browser/isolated build evidence, not real sign-in or
+installed native icon acceptance. Screenshots are
+`/tmp/bc-marketplace-{legacy,new}.png`; logs are `/tmp/bc-brand-*.log`.
+
 ### Candidate release workflow reconciliation — September 23, 2026
 
 The inherited release workflow still targeted the upstream repository, referenced

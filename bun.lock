@@ -27,7 +27,7 @@
     },
     "packages/app": {
       "name": "@opencode-ai/app",
-      "version": "1.18.31",
+      "version": "1.15.35",
       "dependencies": {
         "@corvu/drawer": "catalog:",
         "@dnd-kit/abstract": "0.5.0",
