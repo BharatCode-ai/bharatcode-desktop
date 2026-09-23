@@ -10,6 +10,44 @@ than resolving 499 overlapping files at once.
 
 ## Where it stands
 
+### MCP authorization browser handoff — September 23, 2026
+
+The upstream project-scoped MCP controls already connect, disconnect and run
+OAuth; the predecessor marketplace's Configure action only displayed guidance.
+The migration will reuse that flow rather than add a second OAuth implementation.
+Its full existing MCP suite passes **61/61** before changes. This is synthetic
+transport/lifecycle/OAuth evidence, not a claim that every curated provider's
+current endpoint or OAuth registration policy works.
+
+One concrete integration mismatch was corrected: native Windows MCP OAuth used
+the general `open` package under the sidecar's isolated environment, bypassing
+the host-profile launcher already required by BharatCode sign-in. That launcher
+now lives in Core and is shared by Desktop sign-in and MCP. Its PowerShell script
+is byte-identical to the previous implementation: known folders are restored only
+inside the bounded child, URL bytes enter through stdin, and failure never falls
+back to an isolated-profile launch. Desktop declares the workspace dependency;
+the lockfile changes only by that dependency entry.
+
+MCP browser targets now reject non-HTTP(S) and URL userinfo on every platform.
+Launch failures expose fixed safe errors. Non-Windows observation retains the
+existing short launch window, with explicit terminal/cancellation cleanup and a
+late-error guard until child close; this is dispatch observation, not OAuth
+success. Existing callback state/PKCE handling is unchanged.
+
+Evidence: missing-factory RED then **67/67 MCP tests, 182 assertions**, including
+the original 61 plus Windows handoff/no-fallback, target validation, secret-safe
+failure, cancellation, late-error and successful launcher-exit cases. The
+existing Desktop browser tests pass **8/8, 24 assertions** against the shared
+helper. Core, OpenCode and Desktop typechecks pass. Node sidecar and Electron
+main/preload/renderer builds pass; isolated Node runtime smoke passes **2/2**.
+No real browser, OAuth provider, account, protocol handler or user profile was
+invoked. No Windows installed-package or WSL browser/callback acceptance is
+claimed by these injected launcher tests.
+
+Logs: `/tmp/bc-mcp-upstream-baseline.log`, `/tmp/bc-mcp-browser-{red,green,types}.log`,
+`/tmp/bc-mcp-desktop-{browser,types}.log`, `/tmp/bc-mcp-core-types.log`,
+`/tmp/bc-mcp-{node-build,electron-build,runtime-smoke}.log`.
+
 ### Marketplace configuration overrides and access disclosure — September 23, 2026
 
 Marketplace responses now include a secret-free projection of the selected
