@@ -1725,6 +1725,35 @@ executor and zero network requests. Resolve Desktop-only update selection before
 publication; do not change existing releases or claim the candidate publisher
 alone establishes end-to-end update compatibility.
 
+### September 24: Desktop beta release selection corrected
+
+The reproduced mixed CLI/Desktop feed problem is corrected locally. Beta checks
+resolve only published prereleases with a strict `desktop-beta-X.Y.Z` tag from
+the repository's most recent 100 releases, choose the highest numeric version,
+and give that exact immutable-tag download directory to electron-updater's
+standard generic provider. The metadata version must match the selected tag.
+Discovery failure, missing metadata or a mismatch fails the check; there is no
+fallback to a CLI release or an optimistic up-to-date result. Discovery is bounded
+to 15 seconds; no match in that 100-release window is an error, not a claim that
+the entire release history is empty. Production-channel behavior is unchanged;
+this repository's current published Desktop cohort is beta.
+
+This does not replace Electron's archive checksum verification, macOS signing,
+architecture selection, no-downgrade policy, or install controller. Tests execute
+the installed 6.8.9 GitHub provider to reproduce the old failure and its generic
+provider to verify Windows/macOS/Linux metadata and artifact URL selection.
+Full Desktop suite: 148 pass, 0 fail, 492 assertions. Desktop typecheck and beta
+renderer/main/preload build passed. Native Windows Bun executed the bundled
+feed tests: 7/7, 41 assertions. The first direct UNC test could not resolve WSL
+node_modules symlinks; the bundle removes only that local dependency-resolution
+limitation and is not an installed Electron/update test.
+
+A separate read-only live probe resolved current `desktop-beta-1.15.35` metadata:
+Windows one file, macOS two, Linux two. It fetched metadata only, did not download
+or install packages, register protocols, touch profiles, or publish anything.
+The correction still needs the final candidate build and isolated update-path
+acceptance; live discovery alone does not establish successful installation.
+
 ## What is left
 
 This is the current checklist; earlier checkpoint paragraphs describe evidence
@@ -1751,8 +1780,8 @@ and limits at the time they were recorded, not a second active backlog.
 - **Release handoff:** document the exact source/artifact cohort and the remaining
   external gates. Candidate construction is read-only/manual; it does not publish
   npm packages, promote updater metadata or deploy website changes.
-- **Updater selection:** correct and test Desktop-only release selection; the
-  current GitHub provider skips namespaced Desktop tags and selects CLI releases.
+- **Updater acceptance:** Desktop-only beta selection is corrected and tested;
+  verify the final package's isolated update path before release acceptance.
 
 The two original shell/review-pane fixes remain deliberately unported because
 upstream already fixed them. The vendored renderer client is retained for its
