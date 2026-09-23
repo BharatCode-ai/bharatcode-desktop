@@ -10,6 +10,24 @@ than resolving 499 overlapping files at once.
 
 ## Current checkpoint — September 24
 
+Final bounded policy correction: compiled beta/prod/latest builds now keep the
+shipped product policy regardless of runtime channel or generic-policy overrides.
+Local builds retain both surfaces for upstream integration tests. Actual compiled
+policy/service fixtures failed for all three release channels before the change;
+the final focused runtime/policy/account run passes 42/42 (135 assertions), and
+OpenCode typecheck passes. Each fixture compiles in a fresh Bun child from the
+package directory, avoiding the in-process compiler cache and explicit-tsconfig
+override defects seen while developing the test. No compiler errors are ignored.
+
+The full CLI run after the instance-shutdown correction completed with 3,891
+passes, 48 skips, one todo and zero failures (53 snapshots, 11,084 assertions,
+284 files, 402.97 seconds). It began before the final policy edit, so it is not
+exact-final-source acceptance; that remains for the corrected hosted run. Source
+is being frozen for PR verification rather than another broad audit. Existing
+candidate artifacts precede these corrections and must not be published as the
+final candidate. PR merge conflicts remain a separate integration requirement;
+branch CI does not establish a clean merge into dev.
+
 The follow-up workspace graph audit found eight further omitted test packages:
 client, codemode, effect-drizzle-sqlite, http-recorder, httpapi-codegen, llm, tui,
 and sdk. Turbo now has a default `test` task with build dependencies; the redundant

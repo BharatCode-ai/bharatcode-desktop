@@ -180,15 +180,16 @@ export const defaultLayer = shippedLayer
  * composition has to thread a policy layer through itself to get the generic
  * catalog -- and a packaged build cannot forget to opt in.
  *
- * BHARATCODE_PRODUCT_POLICY=shipped|generic overrides it, so the shipped
- * surface can be exercised from a local build.
+ * Local builds may select either surface for tests. A compiled release channel
+ * is authoritative: environment/storage overrides must not turn a shipped
+ * runtime back into the generic upstream product.
  */
 export function shippedByDefault(env: Record<string, string | undefined> = process.env) {
+  if (["beta", "prod", "latest"].includes(InstallationChannel)) return true
   const override = env.BHARATCODE_PRODUCT_POLICY
   if (override === "shipped") return true
   if (override === "generic") return false
-  // BHARATCODE_CHANNEL takes precedence the same way it does in core/global.ts,
-  // so the storage paths and the product surface always describe the same build.
+  // Let local integration fixtures opt into a shipped surface without packaging.
   return ["beta", "prod", "latest"].includes(env.BHARATCODE_CHANNEL ?? InstallationChannel)
 }
 

@@ -155,7 +155,7 @@ describe("shipped policy is decided by the build channel", () => {
     expect(ProductPolicy.shippedByDefault({})).toBe(false)
   })
 
-  test("BHARATCODE_PRODUCT_POLICY forces either surface from any build", () => {
+  test("BHARATCODE_PRODUCT_POLICY selects either surface in a local build", () => {
     expect(ProductPolicy.shippedByDefault({ BHARATCODE_PRODUCT_POLICY: "shipped" })).toBe(true)
     expect(ProductPolicy.shippedByDefault({ BHARATCODE_PRODUCT_POLICY: "generic" })).toBe(false)
   })
