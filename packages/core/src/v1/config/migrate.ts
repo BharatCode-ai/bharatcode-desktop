@@ -29,7 +29,18 @@ const keys = new Set([
 
 export function isV1(input: unknown) {
   if (typeof input !== "object" || input === null || Array.isArray(input)) return false
-  return Object.keys(input).some((key) => keys.has(key))
+  if (Object.keys(input).some((key) => keys.has(key))) return true
+  // These keys exist in both formats, but their shapes changed. A file with
+  // only legacy MCP/skills settings must not silently decode as empty v2 data.
+  if ("skills" in input && input.skills && typeof input.skills === "object" && !Array.isArray(input.skills)) return true
+  return "mcp" in input && input.mcp && typeof input.mcp === "object" && !Array.isArray(input.mcp)
+    ? Object.values(input.mcp).some(
+        (server) =>
+          server &&
+          typeof server === "object" &&
+          (("type" in server && (server.type === "local" || server.type === "remote")) || "enabled" in server),
+      )
+    : false
 }
 
 export function migrate(info: typeof ConfigV1.Info.Type) {

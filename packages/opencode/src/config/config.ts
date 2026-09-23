@@ -260,12 +260,8 @@ const layer = Layer.effect(
 
     const loadGlobal = Effect.fnUntraced(function* (env?: Record<string, string>) {
       // Marketplace defaults belong to this runtime, below explicit user config.
-      const managed = yield* Effect.promise(() =>
-        Capabilities.store({
-          data: Global.Path.data,
-          desktop: Flag.OPENCODE_CLIENT === "desktop",
-        }).overlay(),
-      )
+      const capabilities = Capabilities.store({ data: Global.Path.data, desktop: Flag.OPENCODE_CLIENT === "desktop" })
+      const managed = yield* Effect.promise(() => capabilities.overlay())
       let result: Info = Object.keys(managed.mcp ?? {}).length || managed.skills?.paths?.length ? managed : {}
       // Seed the default global config with the schema for editor completion, but avoid writing when the user
       // explicitly routes config through env-provided paths or content.
@@ -279,7 +275,8 @@ const layer = Layer.effect(
       }
       result = mergeConfig(result, yield* loadFile(path.join(Global.Path.config, "config.json"), env))
       result = mergeConfig(result, yield* loadFile(path.join(Global.Path.config, "opencode.json"), env))
-      result = mergeConfig(result, yield* loadFile(path.join(Global.Path.config, "opencode.jsonc"), env))
+      const jsonc = yield* loadFile(path.join(Global.Path.config, "opencode.jsonc"), env)
+      result = mergeConfig(result, yield* Effect.promise(() => capabilities.filterLegacy(jsonc)))
 
       const legacy = path.join(Global.Path.config, "config")
       if (existsSync(legacy)) {

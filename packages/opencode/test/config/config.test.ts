@@ -322,6 +322,49 @@ it.effect("creates global jsonc config with schema when no global configs exist"
   ),
 )
 
+it.effect("migrated marketplace disable survives old generated global config without rewriting it", () =>
+  withGlobalConfig(
+    {
+      name: "opencode.jsonc",
+      config: {
+        mcp: {
+          github: { type: "remote", url: "https://api.githubcopilot.com/mcp/", enabled: true },
+          custom: { type: "remote", url: "https://custom.invalid", enabled: true },
+        },
+      },
+    },
+    ({ dir }) =>
+      Effect.gen(function* () {
+        const temporary = yield* tmpdirScoped()
+        const previous = Global.Path.data
+        ;(Global.Path as { data: string }).data = temporary
+        try {
+          const file = path.join(dir, "opencode.jsonc")
+          const before = yield* Effect.promise(() => fs.readFile(file, "utf8"))
+          const store = Capabilities.store({ data: temporary, desktop: true })
+          yield* Effect.promise(() =>
+            store.migrate({
+              version: 1,
+              installed: {
+                "superpowers-obra": { id: "superpowers-obra", enabled: false },
+                github: { id: "github", enabled: true },
+              },
+            }),
+          )
+          yield* Effect.promise(() => store.change("github", "disable"))
+          yield* Config.use.invalidate()
+          const config = yield* Config.use.getGlobal()
+          expect(config.mcp?.github).toBeUndefined()
+          expect(config.mcp?.custom).toMatchObject({ url: "https://custom.invalid", enabled: true })
+          expect(yield* Effect.promise(() => fs.readFile(file, "utf8"))).toBe(before)
+        } finally {
+          ;(Global.Path as { data: string }).data = previous
+          yield* Config.use.invalidate()
+        }
+      }),
+  ),
+)
+
 it.effect("marketplace defaults preserve explicit global MCP overrides and unrelated entries", () =>
   withGlobalConfig(
     {

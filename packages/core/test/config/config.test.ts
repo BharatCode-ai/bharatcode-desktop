@@ -53,6 +53,59 @@ const provider = {
 }
 
 describe("Config", () => {
+  it.live("retires migrated generated global MCP entries but preserves identical project overrides", () =>
+    Effect.acquireRelease(
+      Effect.promise(() => tmpdir()),
+      (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+    ).pipe(
+      Effect.flatMap((tmp) =>
+        Effect.gen(function* () {
+          const store = Capabilities.store({ data: path.join(tmp.path, "global-data"), desktop: true })
+          yield* Effect.promise(() =>
+            store.migrate({
+              version: 1,
+              installed: {
+                "superpowers-obra": { id: "superpowers-obra", enabled: false },
+                github: { id: "github", enabled: true },
+              },
+            }),
+          )
+          yield* Effect.promise(() => store.change("github", "disable"))
+          const directory = path.join(tmp.path, "global")
+          const globalFile = path.join(directory, "opencode.jsonc")
+          const projectFile = path.join(tmp.path, "opencode.json")
+          const text =
+            "// untouched comment\n" +
+            JSON.stringify({
+              mcp: {
+                github: {
+                  type: "remote",
+                  url: "https://api.githubcopilot.com/mcp/",
+                  enabled: true,
+                },
+              },
+            })
+          yield* Effect.promise(async () => {
+            await fs.mkdir(directory)
+            await fs.writeFile(globalFile, text)
+            await fs.writeFile(projectFile, text)
+          })
+          yield* Effect.gen(function* () {
+            const config = yield* Config.Service
+            const documents = (yield* config.entries()).filter((entry) => entry.type === "document")
+            expect(documents.find((entry) => entry.path === globalFile)?.info.mcp?.servers?.github).toBeUndefined()
+            expect(documents.find((entry) => entry.path === projectFile)?.info.mcp?.servers?.github).toMatchObject({
+              type: "remote",
+              url: "https://api.githubcopilot.com/mcp/",
+              disabled: false,
+            })
+          }).pipe(Effect.provide(testLayer(tmp.path)))
+          expect(yield* Effect.promise(() => fs.readFile(globalFile, "utf8"))).toBe(text)
+          expect(yield* Effect.promise(() => fs.readFile(projectFile, "utf8"))).toBe(text)
+        }),
+      ),
+    ),
+  )
   it.live("places marketplace defaults below explicit user configuration without rewriting it", () =>
     Effect.acquireRelease(
       Effect.promise(() => tmpdir()),
@@ -104,6 +157,13 @@ describe("Config", () => {
       expect(ConfigMigrateV1.isV1({ reference: {} })).toBe(true)
       expect(ConfigMigrateV1.isV1({ shell: "/bin/zsh", model: "anthropic/claude" })).toBe(false)
       expect(ConfigMigrateV1.isV1({ references: {} })).toBe(false)
+      expect(ConfigMigrateV1.isV1({ mcp: { github: { type: "remote", url: "https://example.invalid" } } })).toBe(true)
+      expect(ConfigMigrateV1.isV1({ mcp: { github: { enabled: false } } })).toBe(true)
+      expect(ConfigMigrateV1.isV1({ skills: { paths: [] } })).toBe(true)
+      expect(
+        ConfigMigrateV1.isV1({ mcp: { servers: { github: { type: "remote", url: "https://example.invalid" } } } }),
+      ).toBe(false)
+      expect(ConfigMigrateV1.isV1({ skills: ["./skills"] })).toBe(false)
     }),
   )
 

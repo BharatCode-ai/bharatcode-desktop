@@ -145,6 +145,7 @@ const layer = Layer.effect(
     const decodeOptions = { errors: "all", onExcessProperty: "ignore", propertyOrder: "original" } as const
     const decodeInfo = Schema.decodeUnknownOption(Info, decodeOptions)
     const decodeV1Info = Schema.decodeUnknownOption(ConfigV1.Info, decodeOptions)
+    const capabilities = Capabilities.store({ data: global.data, desktop: Flag.OPENCODE_CLIENT === "desktop" })
 
     const loadFile = Effect.fnUntraced(function* (filepath: string) {
       const text = yield* fs.readFileStringSafe(filepath)
@@ -154,11 +155,14 @@ const layer = Layer.effect(
       const input: unknown = parse(text, errors, { allowTrailingComma: true })
       if (errors.length) return
 
-      const info = Option.getOrUndefined(
-        ConfigMigrateV1.isV1(input)
-          ? decodeV1Info(input).pipe(Option.map(ConfigMigrateV1.migrate), Option.flatMap(decodeInfo))
-          : decodeInfo(input),
-      )
+      const legacy = ConfigMigrateV1.isV1(input)
+      const decoded = legacy ? Option.getOrUndefined(decodeV1Info(input)) : undefined
+      if (legacy && !decoded) return
+      const filtered =
+        decoded && filepath === path.join(global.config, "opencode.jsonc")
+          ? yield* Effect.promise(() => capabilities.filterLegacy(decoded))
+          : decoded
+      const info = Option.getOrUndefined(decodeInfo(filtered ? ConfigMigrateV1.migrate(filtered) : input))
       if (!info) return
       return new Document({ type: "document", path: filepath, info })
     })
@@ -202,12 +206,7 @@ const layer = Layer.effect(
     const supplementary = yield* Effect.forEach(directories, loadDirectory).pipe(Effect.orDie)
     // Apply general settings first and more specific settings last:
     // global config, project files, then `.opencode` files.
-    const managed = yield* Effect.promise(() =>
-      Capabilities.store({
-        data: global.data,
-        desktop: Flag.OPENCODE_CLIENT === "desktop",
-      }).overlay(),
-    )
+    const managed = yield* Effect.promise(() => capabilities.overlay())
     const defaults =
       Object.keys(managed.mcp ?? {}).length || managed.skills?.paths?.length
         ? [new Document({ type: "document", info: Schema.decodeUnknownSync(Info)(ConfigMigrateV1.migrate(managed)) })]

@@ -10,6 +10,52 @@ than resolving 499 overlapping files at once.
 
 ## Where it stands
 
+### One-time marketplace choice migration — September 23, 2026
+
+Native Desktop now imports the previous Electron `bharatcode.capabilities`
+`state.v1` record before its sidecar starts serving requests. The runtime owns
+the new record; no renderer mutation or new credential-bearing IPC was added.
+WSL and remote runtimes do not receive the native host's old choices. A new-format
+record wins over the legacy source, including if that source later becomes
+malformed. Migration and ordinary changes share the same lock/publication path,
+so a committed import cannot replay over subsequent user choices. Old source
+bytes are never rewritten or removed.
+
+The private record retains only known capability IDs and enabled flags, plus
+internal ownership IDs that are omitted from API responses. Both config loaders
+ignore only exact predecessor-generated MCP shapes in the global
+`opencode.jsonc`, and the predecessor's reserved bundled-Superpowers resource
+paths. Custom URLs, headers, environment, extra options, disabled overrides,
+unrelated entries, other config files and project overrides remain authoritative.
+This filtering is in memory: original config bytes/comments are unchanged.
+
+An integration regression also exposed upstream's v1-format detector dropping
+files containing only legacy MCP/skills settings. Detection now recognizes those
+changed shapes while retaining the v2 server-map/skills-array forms.
+
+Evidence: migration methods and both loader integrations first failed focused
+tests, then passed **28/28 core/config tests, 140 assertions**, and **114/114
+legacy-config/HTTP tests, 210 assertions**. Core, OpenCode and Desktop typechecks
+pass. Compiled native Windows fixtures pass **12 lifecycle/security checks**,
+including disabled-choice preservation, repeat import, unchanged old source,
+hardlink rejection and malformed-source rejection. The Node sidecar rebuilt;
+the existing Desktop runtime smoke passes **2/2**, now exercising import before
+listening, protected marketplace state without internal metadata, signed-out
+account state, and SQLite draft close/reopen. That test uses Desktop's existing
+PTY resolution adapter because the intermediate bundle is emitted under
+OpenCode, not the final Desktop package.
+
+Logs: `/tmp/bc-capability-migration-{core-final,opencode-final,node-build}.log`,
+`/tmp/bc-capability-migration-runtime-smoke-final.log`, and the corresponding
+`*-types-final.log` files. The Windows fixture is reproducible from
+`packages/core/test/fixture/capabilities-native.ts`.
+
+All mutations were confined to fresh fixtures and local source/build output.
+No application install, real profile, config, credentials, or protocol handler
+was changed. This is implementation/runtime-fixture evidence, **not an installed
+upgrade acceptance claim**. Both settings layouts, effective override/status
+presentation, connector setup/authentication and final package acceptance remain.
+
 ### Protected marketplace API and SDK — September 23, 2026
 
 The selected runtime now exposes catalog/state reads and bounded capability
@@ -36,11 +82,9 @@ Logs: `/tmp/bc-capability-http-final.log`,
 `/tmp/bc-capability-sdk-types.log`.
 
 No connectors were launched and no real profile or installed application was
-changed. UI, migration and installed acceptance remain open. In particular,
-importing old enabled flags alone is insufficient: old generated MCP entries in
-user config can override a later Disable action. Migration must distinguish
-those managed entries from custom settings while preserving original config
-bytes and prior disabled choices.
+changed. UI and installed acceptance remain open. The migration checkpoint above
+addresses old generated MCP settings overriding subsequent Disable actions while
+preserving original config bytes and prior disabled choices.
 
 ### Runtime-owned marketplace foundation — September 23, 2026
 
@@ -82,10 +126,10 @@ target, then run with native Node). No connector or real account was contacted.
 
 Logs: `/tmp/bc-capabilities-{red,core-final,legacy,types,opencode-types}.log`.
 **Not yet complete:** both settings layouts,
-prior Electron-store choice migration, effective override/status presentation,
+effective override/status presentation,
 connector authentication/setup, and matching installed-package acceptance.
-Do not recommend a replacement package before prior disabled choices are carried
-over; this checkpoint establishes the runtime/config foundation only.
+Prior Electron-store choices now have a migration implementation and isolated
+runtime proof above; a replacement still requires installed-upgrade acceptance.
 
 ### Dictation composer and microphone permission — September 23, 2026
 

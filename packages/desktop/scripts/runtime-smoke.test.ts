@@ -5,7 +5,7 @@ import { join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 import { spawnSync } from "node:child_process"
 
-test("compiled Node sidecar serves protected signed-out account state in a fresh isolated home", async () => {
+test("compiled Node sidecar migrates marketplace before serving protected signed-out state", async () => {
   const home = await mkdtemp(join(tmpdir(), "bharatcode-node-smoke-"))
   const moduleUrl = pathToFileURL(resolve("../opencode/dist/node/node.js")).href
   // Match electron.vite.config's native PTY external resolution; the intermediate
@@ -20,11 +20,25 @@ test("compiled Node sidecar serves protected signed-out account state in a fresh
         `
       import assert from "node:assert/strict";
       import { registerHooks } from "node:module";
+      import {mkdir,writeFile,readFile} from "node:fs/promises";
+      import path from "node:path";
       registerHooks({resolve(specifier,context,next) {
         if (specifier === "@lydell/node-pty") return {url:${JSON.stringify(pty)},shortCircuit:true};
         return next(specifier,context);
       }});
-      const { Server } = await import(${JSON.stringify(moduleUrl)});
+      const { Server, migrateDesktopCapabilities } = await import(${JSON.stringify(moduleUrl)});
+      const userData = path.join(process.env.HOME,"electron");
+      await mkdir(userData,{mode:0o700});
+      const source = path.join(userData,"bharatcode.capabilities");
+      const old = JSON.stringify({"state.v1":{version:1,installed:{
+        "superpowers-obra":{id:"superpowers-obra",enabled:false},
+        github:{id:"github",enabled:false}
+      }}});
+      await writeFile(source,old,{mode:0o600});
+      await migrateDesktopCapabilities(userData);
+      assert.equal(await readFile(source,"utf8"),old);
+      await writeFile(source,"malformed source after committed import");
+      await migrateDesktopCapabilities(userData);
       const server = await Server.listen({hostname:"127.0.0.1",port:0});
       try {
         const status = new URL("/account/status",server.url);
@@ -34,6 +48,12 @@ test("compiled Node sidecar serves protected signed-out account state in a fresh
         const account = await reply.json();
         assert.equal(account.state,"signed-out");
         assert.equal(account.access_token,undefined);
+        const capabilities = await fetch(new URL("/capabilities",server.url),{headers:{authorization:"Basic "+Buffer.from("opencode:synthetic-smoke-only").toString("base64")}});
+        assert.equal(capabilities.status,200);
+        const snapshot = await capabilities.json();
+        assert.equal(snapshot.state.installed["superpowers-obra"].enabled,false);
+        assert.equal(snapshot.state.installed.github.enabled,false);
+        assert.equal(snapshot.state.legacy,undefined);
         console.log("COMPILED_ACCOUNT_PASS");
       } finally { await server.stop(true); }
       process.exit(0);
@@ -51,6 +71,7 @@ test("compiled Node sidecar serves protected signed-out account state in a fresh
           XDG_CONFIG_HOME: join(home, "config"),
           XDG_CACHE_HOME: join(home, "cache"),
           OPENCODE_DISABLE_MODELS_FETCH: "true",
+          OPENCODE_CLIENT: "desktop",
           OPENCODE_SERVER_USERNAME: "opencode",
           OPENCODE_SERVER_PASSWORD: "synthetic-smoke-only",
         },
