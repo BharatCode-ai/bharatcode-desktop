@@ -10,6 +10,19 @@ than resolving 499 overlapping files at once.
 
 ## Current checkpoint — September 24
 
+The follow-up workspace graph audit found eight further omitted test packages:
+client, codemode, effect-drizzle-sqlite, http-recorder, httpapi-codegen, llm, tui,
+and sdk. Turbo now has a default `test` task with build dependencies; the redundant
+old per-package entries (including a nonexistent function package) are removed,
+and the CLI retains its environment override. An executable dry-run comparison
+against every workspace `package.json` proves all 14 declared test scripts are
+present. A forced run of the eight newly discovered gates passed all 12 tasks
+(including builds): 879 tests passed, 31 skipped, none failed. The skips are not
+passes: LLM recorded tests skip missing/unselected cassettes, and one upstream
+TUI hierarchical-file-row render case is explicitly skipped. The TUI run also
+logged missing fixture `/tmp/opencode/state/kv.json` reads; its zero-failure result
+does not establish clean fixture persistence. No real credentials were supplied.
+
 Latest audit correction: the Turbo task was still named `opencode#test`, but
 the CLI package is `bharatcode`. An actual `bun turbo test --dry=json` showed
 the CLI test task was absent. Therefore the prior hosted unit job successes
