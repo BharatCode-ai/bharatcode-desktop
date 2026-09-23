@@ -1,5 +1,8 @@
 name: BharatCode CLI candidate
 
+# Retain the established workflow filename. This branch builds candidates only;
+# registry/release publication is a separate explicitly authorized operation.
+
 on:
   workflow_dispatch:
     inputs:

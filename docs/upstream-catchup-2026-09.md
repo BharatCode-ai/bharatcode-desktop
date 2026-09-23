@@ -1490,8 +1490,11 @@ dependencies and bundled distribution module. The real intermediate 12-target
 build also packed successfully into `/tmp/bc-cli-pack-129b76`; unpacking the actual
 wrapper and Linux packages and launching through Node returned `1.15.35` with an
 isolated home. This does not establish npm registry publication/installation or
-execution of all foreign-architecture binaries. The manual `cli-candidate.yml`
-workflow performs this build/pack path on one Linux runner, retains the existing
+execution of all foreign-architecture binaries. The manual `build-and-publish.yml`
+workflow retains the established filename (and its future trusted-publisher
+integration point) while performing only this build/pack path on one Linux runner.
+Unlike a new workflow absent from the default branch, it can be dispatched against
+the candidate ref before merge. It retains the existing
 exact-source admission check before and after building, and uploads source and
 tarball hash manifests. It has read-only repository permissions and no npm or
 GitHub publication step. Hosted verification and authorized publication
