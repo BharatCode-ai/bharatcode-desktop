@@ -247,6 +247,16 @@ export type SessionsListOutput = {
     }
     readonly time: { readonly created: number; readonly updated: number; readonly archived?: number }
     readonly title: string
+    readonly goal?: {
+      readonly text: string
+      readonly status: "active" | "paused" | "completed" | "blocked"
+      readonly created: number
+      readonly updated: number
+      readonly accumulated: number
+      readonly activeSince?: number
+      readonly completed?: number
+      readonly report?: string
+    }
     readonly location: { readonly directory: string; readonly workspaceID?: string }
     readonly subpath?: string
     readonly revert?: {
@@ -309,6 +319,16 @@ export type SessionsCreateOutput = {
     }
     readonly time: { readonly created: number; readonly updated: number; readonly archived?: number }
     readonly title: string
+    readonly goal?: {
+      readonly text: string
+      readonly status: "active" | "paused" | "completed" | "blocked"
+      readonly created: number
+      readonly updated: number
+      readonly accumulated: number
+      readonly activeSince?: number
+      readonly completed?: number
+      readonly report?: string
+    }
     readonly location: { readonly directory: string; readonly workspaceID?: string }
     readonly subpath?: string
     readonly revert?: {
@@ -347,6 +367,16 @@ export type SessionsGetOutput = {
     }
     readonly time: { readonly created: number; readonly updated: number; readonly archived?: number }
     readonly title: string
+    readonly goal?: {
+      readonly text: string
+      readonly status: "active" | "paused" | "completed" | "blocked"
+      readonly created: number
+      readonly updated: number
+      readonly accumulated: number
+      readonly activeSince?: number
+      readonly completed?: number
+      readonly report?: string
+    }
     readonly location: { readonly directory: string; readonly workspaceID?: string }
     readonly subpath?: string
     readonly revert?: {

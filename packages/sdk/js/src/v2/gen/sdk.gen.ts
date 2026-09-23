@@ -17,6 +17,7 @@ import type {
   AuthSetResponses,
   BharatCodeAuthorizeRequest,
   BharatCodeCallbackRequest,
+  BharatCodeDictationRequest,
   CommandListErrors,
   CommandListResponses,
   Config as Config3,
@@ -270,6 +271,10 @@ import type {
   V2AccountAuthorizeResponses,
   V2AccountCallbackErrors,
   V2AccountCallbackResponses,
+  V2AccountDictationErrors,
+  V2AccountDictationResponses,
+  V2AccountDictationStatusErrors,
+  V2AccountDictationStatusResponses,
   V2AccountLogoutErrors,
   V2AccountLogoutResponses,
   V2AccountStatusErrors,
@@ -1426,6 +1431,33 @@ export class Event extends HeyApiClient {
 }
 
 export class Account extends HeyApiClient {
+  public dictationStatus<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<
+      V2AccountDictationStatusResponses,
+      V2AccountDictationStatusErrors,
+      ThrowOnError
+    >({ url: "/account/dictation", ...options })
+  }
+
+  public dictation<ThrowOnError extends boolean = false>(
+    parameters?: {
+      bharatCodeDictationRequest?: BharatCodeDictationRequest
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ key: "bharatCodeDictationRequest", map: "body" }] }])
+    return (options?.client ?? this.client).post<V2AccountDictationResponses, V2AccountDictationErrors, ThrowOnError>({
+      url: "/account/dictation",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
   public status<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).get<V2AccountStatusResponses, V2AccountStatusErrors, ThrowOnError>({
       url: "/account/status",

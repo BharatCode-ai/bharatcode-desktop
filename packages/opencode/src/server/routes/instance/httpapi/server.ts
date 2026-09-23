@@ -7,6 +7,7 @@ import * as Observability from "@opencode-ai/core/observability"
 import { Account } from "@/account/account"
 import { Agent } from "@/agent/agent"
 import { Auth } from "@/auth"
+import { BharatCodeDictation } from "@/bharatcode/dictation"
 import { BackgroundJob } from "@/background/job"
 import { Command } from "@/command"
 import { Config } from "@/config/config"
@@ -222,6 +223,7 @@ const app = LayerNode.group([
   Auth.node,
   BharatCodeAccount.node,
   BharatCodeCatalog.node,
+  BharatCodeDictation.node,
   ProductPolicy.node,
   Account.node,
   Config.node,

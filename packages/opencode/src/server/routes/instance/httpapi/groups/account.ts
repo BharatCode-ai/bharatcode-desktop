@@ -1,7 +1,14 @@
 import { Schema } from "effect"
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/unstable/httpapi"
 import { DESKTOP_REDIRECT_URI } from "@/bharatcode/account"
-import { InvalidRequestError, ServiceUnavailableError, UnauthorizedError, UpstreamError } from "../errors"
+import { MAX_AUDIO_BASE64 } from "@/bharatcode/dictation"
+import {
+  ForbiddenError,
+  InvalidRequestError,
+  ServiceUnavailableError,
+  UnauthorizedError,
+  UpstreamError,
+} from "../errors"
 import { Authorization } from "../middleware/authorization"
 
 export const AccountPaths = {
@@ -9,6 +16,7 @@ export const AccountPaths = {
   authorize: "/account/authorize",
   callback: "/account/callback",
   logout: "/account/logout",
+  dictation: "/account/dictation",
 } as const
 
 export const AccountStatusResponse = Schema.Struct({
@@ -41,7 +49,34 @@ export const LogoutResponse = Schema.Struct({
 
 const accountErrors = [InvalidRequestError, UnauthorizedError, UpstreamError, ServiceUnavailableError] as const
 
+export const DictationRequest = Schema.Struct({
+  audio: Schema.String.check(Schema.isMaxLength(MAX_AUDIO_BASE64)),
+  mimeType: Schema.String.check(Schema.isMaxLength(64)),
+}).annotate({ identifier: "BharatCodeDictationRequest", parseOptions: { onExcessProperty: "error" } })
+export const DictationResponse = Schema.Struct({
+  text: Schema.String,
+  language: Schema.optional(Schema.String),
+  duration: Schema.optional(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))),
+}).annotate({ identifier: "BharatCodeDictationResponse" })
+export const DictationStatus = Schema.Struct({
+  available: Schema.Boolean,
+  maxBytes: Schema.optional(Schema.Int.check(Schema.isGreaterThan(0))),
+}).annotate({ identifier: "BharatCodeDictationStatus" })
+
 export const AccountGroup = HttpApiGroup.make("v2.account")
+  .add(
+    HttpApiEndpoint.get("dictationStatus", AccountPaths.dictation, {
+      success: DictationStatus,
+      error: [...accountErrors, ForbiddenError],
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post("dictation", AccountPaths.dictation, {
+      payload: DictationRequest,
+      success: DictationResponse,
+      error: [...accountErrors, ForbiddenError],
+    }),
+  )
   .add(
     HttpApiEndpoint.get("status", AccountPaths.status, {
       success: AccountStatusResponse,

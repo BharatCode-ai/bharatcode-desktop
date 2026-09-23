@@ -10,6 +10,37 @@ than resolving 499 overlapping files at once.
 
 ## Where it stands
 
+### Dictation runtime boundary — September 23, 2026
+
+The previous Desktop implementation hard-coded a retired Whisper model and read
+its bearer token in main before upload. The new runtime-owned service selects only
+an eligible live transcription model from the catalog and rechecks availability
+before upload. It uses the shared authenticated account fetch at the fixed
+BharatCode transcription endpoint; callers cannot choose an upstream URL or
+provide a credential. Recordings have a strict MIME/base64 contract and a 16 MiB
+ceiling further reduced by the live model's advertised input limit. Upload and
+response reading have a shared deadline. Provider payloads are never returned in
+errors; access denial is distinct from needing to sign in.
+
+GET/POST `/account/dictation` use the existing sidecar authorization boundary and
+structural SDK schemas. No live speech model means `available: false`, not a
+fallback to Whisper. The legacy SDK is regenerated from the actual routes. The
+current client generator also picked up the earlier canonical optional Goal
+field in list/create/get projections; its generated output was not hand-edited.
+
+Tests first reproduced the missing dictation service, then passed **79/79,
+424 assertions** across account/catalog/dictation/HTTP/OpenAPI suites. OpenCode
+and current-client typechecks and SDK generation pass. Logs:
+`/tmp/bc-dictation-{red,green,http,final,types,sdk,client,client-types}.log`.
+The obsolete account fixture asserting that signed-out users cannot discover the
+public catalog now checks the actual shipped signed-out account boundary; public
+discovery is covered separately without a live network dependency.
+
+**Pending:** renderer microphone/recording/insertion integration and browser
+acceptance. This backend checkpoint does not claim end-to-end dictation or live
+speech-service availability. The marketplace audit also remains open: the old
+main-process Windows config writer must not configure a selected WSL runtime.
+
 ### Repeated tool-failure protection — September 23, 2026
 
 Reconciled the retained fork's `ToolLoopGuard` against both the compatibility

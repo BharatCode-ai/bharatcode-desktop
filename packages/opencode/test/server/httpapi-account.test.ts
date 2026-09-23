@@ -41,11 +41,11 @@ const authorizedJson = (body: unknown) =>
   }) satisfies RequestInit
 
 describe("Desktop-safe BharatCode account HTTP contract", () => {
-  test("shipped v2 catalog fails closed when no account is signed in", async () => {
+  test("shipped account graph remains signed out without a credential", async () => {
     // Product policy is memoized for a process. Exercise the shipped graph in a
     // child so generic upstream fixtures cannot inherit that policy afterward.
     if (process.env.BHARATCODE_RUNTIME_HTTP_FIXTURE !== "1") {
-      const child = Bun.spawn([process.execPath, "test", import.meta.path, "-t", "shipped v2 catalog"], {
+      const child = Bun.spawn([process.execPath, "test", import.meta.path, "-t", "shipped account graph"], {
         env: { ...process.env, BHARATCODE_RUNTIME_HTTP_FIXTURE: "1" },
         stdout: "pipe",
         stderr: "pipe",
@@ -64,15 +64,14 @@ describe("Desktop-safe BharatCode account HTTP contract", () => {
     const handler = HttpRouter.toWebHandler(HttpApiApp.createRoutes(), { disableLogger: true })
     try {
       const response = await handler.handler(
-        new Request("http://localhost/api/model", {
+        new Request("http://localhost/account/status", {
           headers: { "x-opencode-directory": process.env.OPENCODE_TEST_HOME! },
         }),
         HttpApiApp.context,
       )
-      expect(response.status).toBe(500)
+      expect(response.status).toBe(200)
       const body = await response.text()
-      expect(body).not.toContain("gpt-")
-      expect(body).not.toContain("claude-")
+      expect(JSON.parse(body)).toEqual({ state: "signed-out" })
       expect(body).not.toContain("apiKey")
     } finally {
       await handler.dispose()
@@ -95,6 +94,23 @@ describe("Desktop-safe BharatCode account HTTP contract", () => {
     const body = await response.json()
     expect(body).toEqual({ state: "signed-out" })
     expect(JSON.stringify(body)).not.toMatch(/token|credential|path|verifier|authorization.code/i)
+  })
+
+  test("protects dictation and rejects invalid or extra audio fields before outbound work", async () => {
+    const request = app()
+    expect((await request(AccountPaths.dictation)).status).toBe(401)
+    expect((await request(AccountPaths.dictation, { method: "POST" })).status).toBe(401)
+    expect((await request(AccountPaths.dictation, authorizedJson({ audio: "", mimeType: "audio/webm" }))).status).toBe(
+      400,
+    )
+    expect(
+      (
+        await request(
+          AccountPaths.dictation,
+          authorizedJson({ audio: "", mimeType: "audio/webm", endpoint: "https://private.example" }),
+        )
+      ).status,
+    ).toBe(400)
   })
 
   test("starts only the fixed Desktop PKCE flow", async () => {

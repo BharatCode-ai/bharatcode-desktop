@@ -2046,30 +2046,9 @@ export type Config = {
   }
 }
 
-export type BharatCodeAccountStatusResponse = {
-  state: "signed-out" | "sign-in-required" | "connection-problem" | "signed-in"
-  accountID?: string
-  email?: string
-  name?: string
-  picture?: string
-  expiresAt?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
-  message?: string
-}
-
-export type ServiceUnavailableError = {
-  _tag: "ServiceUnavailableError"
-  message: string
-  service?: string
-}
-
-export type BharatCodeAuthorizeRequest = {
-  redirectUri: "bharatcode://auth/callback"
-  selectAccount?: boolean
-}
-
-export type BharatCodeAuthorizeResponse = {
-  url: string
-  expiresAt: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+export type BharatCodeDictationStatus = {
+  available: boolean
+  maxBytes?: number
 }
 
 export type UnauthorizedError = {
@@ -2082,6 +2061,48 @@ export type UpstreamError = {
   message: string
   service?: string
   status?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+}
+
+export type ServiceUnavailableError = {
+  _tag: "ServiceUnavailableError"
+  message: string
+  service?: string
+}
+
+export type ForbiddenError = {
+  _tag: "ForbiddenError"
+  message: string
+}
+
+export type BharatCodeDictationRequest = {
+  audio: string
+  mimeType: string
+}
+
+export type BharatCodeDictationResponse = {
+  text: string
+  language?: string
+  duration?: number
+}
+
+export type BharatCodeAccountStatusResponse = {
+  state: "signed-out" | "sign-in-required" | "connection-problem" | "signed-in"
+  accountID?: string
+  email?: string
+  name?: string
+  picture?: string
+  expiresAt?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+  message?: string
+}
+
+export type BharatCodeAuthorizeRequest = {
+  redirectUri: "bharatcode://auth/callback"
+  selectAccount?: boolean
+}
+
+export type BharatCodeAuthorizeResponse = {
+  url: string
+  expiresAt: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
 }
 
 export type BharatCodeCallbackRequest = {
@@ -3011,11 +3032,6 @@ export type V2Event =
   | GlobalDisposed
 
 export type V2EventStream = string
-
-export type ForbiddenError = {
-  _tag: "ForbiddenError"
-  message: string
-}
 
 export type ProjectCopyError = {
   name: "ProjectCopyError"
@@ -7473,6 +7489,81 @@ export type EventSubscribeResponses = {
 }
 
 export type EventSubscribeResponse = EventSubscribeResponses[keyof EventSubscribeResponses]
+
+export type V2AccountDictationStatusData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/account/dictation"
+}
+
+export type V2AccountDictationStatusErrors = {
+  /**
+   * InvalidRequestError
+   */
+  400: InvalidRequestError
+  /**
+   * ForbiddenError
+   */
+  403: ForbiddenError
+  /**
+   * UpstreamError
+   */
+  502: UpstreamError
+  /**
+   * ServiceUnavailableError
+   */
+  503: ServiceUnavailableError
+}
+
+export type V2AccountDictationStatusError = V2AccountDictationStatusErrors[keyof V2AccountDictationStatusErrors]
+
+export type V2AccountDictationStatusResponses = {
+  /**
+   * BharatCodeDictationStatus
+   */
+  200: BharatCodeDictationStatus
+}
+
+export type V2AccountDictationStatusResponse =
+  V2AccountDictationStatusResponses[keyof V2AccountDictationStatusResponses]
+
+export type V2AccountDictationData = {
+  body?: BharatCodeDictationRequest
+  path?: never
+  query?: never
+  url: "/account/dictation"
+}
+
+export type V2AccountDictationErrors = {
+  /**
+   * InvalidRequestError
+   */
+  400: InvalidRequestError
+  /**
+   * ForbiddenError
+   */
+  403: ForbiddenError
+  /**
+   * UpstreamError
+   */
+  502: UpstreamError
+  /**
+   * ServiceUnavailableError
+   */
+  503: ServiceUnavailableError
+}
+
+export type V2AccountDictationError = V2AccountDictationErrors[keyof V2AccountDictationErrors]
+
+export type V2AccountDictationResponses = {
+  /**
+   * BharatCodeDictationResponse
+   */
+  200: BharatCodeDictationResponse
+}
+
+export type V2AccountDictationResponse = V2AccountDictationResponses[keyof V2AccountDictationResponses]
 
 export type V2AccountStatusData = {
   body?: never
