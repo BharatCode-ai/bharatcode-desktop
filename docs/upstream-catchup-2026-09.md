@@ -8,7 +8,30 @@ We had not synced since the fork point `6b03be5468` (2026-05-23): upstream was
 from upstream and re-apply our work theme by theme, evaluating each one, rather
 than resolving 499 overlapping files at once.
 
-## Where it stands
+## Current checkpoint — September 24
+
+The runtime/UI/SDK ports and candidate/publication paths are implemented locally;
+the retained-feature/ancestry audit and final exact-source package acceptance are
+not yet complete. Desktop-only beta updater selection and retired upstream
+automation are now corrected. The detailed current backlog is under **What is
+left**; the sections below are historical evidence, not concurrent todo lists.
+
+Fresh forced workspace typecheck passes all 19 tasks. Desktop tests pass 148/148,
+and the beta build passes. CLI and Desktop producer runs at `b04af8981e` are green
+but predate subsequent fixes, so they remain intermediate artifacts. No release,
+installation, live profile, or sister-thread operation is authorized by these
+checks. Recent local commits have not been pushed.
+
+Hosted run `35898998270` still has a live Linux HTTP exerciser step after passing
+both unit-test steps and both browser jobs. A local full-gate run likewise reached
+Effect mode and remained alive without a final report, while two separate traced
+Effect runs each passed 216/216 and exited successfully. This is inconsistent evidence,
+not broad test closure or a proven cause. Progress output is now enabled for each
+HTTP scenario; CI has a 15-minute failure bound. Optional reset-phase tracing
+distinguishes web-handler, instance and DB cleanup. Assertions and the existing
+30-second per-scenario bound are unchanged; no timeout is treated as success.
+
+## Verification history
 
 ### Tested-candidate publication path restored locally — September 23
 

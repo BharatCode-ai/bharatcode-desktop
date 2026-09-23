@@ -80,6 +80,7 @@ jobs:
 
       - name: Run HttpApi exerciser gates
         if: runner.os == 'Linux'
+        timeout-minutes: 15
         working-directory: packages/opencode
         run: bun run test:httpapi
 

@@ -193,7 +193,7 @@ function withContext<A, E>(
         return result
       }).pipe(Effect.ensuring(context.llm ? context.llm.reset : Effect.void)),
     ),
-    Effect.ensuring(scenario.reset ? resetState : Effect.void),
+    Effect.ensuring(scenario.reset ? resetState(options, scenario) : Effect.void),
   )
 }
 
@@ -256,12 +256,18 @@ function fakeLlmConfig(url: string): Partial<ConfigV1.Info> {
   }
 }
 
-const resetState = Effect.promise(async () => {
-  const modules = await runtime()
-  Flag.OPENCODE_SERVER_PASSWORD = original.OPENCODE_SERVER_PASSWORD
-  Flag.OPENCODE_SERVER_USERNAME = original.OPENCODE_SERVER_USERNAME
-  await disposeApps()
-  await modules.disposeAllInstances()
-  await modules.resetDatabase()
-  await Bun.sleep(25)
-})
+function resetState(options: Options, scenario: ActiveScenario) {
+  return Effect.gen(function* () {
+    const modules = yield* Effect.promise(() => runtime())
+    Flag.OPENCODE_SERVER_PASSWORD = original.OPENCODE_SERVER_PASSWORD
+    Flag.OPENCODE_SERVER_USERNAME = original.OPENCODE_SERVER_USERNAME
+    yield* trace(options, scenario, "reset web handlers start")
+    yield* Effect.promise(() => disposeApps())
+    yield* trace(options, scenario, "reset instances start")
+    yield* Effect.promise(() => modules.disposeAllInstances())
+    yield* trace(options, scenario, "reset database start")
+    yield* Effect.promise(() => modules.resetDatabase())
+    yield* Effect.promise(() => Bun.sleep(25))
+    yield* trace(options, scenario, "reset done")
+  })
+}
