@@ -48,6 +48,13 @@ protocol registration, real account or publication has been executed. Exact
 native package contents, installed lifecycle, other inherited CI workflows and
 the final completion audit remain open.
 
+The first clean exact-source local build passed compiled CLI version smoke and
+Node server bundling, then exposed Electron-Vite's temporary timestamped config
+module as untracked during config evaluation. The generated
+`electron.vite.config.[0-9]*.mjs` file is now ignored narrowly; the source config
+and all other checkout changes remain subject to the original clean-SHA guard.
+This failure was not a reason to disable source identity validation.
+
 ### MCP authorization browser handoff — September 23, 2026
 
 The upstream project-scoped MCP controls already connect, disconnect and run

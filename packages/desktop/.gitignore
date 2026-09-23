@@ -24,6 +24,9 @@ dist-ssr
 *.sw?
 out/
 
+# electron-vite bundles its config beside the source while loading it.
+electron.vite.config.[0-9]*.mjs
+
 resources/bharatcode-cli*
 resources/icons
 resources/*.metainfo.xml
