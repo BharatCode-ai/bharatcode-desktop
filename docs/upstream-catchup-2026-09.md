@@ -74,6 +74,16 @@ retains the injected pre-click latency to guard against this race: 3/3 repeated
 local runs pass. No production UI/animation change or skipped assertion. Other
 browser flakes, notably cold markdown-worker readiness, remain under investigation.
 
+The Windows trace from that run again shows successful worker/module loading but
+unfinished requests for `@shikijs/stream` and `marked-shiki`, leaving escaped
+fallback text before the sanitizer assertions. Added just those worker-only
+dependencies to Vite's explicit development pre-bundle list through their owning
+workspace packages. A forced-cold dev server passes both layout security cases
+three times (6/6); optimizer metadata confirms both modules are pre-bundled.
+No sanitizer assertion, timeout, production renderer or worker protocol changed.
+This is a targeted dev-server correction awaiting hosted Windows verification,
+not a claim that all browser flakes are closed.
+
 At `c9c5cc0a3a`, hosted Linux unit tasks all passed, as did generated-client drift.
 The following HTTP exerciser failed on eight missing BharatCode route scenarios.
 Added account status/PKCE URL creation, unknown-state rejection, idempotent logout,

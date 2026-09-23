@@ -28,6 +28,11 @@ export default [
         define: {
           "import.meta.env.VITE_OPENCODE_CHANNEL": JSON.stringify(channel),
         },
+        optimizeDeps: {
+          // Worker-only imports are otherwise discovered after the first render,
+          // leaving the cold markdown worker waiting for another optimization pass.
+          include: ["@opencode-ai/session-ui > @shikijs/stream", "@opencode-ai/ui > marked-shiki"],
+        },
         worker: {
           format: "es",
         },
