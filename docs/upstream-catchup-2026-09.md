@@ -29,8 +29,10 @@ the CLI test task was absent. Therefore the prior hosted unit job successes
 must not be interpreted as CLI-suite acceptance. The local task-name correction
 adds `bharatcode#test` with its build dependencies. The direct full CLI run finished
 with 3,880 passes, 8 failures, 48 skips and 1 todo across 283 files (391 seconds).
-All eight failure cases now pass in the focused rerun described below, but a new
-full-suite run is still required. No checks have been waived.
+All eight failure cases now pass in the focused rerun described below. The fresh
+full Linux CLI rerun also passed: 3,889 passed, 48 skipped, 1 todo, zero failures,
+53 snapshots and 11,080 assertions across 283 files in 425.35 seconds. This is
+local Linux evidence, not native Windows or hosted acceptance. No checks waived.
 
 The direct CLI help audit also exposed stale upstream snapshots and an obsolete
 `providers` inventory which silently returned root help. The test now verifies
@@ -67,6 +69,22 @@ The new full HTTP progress run reached `worktree.create` and remained live beyon
 its scenario deadline. A separate traced prefix through that scenario passed
 90/90, and a focused worktree trace passed 5/5. Timing-sensitive worktree lifecycle
 or teardown remains under investigation; these passing probes do not close it.
+
+A separate deterministic lifecycle regression exposed a concrete harness defect:
+SQLite files were removed before the scenario's application scope closed, while
+the reset helper disposed a different global runtime. The harness now releases
+its HTTP-handler reference, closes its own scoped services, then removes the
+isolated database files. It no longer initializes the unrelated runtime to reset
+storage, swallows deletion failures, or uses a fixed 25ms sleep. A child-process
+probe observes the actual application finalizer on success, assertion failure,
+and setup failure; it failed before the correction and passes afterward. The
+existing caller-directory isolation test also passes (2/2, six assertions).
+OpenCode typecheck passes. The full HTTP gate remains under investigation; this
+cleanup-order fix is not proof that the worktree stall is resolved: an instrumented
+full run again stalled after `worktree.create: shared use done`, locating the
+remaining wait after the HTTP response and assertions. A separate prefix through
+the same route passed 90/90. Temporary periodic sampling was removed from source;
+opt-in handler-disposal phase traces remain for the continuing investigation.
 
 The runtime/UI/SDK ports and candidate/publication paths are implemented locally;
 the retained-feature/ancestry audit and final exact-source package acceptance are

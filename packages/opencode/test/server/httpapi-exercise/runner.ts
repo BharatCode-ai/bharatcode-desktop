@@ -3,12 +3,10 @@ import { ConfigV1 } from "@opencode-ai/core/v1/config/config"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { Cause, Duration, Effect, Layer, Scope } from "effect"
 import { TestLLMServer } from "../../lib/llm-server"
-import type { Config } from "../../../src/config/config"
-
-import type { MessageV2 } from "../../../src/session/message-v2"
 import { MessageID, PartID } from "../../../src/session/schema"
 import { call, callAuthProbe, disposeApps } from "./backend"
-import { original } from "./environment"
+import { exerciseDatabasePath, original } from "./environment"
+import { rm } from "node:fs/promises"
 import { runtime } from "./runtime"
 import type { ActiveScenario, Options, ProjectOptions, Result, Scenario, ScenarioContext, SeededContext } from "./types"
 import { ProviderV2 } from "@opencode-ai/core/provider"
@@ -191,8 +189,19 @@ function withContext<A, E>(
         const result = yield* use({ ...base, state })
         yield* trace(options, scenario, `${label} use done`)
         return result
-      }).pipe(Effect.ensuring(context.llm ? context.llm.reset : Effect.void)),
+      }).pipe(
+        Effect.ensuring(context.llm ? context.llm.reset : Effect.void),
+        // The handler shares this scenario's memo map. Release its reference before
+        // closing the scenario scope, so all services stop before deleting storage.
+        Effect.ensuring(
+          trace(options, scenario, "web handler disposal start").pipe(
+            Effect.andThen(Effect.promise(() => disposeApps())),
+            Effect.andThen(trace(options, scenario, "web handler disposal done")),
+          ),
+        ),
+      ),
     ),
+    Effect.scoped,
     Effect.ensuring(scenario.reset ? resetState(options, scenario) : Effect.void),
   )
 }
@@ -258,16 +267,12 @@ function fakeLlmConfig(url: string): Partial<ConfigV1.Info> {
 
 function resetState(options: Options, scenario: ActiveScenario) {
   return Effect.gen(function* () {
-    const modules = yield* Effect.promise(() => runtime())
     Flag.OPENCODE_SERVER_PASSWORD = original.OPENCODE_SERVER_PASSWORD
     Flag.OPENCODE_SERVER_USERNAME = original.OPENCODE_SERVER_USERNAME
-    yield* trace(options, scenario, "reset web handlers start")
-    yield* Effect.promise(() => disposeApps())
-    yield* trace(options, scenario, "reset instances start")
-    yield* Effect.promise(() => modules.disposeAllInstances())
     yield* trace(options, scenario, "reset database start")
-    yield* Effect.promise(() => modules.resetDatabase())
-    yield* Effect.promise(() => Bun.sleep(25))
+    yield* Effect.promise(() =>
+      Promise.all(["", "-wal", "-shm"].map((suffix) => rm(exerciseDatabasePath + suffix, { force: true }))),
+    )
     yield* trace(options, scenario, "reset done")
   })
 }
