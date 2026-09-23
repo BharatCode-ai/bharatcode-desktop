@@ -115,12 +115,13 @@ export namespace Timeline {
     const userParts = getMessageParts(userMessage.id)
     const comments = userParts.flatMap((p) => MessageComment.fromPart(p) ?? [])
     const compaction = userParts.some((p) => p.type === "compaction")
-    const interruptedMessageIndex = assistantMessages.findIndex((m) => m.error?.name === "MessageAbortedError")
+    const visibleAssistants = compaction ? assistantMessages.filter((message) => !message.summary) : assistantMessages
+    const interruptedMessageIndex = visibleAssistants.findIndex((m) => m.error?.name === "MessageAbortedError")
     const interrupted = interruptedMessageIndex !== -1
-    const latestError = assistantMessages.at(-1)?.error
+    const latestError = visibleAssistants.at(-1)?.error
     const error = latestError?.name === "MessageAbortedError" ? undefined : latestError
 
-    const assistantPartRefs = assistantMessages.flatMap((message, messageIndex) =>
+    const assistantPartRefs = visibleAssistants.flatMap((message, messageIndex) =>
       getMessageParts(message.id)
         .filter((part) => renderable(part, showReasoning))
         .map((part) => ({ messageID: message.id, messageIndex, part })),
@@ -191,7 +192,7 @@ export namespace Timeline {
     })
 
     if (isActive && status === "busy" && !error && (showReasoning ? assistantPartRefs.length === 0 : true)) {
-      const heading = assistantMessages
+      const heading = visibleAssistants
         .flatMap((message) => getMessageParts(message.id))
         .map((part) => (part.type === "reasoning" && part.text ? reasoningHeading(part.text) : undefined))
         .find((value): value is string => !!value)

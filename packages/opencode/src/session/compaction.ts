@@ -343,7 +343,10 @@ const layer = Layer.effect(
           const msg = input.messages[i]
           if (msg.info.role === "user" && !msg.parts.some((p) => p.type === "compaction")) {
             replay = { info: msg.info, parts: msg.parts }
-            messages = input.messages.slice(0, i)
+            // An explicit compaction marker follows the overflowing turn. Keep
+            // that turn's completed work in the summary before replaying its
+            // prompt, rather than silently discarding its assistant/tool state.
+            messages = input.messages.slice(0, compactionPart ? idx : i)
             break
           }
         }

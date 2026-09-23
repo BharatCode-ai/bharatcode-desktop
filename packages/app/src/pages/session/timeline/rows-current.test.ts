@@ -1,5 +1,6 @@
 import { describe, expect, mock, test } from "bun:test"
 import type { SessionMessageInfo } from "@opencode-ai/client/promise"
+import type { AssistantMessage, Part, UserMessage } from "@opencode-ai/sdk/v2"
 import { normalizeSessionMessages } from "@/utils/session-message"
 
 mock.module("@opencode-ai/session-ui/message-part", () => ({
@@ -15,6 +16,62 @@ mock.module("@opencode-ai/session-ui/message-part", () => ({
 const { Timeline, TimelineRow } = await import("./rows")
 
 describe("current session timeline rows", () => {
+  test("compaction keeps its divider without exposing the internal summary or hiding continuation text", () => {
+    const user = { id: "msg_compact", role: "user", sessionID: "ses_1", time: { created: 1 } } as UserMessage
+    const summary = {
+      id: "msg_summary",
+      role: "assistant",
+      parentID: user.id,
+      sessionID: "ses_1",
+      summary: true,
+      time: { created: 2, completed: 3 },
+    } as AssistantMessage
+    const continuation = { ...summary, id: "msg_continuation", summary: false }
+    const parts = new Map<string, Part[]>([
+      [user.id, [{ id: "prt_compact", messageID: user.id, sessionID: "ses_1", type: "compaction", auto: true }]],
+      [
+        summary.id,
+        [
+          {
+            id: "prt_summary",
+            messageID: summary.id,
+            sessionID: "ses_1",
+            type: "text",
+            text: "Internal model handoff",
+          },
+        ],
+      ],
+      [
+        continuation.id,
+        [
+          {
+            id: "prt_continuation",
+            messageID: continuation.id,
+            sessionID: "ses_1",
+            type: "text",
+            text: "Visible continuation",
+          },
+        ],
+      ],
+    ])
+    for (const inline of [false, true]) {
+      const rows = Timeline.constructMessageRows(
+        user,
+        (id) => parts.get(id) ?? [],
+        [summary, continuation],
+        0,
+        true,
+        "idle",
+        false,
+        inline,
+      )
+      expect(rows.some((row) => row._tag === "TurnDivider" && row.label === "compaction")).toBe(true)
+      expect(rows.filter((row) => row._tag === "AssistantPart").map(TimelineRow.key)).toEqual([
+        "assistant-part:msg_compact:prt_continuation",
+      ])
+    }
+  })
+
   test("derives turns and tagged rows from chronological current messages", () => {
     const source = [
       { id: "msg_1", type: "user", text: "first", time: { created: 1 } },

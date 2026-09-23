@@ -10,6 +10,46 @@ than resolving 499 overlapping files at once.
 
 ## Where it stands
 
+### Overflow compaction context and timeline — September 23, 2026
+
+Reproduced the accepted `3392af2a3c` regression against the current upstream
+runtime. With an explicit overflow compaction marker, the summary input stopped
+before the latest real user turn, dropping its assistant progress and completed
+tool output before replaying the prompt. The summary now includes history up to
+the compaction marker; non-marker behavior and upstream retained-tail selection
+are unchanged. The regression verifies prior context, the latest request,
+assistant progress and completed tool output in the summary, with only the user
+request replayed afterward (no duplicated tool part).
+
+The corresponding old timeline safeguard was also missing after the rows module
+moved. It now hides internal summary messages on compaction turns while retaining
+the divider and actual continuation text. Existing latest-error semantics on
+ordinary turns remain intact. This is a data-projection correction, not a visual
+redesign; Impeccable hardening guidance was used to preserve incumbent components
+and copy and check both layouts. Mechanical detector: no findings.
+
+Evidence:
+- Compaction RED **55 pass / 1 skip / 1 fail**; GREEN **56 pass / 1 existing skip,
+  174 assertions**. The skip is the upstream disabled-v2-projector case, not a
+  passing migration result.
+- Timeline RED **5 pass / 1 fail**; full App GREEN **745/745, 3,091 assertions**.
+- OpenCode, App and E2E typechecks pass. Real Chromium against the production
+  build: **2/2**, legacy and new layouts, using synthetic V1 responses matching
+  the bundled runtime contract. Screenshots inspected at
+  `/tmp/bc-compaction-{legacy,new}.png`; no internal handoff text is visible.
+- Production session-tab benchmark passed before and after (one V2 trial per
+  scenario, 72 review diffs; also the existing legacy trials). V2 stable times
+  before → after: closed/cold **101.8 → 109.0 ms**, closed/hot **53.1 → 51.2 ms**,
+  open/cold **80.8 → 87.4 ms**, open/hot **56.2 → 69.0 ms**. Zero wrong, blank,
+  unknown, missing or replaced review-host samples. This is bounded functional
+  performance evidence, not a statistical speed claim.
+
+Logs: `/tmp/bc-overflow-context-{red,green,types}.log`,
+`/tmp/bc-overflow-rows-red.log`, `/tmp/bc-overflow-app-{green,types}.log`,
+`/tmp/bc-overflow-e2e-types.log`, `/tmp/bc-overflow-browser.log`,
+`/tmp/bc-overflow-timeline-{before,after}.log`. All data/processes were isolated;
+no installed app, real conversation or provider request was used.
+
 ### Runtime upgrade/uninstall identity — September 23, 2026
 
 Restored the accepted `4c392628bb` distribution-policy behavior against the new
@@ -29,10 +69,11 @@ Correct product identity does not assert a public brew/Scoop/Chocolatey package
 currently exists. Logs: `/tmp/bc-install-identity-red.log`,
 `/tmp/bc-final-retained-guards.log`, `/tmp/bc-final-retained-types.log`.
 
-Next audit items are the accepted overflow-compaction context and deferred
-workspace-snapshot fixes (`3392af2a3c`, `9343b71ea3`). Their original modified
-expressions are absent in the current source; reproduce against the new upstream
-semantics before deciding the correct port. No behavior claim is made yet.
+The overflow-compaction checkpoint above closes `3392af2a3c`. The next audit item
+is deferred workspace snapshots (`9343b71ea3`): current processor creation blocks
+on the initial snapshot before streaming. A correct port must let text arrive
+early while retaining the pre-tool-write snapshot barrier and cancellation
+ownership; no snapshot behavior correction is claimed yet.
 
 ### Retained sharing and DNS safeguards — September 23, 2026
 
