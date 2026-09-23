@@ -48,7 +48,7 @@ const scenarios = [
 test.use({ viewport: { width: 646, height: 1385 } })
 
 for (const scenario of scenarios) {
-  test(`keeps visible timeline content visible through ${scenario.name}`, async ({ page }) => {
+  test(`keeps history rendered and the followed response visible through ${scenario.name}`, async ({ page }) => {
     const requests: { before?: string; phase: "start" | "end" }[] = []
     const pages: { before?: string; limit: number }[] = []
     const roots: { sessionID: string; messageID: string }[] = []
@@ -103,7 +103,7 @@ for (const scenario of scenarios) {
         }
       },
     })
-    await page.addInitScript(() => {
+    await page.addInitScript((lastPartID) => {
       const visibleParts = () => {
         const virtual = document.querySelector<HTMLElement>("[data-timeline-virtual-content]")
         const viewport = virtual?.closest<HTMLElement>(".scroll-view__viewport")
@@ -140,14 +140,27 @@ for (const scenario of scenarios) {
               !!rect && !!view && rect.width > 0 && rect.height > 0 && rect.bottom > view.top && rect.top < view.bottom
             )
           }
-          if (!virtual || state.visibleParts.length === 0 || state.visibleParts.some((partID) => !visible(partID)))
+          const rendered = (partID: string) => {
+            const part = viewport?.querySelector<HTMLElement>(`[data-timeline-part-id="${CSS.escape(partID)}"]`)
+            const rect = part?.getBoundingClientRect()
+            return !!rect && rect.width > 0 && rect.height > 0
+          }
+          // This fixture follows the bottom. Appending the interruption divider
+          // may scroll an older edge row out of view; that is not lost content.
+          // Still reject missing/hidden history or a blank/offscreen active tail.
+          if (
+            !virtual ||
+            state.visibleParts.length === 0 ||
+            state.visibleParts.some((partID) => !rendered(partID)) ||
+            !visible(lastPartID)
+          )
             state.hidden = true
           state.samples++
         }
         if (!state.stop) requestAnimationFrame(() => setTimeout(sample, 0))
       }
       requestAnimationFrame(() => setTimeout(sample, 0))
-    })
+    }, lastPartID)
 
     await page.goto(`/${base64Encode(directory)}/session/${sessionID}`)
     await transport.waitForConnection()
@@ -207,10 +220,25 @@ for (const scenario of scenarios) {
       await page.evaluate(() => {
         const state = (window as Window & { __historyRootProbe?: { hidden: boolean; stop: boolean } })
           .__historyRootProbe!
-        state.stop = true
         return state.hidden
       }),
     ).toBe(false)
+
+    // Calibrate the oracle: losing an earlier response must still fail even
+    // when the followed response itself remains visible.
+    const beforeHidden = await probeSamples(page)
+    await page.evaluate(() => {
+      const state = (window as Window & { __historyRootProbe?: { visibleParts: string[] } }).__historyRootProbe!
+      const part = document.querySelector<HTMLElement>(
+        `[data-timeline-part-id="${CSS.escape(state.visibleParts[0]!)}"]`,
+      )!
+      part.style.display = "none"
+    })
+    await waitForProbeSamples(page, beforeHidden)
+    expect(await visibleContentHidden(page)).toBe(true)
+    await page.evaluate(() => {
+      ;(window as Window & { __historyRootProbe?: { stop: boolean } }).__historyRootProbe!.stop = true
+    })
   })
 }
 

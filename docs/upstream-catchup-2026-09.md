@@ -47,18 +47,37 @@ creates a private exclusive file and keeps mandatory signing/notarization. Synth
 PEM/base64, invalid-input and no-overwrite checks plus packaging/cohort checks pass
 11/11 on Bun 1.3.14; Desktop typecheck passes. Hosted signing proof remains pending.
 
-Windows still fails during helper startup in both SDK generation and compiled CLI
-smoke. Bun's uncaught-error output omits the fixed `cause`, so that log cannot yet
-distinguish timeout from rejection. Added a pre-unit native lifecycle smoke that
-uses a fresh synthetic directory and emits only operation/timing/fixed outcome,
-never paths, helper stderr or credential content. Local native baseline Bun 1.3.14
-passes prepare/missing/publish/read/logout; no timeout or ACL policy was changed.
+The pre-unit lifecycle smoke in run 35886441073 identifies the Windows startup
+failure as `CREDENTIAL_HELPER_TIMEOUT` at 15,030 ms. A separate single-job diagnostic
+(35887405776, source `586b79c28f`) completes the first preparation in 54,379 ms;
+all later read/publication operations complete in 283–794 ms. Preparation alone
+now permits a bounded 60-second cold PowerShell/.NET start. Reads, publication and
+marker quarantine keep their 15-second bound; ACL/identity validation is unchanged.
+The native injected 16-second preparation fails before the correction and passes
+after it. The local Windows baseline Bun 1.3.14 store suite reports 17 pass, 1 skip,
+0 fail, 68 assertions, including broad ACL/link/substitution rejection and forced
+timeout failure. The skipped compiled shared-Auth test is not claimed as new proof.
+Core/OpenCode and browser-test typechecks pass. The temporary diagnostic workflow
+and instrumentation were removed after capturing the result; the normal isolated
+native lifecycle gate remains. Hosted SDK/compiled CLI proof still needs rerun.
 
-The browser interruption regression reproduces locally. Temporary geometry probes
-show an earlier visible response moving above the viewport as the interruption
-content appears, not a vanished/empty timeline. Probes were removed; the original
-assertion remains unchanged and failing. Browser repair and PR integration remain
-incomplete; no installed app, profile, credential or protocol handler was touched.
+The browser interruption assertion was over-constrained: temporary geometry probes
+show an earlier edge response moving above the viewport during legitimate bottom
+following when interruption content appears, not a vanished/empty timeline. The
+corrected oracle requires all originally rendered history to retain nonzero layout
+and the followed tail to remain in view. Both terminal-order scenarios pass, and
+each deliberately hides an earlier response afterward to prove the oracle detects
+actual content loss. No production scrolling/rendering behavior changed.
+
+A production-renderer benchmark also passes (80 history turns, 40 deltas, 1x CPU;
+no row/markdown replacement, zero sampled blanks or bottom drift). A trial of the
+entire browser suite against preview exposed fixture assumptions about a separate
+dev API origin and dev-only Desktop entrypoints; that configuration experiment was
+reverted rather than bypassing those fixtures. The Windows dev-server markdown
+readiness failure remains open: its trace has pending worker dependency requests
+and escaped fallback text before any sanitizer assertion. Ten local repeated
+markdown cases pass, not proof of hosted readiness. Browser and PR integration
+remain incomplete; no installed app/profile/credential/protocol action occurred.
 
 ### First hosted CI pass — September 23, 2026
 

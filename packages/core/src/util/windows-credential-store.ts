@@ -26,7 +26,10 @@ export function windowsCredentialStore(file: string, options: { spawn?: typeof s
         }),
         encoding: "utf8",
         windowsHide: true,
-        timeout: 15_000,
+        // First-use Windows PowerShell/.NET initialization took 54s on a clean
+        // hosted Windows 2022 image. Only preparation gets the cold-start budget;
+        // credential reads/publication and marker quarantine retain their bound.
+        timeout: operation === "prepare" ? 60_000 : 15_000,
         maxBuffer: 12 * 1024 * 1024,
         env: { SystemRoot: root, WINDIR: root, TEMP: process.env.TEMP, TMP: process.env.TMP },
       },

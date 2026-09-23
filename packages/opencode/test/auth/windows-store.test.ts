@@ -29,6 +29,30 @@ test.skipIf(process.platform !== "win32")(
 )
 
 const native = test.skipIf(process.platform !== "win32")
+
+native(
+  "cold native preparation tolerates startup beyond fifteen seconds without weakening private storage",
+  async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "bc-native-cold-helper-"))
+    const file = path.join(root, "private", "auth.json")
+    try {
+      const store = injected(
+        file,
+        "  Add-Type -TypeDefinition",
+        "  Start-Sleep -Seconds 16\n  Add-Type -TypeDefinition",
+      )
+      store.prepareParent()
+      const ready = windowsCredentialStore(file)
+      expect(ready.read()).toBeUndefined()
+      ready.publish('{"fixture":"cold-start"}')
+      expect(ready.read()).toBe('{"fixture":"cold-start"}')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  },
+  75_000,
+)
+
 function injected(file: string, before: string, after: string) {
   return windowsCredentialStore(file, {
     spawn: ((exe: string, args: string[], options: Parameters<typeof spawnSync>[2]) => {
