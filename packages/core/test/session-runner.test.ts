@@ -110,6 +110,7 @@ const recoveryModel = Model.make({
 })
 const authorizations: Tool.Context[] = []
 const executions: string[] = []
+let defectExecutions = 0
 const permission = Layer.succeed(
   PermissionV2.Service,
   PermissionV2.Service.of({
@@ -146,7 +147,7 @@ const echo = Layer.effectDiscard(
         description: "Fail unexpectedly",
         input: Schema.Struct({}),
         output: Schema.Struct({}),
-        execute: () => Effect.die("unexpected tool defect"),
+        execute: () => Effect.sync(() => defectExecutions++).pipe(Effect.andThen(Effect.die("unexpected tool defect"))),
       }),
     }),
   ),
@@ -1524,6 +1525,32 @@ describe("SessionRunnerLLM", () => {
         },
         { type: "assistant", finish: "stop", content: [{ type: "text", id: "text-final", text: "Done" }] },
       ])
+    }),
+  )
+
+  it.effect("durably blocks a fourth identical failed tool call and stops automatic continuation", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const session = yield* SessionV2.Service
+      yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "Try the failing tool" }), resume: false })
+      defectExecutions = 0
+      requests.length = 0
+      streamGate = undefined
+      streamStarted = undefined
+      responses = Array.from({ length: 4 }, (_, index) => [
+        LLMEvent.stepStart({ index: 0 }),
+        LLMEvent.toolCall({ id: `failed-${index}`, name: "defect", input: {} }),
+        LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
+        LLMEvent.finish({ reason: "tool-calls" }),
+      ])
+      responses.push([LLMEvent.finish({ reason: "stop" })])
+      yield* session.resume(sessionID)
+      expect(requests).toHaveLength(4)
+      expect(defectExecutions).toBe(3)
+      const history = yield* session.context(sessionID)
+      const last = history.filter((message) => message.type === "assistant").at(-1)
+      expect(last).toMatchObject({ content: [{ type: "tool", name: "defect", state: { status: "error" } }] })
+      expect(JSON.stringify(last)).toContain("has already failed 3 times")
     }),
   )
 

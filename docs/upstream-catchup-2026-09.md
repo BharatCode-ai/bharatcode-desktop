@@ -10,6 +10,33 @@ than resolving 499 overlapping files at once.
 
 ## Where it stands
 
+### Repeated tool-failure protection — September 23, 2026
+
+Reconciled the retained fork's `ToolLoopGuard` against both the compatibility
+processor and the new core runner. A shared, schema-independent helper compares
+canonical input fingerprints (object key order does not matter; array order does).
+Three identical failed calls in the last 80 messages block the next identical
+local call before its side effects and stop automatic continuation. Different
+tools/inputs and successful calls are not counted. Unencodable inputs are not
+collapsed to a common identity. Diagnostic metadata contains hashes, not raw
+arguments or error payloads.
+
+The compatibility processor now persists and settles blocked calls, including
+built-ins, MCP tools and resource helpers. Its existing doom-loop permission
+check also uses canonical hashes instead of raw input metadata. The core runner
+records the blocked tool result through its normal event publisher and stops the
+continuation without delegating to the old engine. Provider-executed tools are
+not intercepted after the provider has already executed them.
+
+RED: the core fixture made five model turns rather than stopping at four, and
+the legacy resolver attempted tool side effects instead of blocking. GREEN:
+core runner/registry/event/helper suites **113/113, 323 assertions**; compatibility
+processor/tools/compaction/Goal-assessment suites **81 pass, 1 existing skip,
+262 assertions**. The actual core fixture asserts exactly three executions and
+a persisted fourth-call error; the compatibility HTTP fixture asserts a persisted
+block and `stop`. Core, OpenCode and Desktop typechecks pass. Logs are under
+`/tmp/bc-tool-loop-*.log`. Installed-package acceptance is still pending.
+
 ### Public catalog / authenticated execution boundary — September 23, 2026
 
 Compared the Desktop adapter with the platform repository's cached `origin/main`
@@ -69,12 +96,13 @@ build and Desktop typecheck pass. The Bun Desktop suite is **not fully green**:
 the corresponding real Node draft persistence smoke passes. These are compiled
 runtime checks, not installed Electron or cross-platform acceptance.
 
-Remaining, in dependency order:
+Remaining, updated after the September 23 checkpoints:
 
-1. Conversation error/recovery UI and Goal ribbon on the new timeline/composer,
-   with production benchmark comparison; audit other retained user features.
-2. BharatCode-only WSL runtime provisioning/security, capabilities, dictation,
-   and final branding/assets. Do not reinstate the legacy startup recovery gate.
+1. Finish the retained capabilities/marketplace, dictation and branding/assets
+   audit and integration. Error/recovery UI, Goal ribbon and repeated-tool-failure
+   protection are locally implemented and tested as detailed in the checkpoints.
+2. Complete native package verification of the implemented WSL provisioning and
+   runtime/account isolation. Do not reinstate the legacy startup recovery gate.
 3. Regenerate affected SDKs and reconcile release workflows with exact-source
    artifacts, no implicit publication, and the current platform signing policy.
 4. Broad affected suites, production UI/browser checks and native package

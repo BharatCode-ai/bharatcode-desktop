@@ -25,6 +25,7 @@ import { isRecord } from "@/util/record"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { Database } from "@opencode-ai/core/database/database"
 import { Usage, type LLMEvent } from "@opencode-ai/llm"
+import * as ToolLoopGuard from "@opencode-ai/core/session/tool-loop-guard"
 
 const DOOM_LOOP_THRESHOLD = 3
 export type Result = "compact" | "stop" | "continue"
@@ -45,6 +46,10 @@ export interface Handle {
     },
   ) => Effect.Effect<void>
   readonly process: (streamInput: LLM.StreamInput) => Effect.Effect<Result>
+  readonly blockToolCall: (
+    toolCallID: string,
+    failure: { error: string; metadata: Record<string, unknown> },
+  ) => Effect.Effect<void>
 }
 
 type Input = {
@@ -204,6 +209,32 @@ const layer = Layer.effect(
         return true
       })
 
+      const blockToolCall: Handle["blockToolCall"] = Effect.fn("SessionProcessor.blockToolCall")(
+        function* (toolCallID, failure) {
+          const match = yield* readToolCall(toolCallID)
+          // Stop continuation even if an interrupted call has already settled.
+          ctx.blocked = true
+          if (!match || !["running", "pending"].includes(match.part.state.status)) return
+          yield* session.updatePart({
+            ...match.part,
+            state: {
+              status: "error",
+              input: match.part.state.input,
+              error: failure.error,
+              metadata: {
+                ...(match.part.state.status === "running" ? match.part.state.metadata : {}),
+                ...failure.metadata,
+              },
+              time: {
+                start: match.part.state.status === "running" ? match.part.state.time.start : Date.now(),
+                end: Date.now(),
+              },
+            },
+          })
+          yield* settleToolCall(toolCallID)
+        },
+      )
+
       const finishReasoning = Effect.fn("SessionProcessor.finishReasoning")(function* (reasoningID: string) {
         if (!(reasoningID in ctx.reasoningMap)) return
         // oxlint-disable-next-line no-self-assign -- reactivity trigger
@@ -354,15 +385,17 @@ const layer = Layer.effect(
               Effect.provideService(Database.Service, database),
             )
             const recentParts = parts.slice(-DOOM_LOOP_THRESHOLD)
+            const inputFingerprint = ToolLoopGuard.inputFingerprint(input)
 
             if (
               recentParts.length !== DOOM_LOOP_THRESHOLD ||
+              !inputFingerprint ||
               !recentParts.every(
                 (part) =>
                   part.type === "tool" &&
                   part.tool === value.name &&
                   part.state.status !== "pending" &&
-                  JSON.stringify(part.state.input) === JSON.stringify(input),
+                  ToolLoopGuard.inputFingerprint(part.state.input) === inputFingerprint,
               )
             ) {
               return
@@ -373,7 +406,7 @@ const layer = Layer.effect(
               permission: "doom_loop",
               patterns: [value.name],
               sessionID: ctx.assistantMessage.sessionID,
-              metadata: { tool: value.name, input },
+              metadata: { tool: value.name, inputFingerprint },
               always: [value.name],
               ruleset: agent.permission,
             })
@@ -702,6 +735,7 @@ const layer = Layer.effect(
         },
         updateToolCall,
         completeToolCall,
+        blockToolCall,
         process,
       } satisfies Handle
     })

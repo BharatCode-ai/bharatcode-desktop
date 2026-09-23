@@ -94,6 +94,73 @@ const layer = Layer.mergeAll(
 
 const it = testEffect(layer)
 
+it.effect("blocks repeated failed built-in execution before plugins or tool side effects", () =>
+  Effect.gen(function* () {
+    const message: SessionV1.Assistant = {
+      id: messageID,
+      sessionID,
+      role: "assistant",
+      parentID: MessageID.ascending(),
+      agent: "build",
+      mode: "build",
+      path: { cwd: "/tmp", root: "/tmp" },
+      cost: 0,
+      tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+      modelID: ModelV2.ID.make("test"),
+      providerID: ProviderV2.ID.make("test"),
+      time: { created: 1 },
+    }
+    const blocked: unknown[] = []
+    const tools = yield* SessionTools.resolve({
+      agent,
+      model,
+      session: { id: sessionID, permission: [] } as unknown as Session.Info,
+      processor: {
+        message,
+        updateToolCall: () => Effect.die("tool must not execute metadata updates"),
+        completeToolCall: () => Effect.die("tool must not complete"),
+        blockToolCall: (id, failure) =>
+          Effect.sync(() => {
+            blocked.push({ id, ...failure })
+          }),
+      },
+      bypassAgentCheck: false,
+      promptOps: {} as never,
+      messages: Array.from({ length: 3 }, () => ({
+        info: message,
+        parts: [
+          {
+            id: PartID.ascending(),
+            messageID,
+            sessionID,
+            type: "tool" as const,
+            tool: "timing",
+            callID,
+            state: { status: "error" as const, input: {}, error: "seeded-secret", time: { start: 0, end: 1 } },
+          },
+        ],
+      })),
+    })
+    const execute = tools.timing.execute!
+    const failure = yield* Effect.tryPromise(() =>
+      Promise.resolve(
+        execute(
+          {},
+          {
+            toolCallId: callID,
+            abortSignal: new AbortController().signal,
+            messages: [],
+          },
+        ),
+      ),
+    ).pipe(Effect.result)
+    expect(failure._tag).toBe("Failure")
+    expect(blocked).toHaveLength(1)
+    expect(blocked[0]).toMatchObject({ id: callID, metadata: { toolLoopGuard: { repeatCount: 3 } } })
+    expect(JSON.stringify(blocked)).not.toContain("seeded-secret")
+  }),
+)
+
 it.effect("preserves running tool start time across metadata updates", () =>
   Effect.gen(function* () {
     const state: SessionV1.ToolPart = {
@@ -133,7 +200,8 @@ it.effect("preserves running tool start time across metadata updates", () =>
           return state
         }),
       completeToolCall: () => Effect.void,
-    } satisfies Pick<SessionProcessor.Handle, "message" | "updateToolCall" | "completeToolCall">
+      blockToolCall: () => Effect.die("normal call must not be blocked"),
+    } satisfies Pick<SessionProcessor.Handle, "message" | "updateToolCall" | "completeToolCall" | "blockToolCall">
 
     const tools = yield* SessionTools.resolve({
       agent,

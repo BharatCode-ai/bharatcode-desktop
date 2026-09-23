@@ -870,6 +870,57 @@ it.live("session.processor effect tests complete AI SDK tool calls when native f
   ),
 )
 
+it.live("session.processor persists a loop block and stops rather than continuing after tool settlement", () =>
+  provideTmpdirServer(
+    ({ dir, llm }) =>
+      Effect.gen(function* () {
+        const { processors, session, provider } = yield* boot()
+        yield* llm.tool("lookup", { query: "weather" })
+        const chat = yield* session.create({})
+        const parent = yield* user(chat.id, "tool")
+        const msg = yield* assistant(chat.id, parent.id, path.resolve(dir))
+        const mdl = yield* provider.getModel(ref.providerID, ref.modelID)
+        const handle = yield* processors.create({ assistantMessage: msg, sessionID: chat.id, model: mdl })
+        const value = yield* handle.process({
+          user: parent,
+          sessionID: chat.id,
+          model: mdl,
+          agent: agent(),
+          system: [],
+          messages: [{ role: "user", content: "tool" }],
+          tools: {
+            lookup: tool({
+              description: "Look up information",
+              inputSchema: z.object({ query: z.string() }),
+              execute: async (
+                _input,
+                options,
+              ): Promise<{ title: string; output: string; metadata: Record<string, unknown> }> => {
+                await Effect.runPromise(
+                  handle.blockToolCall(options.toolCallId, {
+                    error: "Stopped automatic tool execution.",
+                    metadata: { toolLoopGuard: { repeatCount: 3 } },
+                  }),
+                )
+                throw new Error("Stopped automatic tool execution.")
+              },
+            }),
+          },
+        })
+        const parts = yield* MessageV2.parts(msg.id)
+        const call = parts.find((part): part is SessionV1.ToolPart => part.type === "tool")
+        expect(value).toBe("stop")
+        expect(yield* llm.calls).toBe(1)
+        expect(call?.state).toMatchObject({
+          status: "error",
+          error: "Stopped automatic tool execution.",
+          metadata: { toolLoopGuard: { repeatCount: 3 } },
+        })
+      }),
+    { config: (url) => providerCfg(url) },
+  ),
+)
+
 it.live("session.processor effect tests mark pending tools as aborted on cleanup", () =>
   provideTmpdirServer(
     ({ dir, llm }) =>

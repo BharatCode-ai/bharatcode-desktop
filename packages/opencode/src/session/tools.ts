@@ -24,6 +24,7 @@ import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { isRecord } from "@/util/record"
 import { RuntimeFlags } from "@/effect/runtime-flags"
+import * as ToolLoopGuard from "@opencode-ai/core/session/tool-loop-guard"
 
 const MCP_RESOURCE_TOOLS = {
   list: "list_mcp_resources",
@@ -43,7 +44,7 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
   agent: Agent.Info
   model: Provider.Model
   session: Session.Info
-  processor: Pick<SessionProcessor.Handle, "message" | "updateToolCall" | "completeToolCall">
+  processor: Pick<SessionProcessor.Handle, "message" | "updateToolCall" | "completeToolCall" | "blockToolCall">
   bypassAgentCheck: boolean
   messages: SessionV1.WithParts[]
   promptOps: TaskPromptOps
@@ -56,6 +57,26 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
   const mcp = yield* MCP.Service
   const truncate = yield* Truncate.Service
   const flags = yield* RuntimeFlags.Service
+  const recentFailures = input.messages
+    .slice(-80)
+    .flatMap((message) =>
+      message.parts.flatMap((part) =>
+        part.type === "tool" && part.state.status === "error"
+          ? [{ tool: part.tool, input: part.state.input, error: part.state.error }]
+          : [],
+      ),
+    )
+  const guardToolCall = Effect.fn("SessionTools.guardToolCall")(function* (
+    name: string,
+    args: unknown,
+    callID: string,
+  ) {
+    const repeated = ToolLoopGuard.repeatedFailure(recentFailures, name, args)
+    if (!repeated) return
+    const error = ToolLoopGuard.message(repeated)
+    yield* input.processor.blockToolCall(callID, { error, metadata: ToolLoopGuard.metadata(repeated) })
+    return yield* Effect.fail(new Error(error))
+  })
 
   const context = (args: Record<string, unknown>, options: ToolExecutionOptions): Tool.Context => ({
     sessionID: input.session.id,
@@ -114,6 +135,7 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
         return run.promise(
           Effect.gen(function* () {
             const ctx = context(args, options)
+            yield* guardToolCall(item.id, args, options.toolCallId)
             yield* plugin.trigger(
               "tool.execute.before",
               { tool: item.id, sessionID: ctx.sessionID, callID: ctx.callID },
@@ -166,6 +188,7 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
       execute(args, opts) {
         return run.promise(
           Effect.gen(function* () {
+            yield* guardToolCall(MCP_RESOURCE_TOOLS.list, args, opts.toolCallId)
             const parsed = parseListMcpResourcesArgs(args)
             const ctx = context(toRecord(args), opts)
             const clients = yield* mcp.clients()
@@ -250,6 +273,7 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
         return run.promise(
           Effect.gen(function* () {
             const parsed = parseListMcpResourcesArgs(args)
+            yield* guardToolCall(MCP_RESOURCE_TOOLS.listTemplates, args, opts.toolCallId)
             const ctx = context(toRecord(args), opts)
             const clients = yield* mcp.clients()
             const resourceServers = Object.entries(clients)
@@ -336,6 +360,7 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
       execute(args, opts) {
         return run.promise(
           Effect.gen(function* () {
+            yield* guardToolCall(MCP_RESOURCE_TOOLS.read, args, opts.toolCallId)
             const parsed = parseReadMcpResourceArgs(args)
             const ctx = context(toRecord(args), opts)
             const clients = yield* mcp.clients()
@@ -410,6 +435,7 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
       run.promise(
         Effect.gen(function* () {
           const ctx = context(args, opts)
+          yield* guardToolCall(key, args, opts.toolCallId)
           yield* plugin.trigger(
             "tool.execute.before",
             { tool: key, sessionID: ctx.sessionID, callID: opts.toolCallId },
