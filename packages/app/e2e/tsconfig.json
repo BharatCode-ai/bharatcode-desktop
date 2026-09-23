@@ -26,6 +26,8 @@
     "../src/pages/session/timeline/observe-element-offset.ts",
     "./regression/new-session-panel-corner.spec.ts",
     "./regression/session-timeline-context-resize.spec.ts",
+    "./regression/session-timeline-history-root.spec.ts",
+    "./regression/session-todo-dock-navigation.spec.ts",
     "./utils/**/*.ts"
   ]
 }

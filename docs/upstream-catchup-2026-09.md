@@ -1405,6 +1405,33 @@ closes all five without real credentials or a production relaxation.
    reasoning fix from #57.
 9. **Goal Mode backend** — schema, migration, state machine, tools, command.
 
+### September 23: compiler isolation, browser coverage and cross-compilation
+
+The completed Windows diagnostic run `35891307429` compared the unchanged
+helper with its minimal environment, additional known OS/synthetic-profile
+variables, System32 working directory, and both changes. Preparation took
+29.0 / 21.8 / 21.4 / 21.8 seconds; `Add-Type` accounted for almost all of it.
+Neither environment nor working directory explains the hosted delay. The next
+bounded comparison uses `windows-2025` after the same normal dependency setup.
+Its diagnostic-only 90-second bound is not a production timeout change. No
+Defender, certificate-revocation or compiler-subphase root cause is established.
+
+The E2E typecheck previously excluded the history-root and todo-dock regression
+files. Both are now explicitly included. This exposed an overridden duplicate
+fixture property and a Playwright option in the wrong scope; both are corrected.
+Expanded E2E typecheck passes, and all three focused browser cases pass. This is
+local verification, not a claim that the next hosted Windows browser run passed.
+
+The unfiltered `bun run script/build.ts` completed all 12 CLI targets locally
+from the `6b0fa77406` runtime source, including embedded web assets. Linux native
+and baseline version smoke checks passed. ELF, Mach-O and PE outputs and their
+platform manifests were inspected; non-native targets were not all executed.
+Only test/diagnostic configuration edits occurred during that build, so these
+are intermediate cross-compilation evidence, not a frozen release cohort.
+One Linux job can compile the CLI target set. Electron installers, native module
+packaging and macOS signing/notarization remain separate platform responsibilities.
+The candidate workflow uploads artifacts only and has no publication authority.
+
 ## What is left
 
 This is the current checklist; earlier checkpoint paragraphs describe evidence
