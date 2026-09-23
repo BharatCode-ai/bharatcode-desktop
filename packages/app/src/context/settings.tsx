@@ -180,7 +180,7 @@ export function terminalFontFamily(font: string | undefined) {
   return stack(font, terminalBase)
 }
 
-const defaultSettings: Settings = {
+export const defaultSettings: Settings = {
   general: {
     autoSave: true,
     releaseNotes: true,
@@ -190,7 +190,7 @@ const defaultSettings: Settings = {
     showSearch: false,
     showStatus: false,
     showTerminal: false,
-    showReasoningSummaries: false,
+    showReasoningSummaries: true,
     shellToolPartsExpanded: false,
     editToolPartsExpanded: false,
     showCustomAgents: false,

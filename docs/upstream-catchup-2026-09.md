@@ -10,6 +10,39 @@ than resolving 499 overlapping files at once.
 
 ## Where it stands
 
+### Retained thinking preference and current CI — September 23
+
+The final `dev` comparison found that `3d8360d792` had been only partly retained:
+DeepSeek `reasoning_content` replay and its provider regression were present, but
+the renderer's thinking-summary default was still false. Restored the accepted
+true default, without migrating or overriding an explicit saved false value.
+Two new settings regressions fail before the change; fresh/missing preferences
+and both explicit saved choices pass afterward using the actual persistence
+normalizer. Settings/persistence: 32/32, 71 assertions; full App unit: 748/748,
+3,095 assertions; App typecheck passes. This is preference/persistence evidence,
+not a new live model or installed UI acceptance claim.
+
+Hosted `b04af8981efb43a7e0b3cd26f445a4c8b018d6c0` CLI candidate run
+`35896723529` passes all-platform assembly on its single Linux runner. Normal
+Windows credentials in run `35896663975` now pass with production bounds:
+prepare 488 ms, missing 322 ms, publish 364 ms, read 335 ms, logout 365 ms.
+Linux unit/generated-client/HTTP gates pass. Windows Desktop tests pass
+140 with one skipped Linux-only runtime fixture, but the overall Windows unit
+job fails in Core: six capability tests and five ripgrep/search tests hit their
+five-second test bounds. The latter terminate `Expand-Archive` during first-use
+download/extraction. These are not waived. A separate native bundled capability
+diagnostic with a 30-second observation bound still has six actual unavailable
+failures (six pass, one skip), so merely widening the suite timeout is not a fix.
+Its synthetic fixture ownership/ACLs and operation boundaries require diagnosis.
+No runtime protection or test assertion has been relaxed.
+
+Linux browser CI also fails the transport-heartbeat timeline regression: the
+existing row's text changes from `steadyBuild ...` to `steady\nBuild ...` between
+observations. Trace review is needed to distinguish late rendering from a
+transport mutation; do not normalize away the discrepancy without evidence.
+Windows browser and Desktop package producers are still running at this checkpoint.
+The current local preference correction is newer than those hosted artifacts.
+
 ### Windows module-discovery correction and CLI candidate — September 23
 
 Run `35895366628` isolates the supported narrow correction. On the same hosted

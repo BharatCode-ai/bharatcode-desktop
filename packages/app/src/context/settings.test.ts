@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test"
+import { PersistTesting } from "../utils/persist"
 import {
+  defaultSettings,
   hasExistingWebState,
   initialAgentVisibility,
   isAppUpgrade,
@@ -11,6 +13,24 @@ import {
   shouldDisplayTabsToast,
   shouldEnableNewLayout,
 } from "./settings"
+
+describe("reasoning visibility", () => {
+  test("shows thinking by default for a fresh profile", () => {
+    expect(defaultSettings.general.showReasoningSummaries).toBe(true)
+  })
+
+  test("fills a missing preference without changing other saved settings", () => {
+    const value = PersistTesting.normalize(defaultSettings, JSON.stringify({ general: { autoSave: false } }))
+    expect(JSON.parse(value!).general).toMatchObject({ autoSave: false, showReasoningSummaries: true })
+  })
+
+  test("preserves an explicit choice to hide or show thinking", () => {
+    for (const showReasoningSummaries of [false, true]) {
+      const value = PersistTesting.normalize(defaultSettings, JSON.stringify({ general: { showReasoningSummaries } }))
+      expect(JSON.parse(value!).general.showReasoningSummaries).toBe(showReasoningSummaries)
+    }
+  })
+})
 
 describe("agent visibility", () => {
   test("shows the picker for existing profiles and hides it for first-time installs", () => {
