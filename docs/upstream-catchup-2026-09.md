@@ -37,6 +37,32 @@ Local native synthetic preparation/read/publication/logout passes with all phase
 markers, but does not reproduce the hosted delay. The diagnostic must be removed
 once that boundary is identified. No app/profile/protocol action is involved.
 
+The timed diagnostic (35889966089, `52455b6a46`) passes all ten operations under
+both Bun and Node, but consistently spends 21.1–21.4 seconds inside `Add-Type`
+(the initial prepare takes 26.8 seconds). After compilation, stdin parsing and the
+held-file operation take only 25–61 ms together. Thus this is not a Bun-only pipe
+timeout or slow credential ACL operation. The next bounded diagnostic compares
+the current sanitized environment/checkout working directory with explicit OS
+executable locations plus synthetic profile variables, and with System32 as cwd.
+It neither inherits arbitrary variables nor changes production timeouts, security
+policy, machine settings or credentials. It tests compilation in four fresh
+synthetic preparations only; no account or installer operation is involved.
+
+The `670949a9c7` Windows and Linux producers both pass; both Mac producers fail
+the confirmed old-builder keychain bug, so aggregation correctly remains skipped.
+Read-only Windows installer extraction independently verifies all three receipt
+file digests, version 1.15.35, embedded main-process source SHA, and same-source WSL
+manifest/bytes/hash. Installer SHA-256 is
+`999d74a6e002db8e049b4b11f9fc555a962c0e4cbb5646271e0cf549b93acd08`;
+app.asar `ee91ff6e07fd4f39419a8260013c010bebd88d694b17562a7ef2e0f0591a4b90`;
+native CLI `b6071410203c5a1e6333f13b737cc5f0d1cda79312fa6171d9146398d24b8ba4`;
+WSL runtime `c31bb77503debf55c1cb836a7277c4bc5b50c8804bb21744aae1757ba9ebae5f`.
+That extracted native CLI reports 1.15.35 on Windows with an explicit isolated
+HOME/AppData/XDG environment and no inherited credentials. The temporary execution
+root is removed afterward. This does not install/launch Electron, register a
+protocol handler, or establish upgrade/authenticated UI acceptance. The artifacts
+are intermediate exact-source evidence, not the current updated-builder cohort.
+
 The same Linux browser run passes both corrected history-terminal cases but fails
 the upstream todo-dock navigation test. Its 700 ms sampler starts before Playwright
 performs the tab click; on a slow host it records no mounted frames at all. Adding
