@@ -1416,6 +1416,16 @@ bounded comparison uses `windows-2025` after the same normal dependency setup.
 Its diagnostic-only 90-second bound is not a production timeout change. No
 Defender, certificate-revocation or compiler-subphase root cause is established.
 
+That comparison subsequently completed as run `35893135420`: cold preparation
+took 79.5 seconds (`Add-Type` 77.0 seconds), and missing/read/publish/logout took
+17.6–17.7 seconds each (compilation 17.4–17.5 seconds). All five operations passed
+only under the diagnostic 90-second limit. Both production preparation and read
+bounds would fail on this image. Thus moving the unit runner to Windows 2025 is
+not a fix. The normal Windows 2022 job in test run `35893178542` independently
+repeated prepare=29.1 seconds and missing-read timeout=15.0 seconds. Linux unit,
+generated-client and HTTP exerciser checks in that run passed. Native compiler
+startup remains unresolved; no security or production timeout change is made.
+
 The E2E typecheck previously excluded the history-root and todo-dock regression
 files. Both are now explicitly included. This exposed an overridden duplicate
 fixture property and a Playwright option in the wrong scope; both are corrected.
