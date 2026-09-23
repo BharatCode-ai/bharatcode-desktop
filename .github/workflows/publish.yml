@@ -157,14 +157,25 @@ jobs:
         if: runner.os == 'macOS'
         working-directory: packages/desktop
         env:
-          CSC_LINK: ${{ secrets.APPLE_CERTIFICATE }}
-          CSC_KEY_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_PATH }}
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_KEY_CONTENT: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_KEY: ${{ runner.temp }}/apple-api-key.p8
-          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
         run: |
-          bun -e 'const fs=require("node:fs"); if(!process.env.APPLE_KEY_CONTENT) throw Error("Missing notarization key"); fs.writeFileSync(process.env.APPLE_API_KEY,process.env.APPLE_KEY_CONTENT,{mode:0o600,flag:"wx"})'
+          for key in CSC_LINK CSC_KEY_PASSWORD APPLE_KEY_CONTENT APPLE_API_KEY_ID APPLE_API_ISSUER; do
+            if [[ -z "${!key:-}" ]]; then echo "Missing macOS signing or notarization credential"; exit 1; fi
+          done
+          node -e '
+            const fs = require("node:fs")
+            const raw = process.env.APPLE_KEY_CONTENT.trim()
+            const decoded = Buffer.from(raw, "base64")
+            const value = decoded.includes(Buffer.from("BEGIN PRIVATE KEY")) ? decoded : Buffer.from(raw)
+            try { require("node:crypto").createPrivateKey(value) }
+            catch { throw Error("Invalid notarization key") }
+            fs.writeFileSync(process.env.APPLE_API_KEY, value.toString().trimEnd() + "\n", { mode: 0o600, flag: "wx" })
+          '
           unset APPLE_KEY_CONTENT
           bun x electron-builder --config electron-builder.config.ts --mac zip --${{ matrix.arch }} --publish never --config.forceCodeSigning=true
       - name: Remove temporary notarization key

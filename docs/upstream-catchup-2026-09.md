@@ -21,8 +21,9 @@ Coverage and auth modes pass all 216 scenarios. Executing the entire route set
 then exposed stale auth-file paths and sharing assertions: the harness still used
 the old `opencode` data directory and expected share success despite explicitly
 disabling sharing. It now resolves branded paths and verifies the current disabled
-sharing rejection. Targeted auth/config/share executions pass; full execution is
-being rerun, not yet claimed green.
+sharing rejection. Full local coverage, auth and effect modes each pass 216/216;
+hosted run 35884598103 at `a8e3929f00` confirms the complete Linux unit/generated
+client/HTTP exerciser job is green.
 
 Candidate run 35882653684 passed source admission, WSL and Linux packaging.
 Windows failed credential-helper initialization; both macOS architectures exhausted
@@ -33,7 +34,31 @@ credential/path values. Native Windows injected-timeout test passes (1/1, five
 assertions); this does not establish the hosted failure's cause or fix it.
 Core/OpenCode types pass. No credential policy/timeout has been relaxed, and no
 user installation or profile was used. Browser failures and dev integration remain
-open. Hosted Mac memory correction still requires a new candidate run.
+open.
+
+Candidate run 35884593902 confirms both Mac renderer builds now pass; packaging
+then fails because the new workflow referenced nonexistent `APPLE_CERTIFICATE`
+and `APPLE_CERTIFICATE_PASSWORD` secrets and confused Apple key content with ID.
+The repository's existing release workflow and secret-name inventory instead use
+`CSC_LINK`, `CSC_KEY_PASSWORD`, `APPLE_API_KEY` (PEM/base64 content),
+`APPLE_API_KEY_ID`, and `APPLE_API_ISSUER`. Corrected that mapping without reading
+or changing credentials. Key materialization runs in Node, validates a private key,
+creates a private exclusive file and keeps mandatory signing/notarization. Synthetic
+PEM/base64, invalid-input and no-overwrite checks plus packaging/cohort checks pass
+11/11 on Bun 1.3.14; Desktop typecheck passes. Hosted signing proof remains pending.
+
+Windows still fails during helper startup in both SDK generation and compiled CLI
+smoke. Bun's uncaught-error output omits the fixed `cause`, so that log cannot yet
+distinguish timeout from rejection. Added a pre-unit native lifecycle smoke that
+uses a fresh synthetic directory and emits only operation/timing/fixed outcome,
+never paths, helper stderr or credential content. Local native baseline Bun 1.3.14
+passes prepare/missing/publish/read/logout; no timeout or ACL policy was changed.
+
+The browser interruption regression reproduces locally. Temporary geometry probes
+show an earlier visible response moving above the viewport as the interruption
+content appears, not a vanished/empty timeline. Probes were removed; the original
+assertion remains unchanged and failing. Browser repair and PR integration remain
+incomplete; no installed app, profile, credential or protocol handler was touched.
 
 ### First hosted CI pass — September 23, 2026
 

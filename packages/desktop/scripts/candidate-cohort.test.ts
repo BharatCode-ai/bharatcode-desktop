@@ -2,7 +2,8 @@ import { expect, test } from "bun:test"
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import { createHash } from "node:crypto"
+import { createHash, generateKeyPairSync } from "node:crypto"
+import { spawnSync } from "node:child_process"
 import {
   assembleCohort,
   collectCohort,
@@ -233,4 +234,54 @@ test("candidate workflow is manual, read-only, exact-checkout and never publishe
   expect(text).toContain('CSC_IDENTITY_AUTO_DISCOVERY: "false"')
   expect(text).toContain("--wsl-candidate")
   expect(text).toContain("assemble")
+})
+
+test("macOS candidate uses the configured repository signing and notarization secrets", async () => {
+  const text = await Bun.file(new URL("../../../.github/workflows/publish.yml", import.meta.url)).text()
+  const workflow = Bun.YAML.parse(text) as {
+    jobs: { package: { steps: { name?: string; env?: Record<string, string> }[] } }
+  }
+  const signing = workflow.jobs.package.steps.find((step) => step.name?.startsWith("Package macOS"))!
+  expect(signing.env?.CSC_LINK).toBe("${{ secrets.CSC_LINK }}")
+  expect(signing.env?.CSC_KEY_PASSWORD).toBe("${{ secrets.CSC_KEY_PASSWORD }}")
+  expect(signing.env?.APPLE_KEY_CONTENT).toBe("${{ secrets.APPLE_API_KEY }}")
+  expect(signing.env?.APPLE_API_KEY_ID).toBe("${{ secrets.APPLE_API_KEY_ID }}")
+})
+
+test("notarization key materialization accepts PEM/base64 and rejects invalid input or overwrite", async () => {
+  const text = await Bun.file(new URL("../../../.github/workflows/publish.yml", import.meta.url)).text()
+  const workflow = Bun.YAML.parse(text) as {
+    jobs: { package: { steps: { name?: string; run?: string }[] } }
+  }
+  const command = workflow.jobs.package.steps.find((step) => step.name?.startsWith("Package macOS"))!.run!
+  const script = command.match(/node -e '([\s\S]*?)'/)?.[1]
+  expect(script).toBeDefined()
+  const pem = generateKeyPairSync("ec", { namedCurve: "prime256v1" }).privateKey.export({
+    type: "pkcs8",
+    format: "pem",
+  })
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "bc-notary-fixture-"))
+  try {
+    const target = path.join(root, "key.p8")
+    const run = (content: string) =>
+      spawnSync("node", ["--eval", script!], {
+        env: { ...process.env, APPLE_KEY_CONTENT: content, APPLE_API_KEY: target },
+        encoding: "utf8",
+        timeout: 10_000,
+      })
+    for (const content of [pem.toString(), Buffer.from(pem).toString("base64")]) {
+      expect(run(content).status).toBe(0)
+      expect(await fs.readFile(target, "utf8")).toBe(pem.toString())
+      if (process.platform !== "win32") expect((await fs.stat(target)).mode & 0o777).toBe(0o600)
+      expect(run(content).status).not.toBe(0)
+      expect(await fs.readFile(target, "utf8")).toBe(pem.toString())
+      await fs.unlink(target)
+    }
+    for (const content of ["", "not-a-private-key"]) {
+      expect(run(content).status).not.toBe(0)
+      expect(await fs.readdir(root)).toEqual([])
+    }
+  } finally {
+    await fs.rm(root, { recursive: true, force: true })
+  }
 })
