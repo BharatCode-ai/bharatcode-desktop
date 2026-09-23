@@ -1452,8 +1452,12 @@ dependencies and bundled distribution module. The real intermediate 12-target
 build also packed successfully into `/tmp/bc-cli-pack-129b76`; unpacking the actual
 wrapper and Linux packages and launching through Node returned `1.15.35` with an
 isolated home. This does not establish npm registry publication/installation or
-execution of all foreign-architecture binaries. A dedicated one-runner CLI
-candidate workflow and authorized publication integration remain to be completed.
+execution of all foreign-architecture binaries. The manual `cli-candidate.yml`
+workflow performs this build/pack path on one Linux runner, retains the existing
+exact-source admission check before and after building, and uploads source and
+tarball hash manifests. It has read-only repository permissions and no npm or
+GitHub publication step. Hosted verification and authorized publication
+integration remain pending.
 
 ## What is left
 
