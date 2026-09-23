@@ -78,6 +78,62 @@ function run<A, E>(
 }
 
 describe("BharatCode native account", () => {
+  test("model access, verifier outages, and upstream failures never refresh or remove a valid credential", async () => {
+    for (const [status, code] of [
+      [503, "authentication_unavailable"],
+      [402, "subscription_required"],
+      [403, "access_denied"],
+      [429, "rate_limit_exceeded"],
+      [404, "not_found"],
+    ] as const) {
+      let calls = 0
+      const initial = oauth({ expires: 9_999_999 })
+      const failure = json(status, { error: { code, message: "fixed public message" } })
+      const { promise, store } = run(
+        BharatCodeAccount.use.authenticatedFetch("https://bharatcode.ai/api/model/v1/chat/completions", {
+          method: "POST",
+        }),
+        {
+          initial,
+          now: () => 1_000,
+          fetch: async (input) => {
+            calls++
+            expect(String(input)).not.toContain("/oauth/token")
+            return failure
+          },
+        },
+      )
+      expect(await promise).toBe(failure)
+      expect(calls).toBe(1)
+      expect(store.read()).toEqual(initial)
+      expect(failure.bodyUsed).toBe(false)
+    }
+  })
+
+  test("never replays an already-started stream even when it carries an authentication error", async () => {
+    let calls = 0
+    const initial = oauth({ expires: 9_999_999 })
+    const stream = new Response('data: {"delta":"partial"}\n\ndata: {"error":{"code":"session_expired"}}\n\n', {
+      headers: { "content-type": "text/event-stream" },
+    })
+    const { promise, store } = run(
+      BharatCodeAccount.use.authenticatedFetch("https://bharatcode.ai/api/model/v1/responses", { method: "POST" }),
+      {
+        initial,
+        now: () => 1_000,
+        fetch: async () => {
+          calls++
+          return stream
+        },
+      },
+    )
+    expect(await promise).toBe(stream)
+    expect(stream.bodyUsed).toBe(false)
+    expect(await stream.text()).toContain("partial")
+    expect(calls).toBe(1)
+    expect(store.read()).toEqual(initial)
+  })
+
   test("refreshes under the auth transaction and persists the rotated pair", async () => {
     const requests: Request[] = []
     const fetch = async (input: string | URL | Request, init?: RequestInit) => {

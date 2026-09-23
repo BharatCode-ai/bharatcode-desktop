@@ -10,6 +10,29 @@ than resolving 499 overlapping files at once.
 
 ## Where it stands
 
+### Public catalog / authenticated execution boundary — September 23, 2026
+
+Compared the Desktop adapter with the platform repository's cached `origin/main`
+catalog exception (`e696cfb16`): only GET `/api/model/v1/models` is public.
+Discovery now uses that exact endpoint without account storage, token refresh,
+cookies, or redirect following. Its shared metadata cache remains bounded by TTL,
+supports explicit refresh, and serializes concurrent discovery. Headers and body
+share a 15-second timeout. Failed responses cannot populate an empty cache or
+expose provider payloads; a public gateway 401 no longer falsely asks the user to
+sign in. Model parsing, eligibility and strict metadata checks remain intact.
+
+Generation still uses the existing native account adapter. Executable regressions
+confirm that subscription/restriction/rate-limit/not-found/verifier-outage responses
+do not refresh, replay or erase valid credentials, and an already-started SSE
+response is never replayed. Existing single-flight 401 refresh/account-switch
+tests remain green. No authentication or subscription enforcement was removed.
+
+Evidence: public-discovery tests first failed because the old adapter required an
+account service (4 RED); the combined catalog/account/model/provider tests now
+pass **51/51, 190 assertions**. OpenCode typecheck passes. Evidence logs:
+`/tmp/bc-public-catalog-{red,green,all,types}.log`. This is local source/test
+evidence, not a claim about a newly built installer or current production uptime.
+
 ### Continuation checkpoint — September 22, 2026
 
 The original inventory below is retained as baseline evidence, not a claim that

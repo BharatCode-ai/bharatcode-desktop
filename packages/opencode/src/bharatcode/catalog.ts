@@ -63,13 +63,14 @@ export class Service extends Context.Service<Service, Interface>()("@opencode/Bh
 export const use = serviceUse(Service)
 
 export type LayerOptions = {
+  fetch?: (input: string | URL | Request, init?: RequestInit) => Promise<Response>
+  requestTimeoutMs?: number
   now?: () => number
   ttlMs?: number
   onDiagnostic?: (diagnostic: Diagnostic) => void
 }
 
 type Cache = {
-  accountID: string
   expiresAt: number
   models: readonly Model[]
 }
@@ -95,7 +96,7 @@ export function modelUnavailableReason(error: unknown) {
   if (error instanceof BharatCodeAccount.SignInRequired) return MODEL_SIGN_IN_REQUIRED
   if (error instanceof Auth.AuthError) return MODEL_STORAGE_UNAVAILABLE
   if (error instanceof BharatCodeAccount.ServiceError) {
-    if (error.status === 401) return MODEL_SIGN_IN_REQUIRED
+    // This endpoint is public: a gateway 401 is not evidence of an expired session.
     if (BharatCodeModel.isAccessRequired("bharatcode", error.status, error.errorCode))
       return BharatCodeModel.ACCESS_REQUIRED_MESSAGE
   }
@@ -297,7 +298,7 @@ export const layerWith = (options: LayerOptions = {}) =>
   Layer.effect(
     Service,
     Effect.gen(function* () {
-      const account = yield* BharatCodeAccount.Service
+      const fetchImpl = options.fetch ?? globalThis.fetch
       const now = options.now ?? Date.now
       const ttlMs = options.ttlMs ?? DEFAULT_TTL_MS
       const lock = Semaphore.makeUnsafe(1)
@@ -314,19 +315,41 @@ export const layerWith = (options: LayerOptions = {}) =>
         })
 
       const fetchCatalog = Effect.fn("BharatCodeCatalog.fetch")(function* () {
-        const response = yield* account.authenticatedFetch(CATALOG_URL)
-        if (!response.ok) {
-          const value = yield* Effect.promise(() =>
-            response.json().then(
-              (item) => item as Record<string, unknown>,
-              () => ({}) as Record<string, unknown>,
-            ),
-          )
-          if (response.status === 401) {
-            return yield* new BharatCodeAccount.SignInRequired({
-              message: "Your BharatCode session is no longer valid. Sign in again.",
+        // Only discovery is public. Generation continues through authenticatedFetch.
+        // Bound headers AND body, and never attach credentials or follow redirects.
+        const { response, payload } = yield* Effect.tryPromise({
+          try: async (signal) => {
+            const response = await fetchImpl(CATALOG_URL, {
+              method: "GET",
+              credentials: "omit",
+              redirect: "error",
+              signal,
             })
-          }
+            const payload: unknown = await response.json().catch(() => undefined)
+            return { response, payload }
+          },
+          catch: () =>
+            new BharatCodeAccount.TransportError({
+              operation: "model catalog",
+              message: "BharatCode model catalog could not reach the service.",
+            }),
+        }).pipe(
+          Effect.timeoutOrElse({
+            duration: options.requestTimeoutMs ?? 15_000,
+            orElse: () =>
+              Effect.fail(
+                new BharatCodeAccount.TransportError({
+                  operation: "model catalog",
+                  message: "BharatCode model catalog request timed out.",
+                }),
+              ),
+          }),
+        )
+        if (!response.ok) {
+          const value =
+            payload && typeof payload === "object" && !Array.isArray(payload)
+              ? (payload as Record<string, unknown>)
+              : {}
           return yield* new BharatCodeAccount.ServiceError({
             operation: "model catalog",
             status: response.status,
@@ -336,11 +359,11 @@ export const layerWith = (options: LayerOptions = {}) =>
           })
         }
 
-        const payload = yield* Effect.tryPromise({
-          try: () => response.json() as Promise<unknown>,
-          catch: () =>
-            new CatalogError({ reason: "response", message: "BharatCode model catalog response was not JSON." }),
-        })
+        if (payload === undefined)
+          return yield* new CatalogError({
+            reason: "response",
+            message: "BharatCode model catalog response was not JSON.",
+          })
         if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
           return yield* new CatalogError({ reason: "contract", message: "BharatCode model catalog was invalid." })
         }
@@ -365,13 +388,11 @@ export const layerWith = (options: LayerOptions = {}) =>
       const list: Interface["list"] = (input = {}) =>
         lock.withPermits(1)(
           Effect.gen(function* () {
-            const accountID = yield* account.accountID()
-            if (!input.force && accountID && cache?.accountID === accountID && cache.expiresAt > now()) {
+            if (!input.force && cache && cache.expiresAt > now()) {
               return cache.models
             }
             const models = yield* fetchCatalog()
-            if (accountID) cache = { accountID, expiresAt: now() + ttlMs, models }
-            else cache = undefined
+            cache = { expiresAt: now() + ttlMs, models }
             return models
           }),
         )
@@ -381,8 +402,8 @@ export const layerWith = (options: LayerOptions = {}) =>
   )
 
 export const layer = layerWith()
-export const node = LayerNode.make({ service: Service, layer: layer, deps: [BharatCodeAccount.node] })
+export const node = LayerNode.make({ service: Service, layer: layer, deps: [] })
 
-export const defaultLayer = layer.pipe(Layer.provide(BharatCodeAccount.defaultLayer))
+export const defaultLayer = layer
 
 export * as BharatCodeCatalog from "./catalog"

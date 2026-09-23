@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Layer } from "effect"
+import { Effect } from "effect"
 import { BharatCodeAccount } from "@/bharatcode/account"
 import { BharatCodeCatalog } from "@/bharatcode/catalog"
 import { Auth } from "../../src/auth"
@@ -11,37 +11,18 @@ import {
 
 const CODING_MODEL_ID = "bharatcode:qwen36-35b-awq-200k"
 
-function accountLayer(input: { accountID?: () => string | undefined; response: () => Promise<Response> }) {
-  return Layer.succeed(
-    BharatCodeAccount.Service,
-    BharatCodeAccount.Service.of({
-      accountID: () => Effect.succeed(input.accountID?.()),
-      authenticatedFetch: () => Effect.promise(input.response),
-      accessToken: () => Effect.die("unused"),
-      beginAuthorization: () => Effect.die("unused"),
-      completeAuthorization: () => Effect.die("unused"),
-      cancelAuthorization: () => Effect.void,
-      identity: () => Effect.die("unused"),
-      status: () => Effect.die("unused"),
-      logout: () => Effect.die("unused"),
-    }),
-  )
-}
-
 function response(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json" } })
 }
 
 function run<A, E>(
   effect: Effect.Effect<A, E, BharatCodeCatalog.Service>,
-  layer: Layer.Layer<BharatCodeAccount.Service>,
+  fetch: BharatCodeCatalog.LayerOptions["fetch"],
 ) {
-  return Effect.runPromise(
-    effect.pipe(Effect.provide(BharatCodeCatalog.layerWith({ now: () => 10_000 })), Effect.provide(layer)),
-  )
+  return Effect.runPromise(effect.pipe(Effect.provide(BharatCodeCatalog.layerWith({ now: () => 10_000, fetch }))))
 }
 
-describe("BharatCode authenticated catalog", () => {
+describe("BharatCode public catalog", () => {
   test("catalog failures preserve actionable reasons without exposing payloads", () => {
     const secret = "seeded-token https://private.example/path"
     expect(BharatCodeCatalog.modelUnavailableReason(new BharatCodeAccount.SignInRequired({ message: secret }))).toBe(
@@ -96,10 +77,7 @@ describe("BharatCode authenticated catalog", () => {
         },
       ],
     }
-    const models = await run(
-      BharatCodeCatalog.use.list(),
-      accountLayer({ accountID: () => "account-a", response: async () => response(data) }),
-    )
+    const models = await run(BharatCodeCatalog.use.list(), async () => response(data))
     expect(models).toEqual([
       expect.objectContaining({
         id: CODING_MODEL_ID,
@@ -112,30 +90,22 @@ describe("BharatCode authenticated catalog", () => {
 
   test("does not synthesize a catalog when the endpoint fails", async () => {
     await expect(
-      run(
-        BharatCodeCatalog.use.list(),
-        accountLayer({ accountID: () => "account-a", response: async () => response({ message: "down" }, 503) }),
-      ),
+      run(BharatCodeCatalog.use.list(), async () => response({ message: "down" }, 503)),
     ).rejects.toMatchObject({ _tag: "BharatCodeServiceError", status: 503, retriable: true })
   })
 
   test("preserves the subscription-required denial from a protected catalog", async () => {
-    const failure = await run(
-      BharatCodeCatalog.use.list(),
-      accountLayer({
-        accountID: () => "account-a",
-        response: async () =>
-          response(
-            {
-              error: {
-                message: "seeded server text must not define the client contract",
-                type: "subscription_required",
-                code: "subscription_required",
-              },
-            },
-            402,
-          ),
-      }),
+    const failure = await run(BharatCodeCatalog.use.list(), async () =>
+      response(
+        {
+          error: {
+            message: "seeded server text must not define the client contract",
+            type: "subscription_required",
+            code: "subscription_required",
+          },
+        },
+        402,
+      ),
     ).then(
       () => undefined,
       (error) => error,
@@ -154,36 +124,30 @@ describe("BharatCode authenticated catalog", () => {
 
   test("excludes an invalid individual record without erasing valid records", async () => {
     const diagnostics: BharatCodeCatalog.Diagnostic[] = []
-    const account = accountLayer({
-      accountID: () => "account-a",
-      response: async () =>
-        response({
-          object: "list",
-          data: [
-            { id: "Bearer private.catalog.token", status: "live", secret: "must-not-leak" },
-            {
-              id: CODING_MODEL_ID,
-              owned_by: "bharatcode",
-              modality: "chat",
-              endpoint: "/v1/chat/completions",
-              protocol: "openai_chat_completions",
-              runtime: "vllm",
-              status: "live",
-              display_name: "Valid Chat",
-              context_window: 128_000,
-              max_output_tokens: 32_000,
-              metadata: { input: ["text"], output: ["text"], toolCalling: false, reasoning: false },
-            },
-          ],
-        }),
-    })
+    const fetch = async () =>
+      response({
+        object: "list",
+        data: [
+          { id: "Bearer private.catalog.token", status: "live", secret: "must-not-leak" },
+          {
+            id: CODING_MODEL_ID,
+            owned_by: "bharatcode",
+            modality: "chat",
+            endpoint: "/v1/chat/completions",
+            protocol: "openai_chat_completions",
+            runtime: "vllm",
+            status: "live",
+            display_name: "Valid Chat",
+            context_window: 128_000,
+            max_output_tokens: 32_000,
+            metadata: { input: ["text"], output: ["text"], toolCalling: false, reasoning: false },
+          },
+        ],
+      })
     const models = await Effect.runPromise(
       BharatCodeCatalog.use
         .list()
-        .pipe(
-          Effect.provide(BharatCodeCatalog.layerWith({ onDiagnostic: (item) => diagnostics.push(item) })),
-          Effect.provide(account),
-        ),
+        .pipe(Effect.provide(BharatCodeCatalog.layerWith({ fetch, onDiagnostic: (item) => diagnostics.push(item) }))),
     )
     expect(models.map((model) => model.id)).toEqual([CODING_MODEL_ID])
     expect(diagnostics).toEqual([
@@ -223,12 +187,8 @@ describe("BharatCode authenticated catalog", () => {
       },
     ]
 
-    const models = await run(
-      BharatCodeCatalog.use.list(),
-      accountLayer({
-        accountID: () => "account-a",
-        response: async () => response({ object: "list", data: [valid, ...malformed] }),
-      }),
+    const models = await run(BharatCodeCatalog.use.list(), async () =>
+      response({ object: "list", data: [valid, ...malformed] }),
     )
 
     expect(models.map((model) => model.id)).toEqual([valid.id])
@@ -240,49 +200,45 @@ describe("BharatCode authenticated catalog", () => {
   })
 
   test("fails the whole catalog only when the top-level response is malformed", async () => {
-    await expect(
-      run(
-        BharatCodeCatalog.use.list(),
-        accountLayer({ accountID: () => "account-a", response: async () => response({ object: "list" }) }),
-      ),
-    ).rejects.toMatchObject({ _tag: "BharatCodeCatalogError", reason: "contract" })
+    await expect(run(BharatCodeCatalog.use.list(), async () => response({ object: "list" }))).rejects.toMatchObject({
+      _tag: "BharatCodeCatalogError",
+      reason: "contract",
+    })
   })
 
   test("fails the whole catalog only when an eligible valid model ID is duplicated", async () => {
-    const layer = accountLayer({
-      response: async () =>
-        response({
-          object: "list",
-          data: [
-            {
-              id: "duplicate",
-              owned_by: "bharatcode",
-              modality: "chat",
-              endpoint: "/v1/chat/completions",
-              protocol: "openai_chat_completions",
-              status: "live",
-              display_name: "Duplicate",
-              context_window: 128_000,
-              max_output_tokens: 32_000,
-              metadata: { input: ["text"], output: ["text"], toolCalling: false, reasoning: false },
-            },
-            {
-              id: "duplicate",
-              owned_by: "bharatcode",
-              modality: "chat",
-              endpoint: "/v1/chat/completions",
-              protocol: "openai_chat_completions",
-              status: "live",
-              display_name: "Duplicate eligible",
-              context_window: 128_000,
-              max_output_tokens: 32_000,
-              metadata: { input: ["text"], output: ["text"], toolCalling: false, reasoning: false },
-            },
-          ],
-        }),
-    })
+    const fetch = async () =>
+      response({
+        object: "list",
+        data: [
+          {
+            id: "duplicate",
+            owned_by: "bharatcode",
+            modality: "chat",
+            endpoint: "/v1/chat/completions",
+            protocol: "openai_chat_completions",
+            status: "live",
+            display_name: "Duplicate",
+            context_window: 128_000,
+            max_output_tokens: 32_000,
+            metadata: { input: ["text"], output: ["text"], toolCalling: false, reasoning: false },
+          },
+          {
+            id: "duplicate",
+            owned_by: "bharatcode",
+            modality: "chat",
+            endpoint: "/v1/chat/completions",
+            protocol: "openai_chat_completions",
+            status: "live",
+            display_name: "Duplicate eligible",
+            context_window: 128_000,
+            max_output_tokens: 32_000,
+            metadata: { input: ["text"], output: ["text"], toolCalling: false, reasoning: false },
+          },
+        ],
+      })
 
-    await expect(run(BharatCodeCatalog.use.list(), layer)).rejects.toMatchObject({
+    await expect(run(BharatCodeCatalog.use.list(), fetch)).rejects.toMatchObject({
       _tag: "BharatCodeCatalogError",
       reason: "contract",
     })
@@ -301,15 +257,10 @@ describe("BharatCode authenticated catalog", () => {
       max_output_tokens: 32_000,
       metadata: { input: ["text"], output: ["text"], toolCalling: true, reasoning: false },
     }
-    const models = await run(
-      BharatCodeCatalog.use.list(),
-      accountLayer({
-        accountID: () => "account-a",
-        response: async () =>
-          response({
-            object: "list",
-            data: [valid, { ...valid, metadata: { input: ["text", 42], output: ["text"] } }],
-          }),
+    const models = await run(BharatCodeCatalog.use.list(), async () =>
+      response({
+        object: "list",
+        data: [valid, { ...valid, metadata: { input: ["text", 42], output: ["text"] } }],
       }),
     )
 
@@ -399,47 +350,46 @@ describe("BharatCode authenticated catalog", () => {
     })
   })
 
-  test("deduplicates and caches per stable account identity but not across account switches", async () => {
-    let id = "account-a"
+  test("refreshes public model metadata only on expiry or force", async () => {
+    let id = "catalog-a"
     let calls = 0
-    const layer = accountLayer({
-      accountID: () => id,
-      response: async () => {
-        calls++
-        return response({
-          object: "list",
-          data: [
-            {
-              id: `model-${id}`,
-              object: "model",
-              created: 0,
-              owned_by: "bharatcode",
-              modality: "audio_transcription",
-              endpoint: "/v1/audio/transcriptions",
-              protocol: "openai_audio_transcriptions",
-              runtime: "nemo",
-              status: "live",
-              display_name: "Speech",
-              max_input_mb: 100,
-              metadata: { input: ["audio"], output: ["text"] },
-            },
-          ],
-        })
-      },
-    })
-    const catalog = BharatCodeCatalog.layerWith({ now: () => 10_000 })
+    const fetch = async () => {
+      calls++
+      return response({
+        object: "list",
+        data: [
+          {
+            id: `model-${id}`,
+            object: "model",
+            created: 0,
+            owned_by: "bharatcode",
+            modality: "audio_transcription",
+            endpoint: "/v1/audio/transcriptions",
+            protocol: "openai_audio_transcriptions",
+            runtime: "nemo",
+            status: "live",
+            display_name: "Speech",
+            max_input_mb: 100,
+            metadata: { input: ["audio"], output: ["text"] },
+          },
+        ],
+      })
+    }
+    const catalog = BharatCodeCatalog.layerWith({ now: () => 10_000, fetch })
     const program = Effect.gen(function* () {
       const [first, second] = yield* Effect.all([BharatCodeCatalog.use.list(), BharatCodeCatalog.use.list()], {
         concurrency: 2,
       })
-      id = "account-b"
-      const third = yield* BharatCodeCatalog.use.list()
-      return { first, second, third }
+      id = "catalog-b"
+      const cached = yield* BharatCodeCatalog.use.list()
+      const third = yield* BharatCodeCatalog.use.list({ force: true })
+      return { first, second, cached, third }
     })
-    const result = await Effect.runPromise(program.pipe(Effect.provide(catalog), Effect.provide(layer)))
-    expect(result.first[0].id).toBe("model-account-a")
-    expect(result.second[0].id).toBe("model-account-a")
-    expect(result.third[0].id).toBe("model-account-b")
+    const result = await Effect.runPromise(program.pipe(Effect.provide(catalog)))
+    expect(result.first[0].id).toBe("model-catalog-a")
+    expect(result.second[0].id).toBe("model-catalog-a")
+    expect(result.cached[0].id).toBe("model-catalog-a")
+    expect(result.third[0].id).toBe("model-catalog-b")
     expect(calls).toBe(2)
   })
 })
