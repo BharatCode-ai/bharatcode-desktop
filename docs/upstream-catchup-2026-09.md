@@ -10,6 +10,30 @@ than resolving 499 overlapping files at once.
 
 ## Where it stands
 
+### Runtime upgrade/uninstall identity — September 23, 2026
+
+Restored the accepted `4c392628bb` distribution-policy behavior against the new
+Effect runtime. Version lookup, installer URL, npm/bun/pnpm upgrade targets,
+brew tap/formula, Scoop/Chocolatey identity and uninstall now consume the existing
+`DISTRIBUTION` metadata. The two duplicate uninstall command maps were replaced
+by one shared command builder consumed by both the summary and execution path.
+Internal `@opencode-ai/*` imports and compatibility config names are unchanged.
+
+RED: four installation fixture regressions on the old runtime. GREEN:
+installation **18/18**, with captured command/HTTP assertions covering the npm
+family, GitHub, curl, brew, Scoop, Chocolatey and uninstall targets. Combined
+installation/retry/sharing **87/87** and OpenCode typecheck pass. Every process
+and HTTP operation in these installation tests is synthetic; no actual package
+manager, downloaded installer, upgrade, uninstall or release API was invoked.
+Correct product identity does not assert a public brew/Scoop/Chocolatey package
+currently exists. Logs: `/tmp/bc-install-identity-red.log`,
+`/tmp/bc-final-retained-guards.log`, `/tmp/bc-final-retained-types.log`.
+
+Next audit items are the accepted overflow-compaction context and deferred
+workspace-snapshot fixes (`3392af2a3c`, `9343b71ea3`). Their original modified
+expressions are absent in the current source; reproduce against the new upstream
+semantics before deciding the correct port. No behavior claim is made yet.
+
 ### Retained sharing and DNS safeguards — September 23, 2026
 
 Auditing the accepted release history found two omitted runtime policies.
@@ -34,8 +58,8 @@ Logs: `/tmp/bc-dns-red.log`, `/tmp/bc-share-gate-red.log`,
 `/tmp/bc-retained-node-smoke.log`. No live sharing or provider calls occurred.
 
 The audit also found upstream package identities still in runtime installation,
-upgrade and uninstall. Restoring the accepted DISTRIBUTION-driven implementation
-is the next concrete correction; the feature audit is not yet complete.
+upgrade and uninstall. The separate distribution checkpoint above closes that
+finding; the full retained-feature audit is not yet complete.
 
 ### Native Windows-to-WSL argument boundary — September 23, 2026
 
@@ -1082,9 +1106,10 @@ and limits at the time they were recorded, not a second active backlog.
   startup/upgrade/reopen paths; macOS signing/notarization requires a macOS host.
 - **WSL/native boundaries:** exercise the same-source runtime lifecycle and
   account/error behavior without copying real credentials. Source/unit checks do
-  not replace actual native-to-WSL execution evidence.
-- **Broad test closure:** rerun affected suites, resolve or explicitly classify
-  inherited provider-auth-dependent tests and Bun-versus-Node SQLite differences.
+  not replace actual native-to-WSL execution evidence. The exact `5d20fa1450`
+  native lifecycle passed; repeat against the final candidate after later fixes.
+- **Broad test closure:** rerun affected suites at final source. Provider fixture
+  failures and Bun-versus-Node draft-test differences are resolved, not waived.
   Keep compiled Node and native fixture results separate from installed Electron.
 - **Acceptance limits:** real microphone/OAuth/model generation and signed-in
   installed UI are not established by mocked renderer or signed-out fixtures.

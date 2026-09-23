@@ -1,4 +1,4 @@
-import { describe, expect } from "bun:test"
+import { describe, expect, test } from "bun:test"
 import { makeGlobalNode } from "@opencode-ai/core/effect/app-node"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { httpClient } from "@opencode-ai/core/effect/app-node-platform"
@@ -67,14 +67,56 @@ function testLayer(
 }
 
 describe("installation", () => {
+  test("uninstall summary and execution share only BharatCode package commands", () => {
+    expect(Installation.userAgent()).toStartWith("bharatcode/")
+    expect(Installation.uninstallCommand("npm")).toEqual(["npm", "uninstall", "-g", "bharatcode"])
+    expect(Installation.uninstallCommand("pnpm")).toEqual(["pnpm", "uninstall", "-g", "bharatcode"])
+    expect(Installation.uninstallCommand("bun")).toEqual(["bun", "remove", "-g", "bharatcode"])
+    expect(Installation.uninstallCommand("yarn")).toEqual(["yarn", "global", "remove", "bharatcode"])
+    expect(Installation.uninstallCommand("brew")).toEqual(["brew", "uninstall", "bharatcode"])
+    expect(Installation.uninstallCommand("choco")).toEqual(["choco", "uninstall", "bharatcode", "-y", "-r"])
+    expect(Installation.uninstallCommand("scoop")).toEqual(["scoop", "uninstall", "bharatcode"])
+    expect(Installation.uninstallCommand("curl")).toBeUndefined()
+    expect(Installation.uninstallCommand("unknown")).toBeUndefined()
+  })
+
+  for (const method of ["npm", "pnpm", "bun", "choco", "scoop"] as const) {
+    const commands: string[][] = []
+    testEffect(
+      testLayer(
+        () => {
+          throw new Error("Unexpected network request")
+        },
+        (cmd, args) => {
+          commands.push([cmd, ...args])
+          return ""
+        },
+      ),
+    ).effect(`${method} upgrade never targets an upstream package`, () =>
+      Effect.gen(function* () {
+        yield* Installation.use.upgrade(method, "1.15.35")
+        expect(commands[0]).toEqual(
+          method === "choco"
+            ? ["choco", "upgrade", "bharatcode", "--version=1.15.35", "-y"]
+            : method === "scoop"
+              ? ["scoop", "install", "bharatcode@1.15.35"]
+              : [method, "install", "-g", "bharatcode@1.15.35"],
+        )
+      }),
+    )
+  }
+
   describe("latest", () => {
-    testEffect(testLayer(() => jsonResponse({ tag_name: "v1.2.3" }))).effect(
-      "reads release version from GitHub releases",
-      () =>
-        Effect.gen(function* () {
-          const result = yield* Installation.use.latest("unknown")
-          expect(result).toBe("1.2.3")
-        }),
+    testEffect(
+      testLayer((request) => {
+        expect(request.url).toBe("https://api.github.com/repos/BharatCode-ai/bharatcode-desktop/releases/latest")
+        return jsonResponse({ tag_name: "v1.2.3" })
+      }),
+    ).effect("reads release version from GitHub releases", () =>
+      Effect.gen(function* () {
+        const result = yield* Installation.use.latest("unknown")
+        expect(result).toBe("1.2.3")
+      }),
     )
 
     testEffect(testLayer(() => jsonResponse({ tag_name: "v4.0.0-beta.1" }))).effect(
@@ -96,7 +138,7 @@ describe("installation", () => {
       Effect.gen(function* () {
         const result = yield* Installation.use.latest("npm")
         expect(result).toBe("1.5.0")
-        expect(npmCalls).toContain(`https://registry.npmjs.org/opencode-ai/${InstallationChannel}`)
+        expect(npmCalls).toContain(`https://registry.npmjs.org/bharatcode/${InstallationChannel}`)
       }),
     )
 
@@ -110,7 +152,7 @@ describe("installation", () => {
       Effect.gen(function* () {
         const result = yield* Installation.use.latest("bun")
         expect(result).toBe("1.6.0")
-        expect(bunCalls).toContain(`https://registry.npmjs.org/opencode-ai/${InstallationChannel}`)
+        expect(bunCalls).toContain(`https://registry.npmjs.org/bharatcode/${InstallationChannel}`)
       }),
     )
 
@@ -124,24 +166,32 @@ describe("installation", () => {
       Effect.gen(function* () {
         const result = yield* Installation.use.latest("pnpm")
         expect(result).toBe("1.7.0")
-        expect(pnpmCalls).toContain(`https://registry.npmjs.org/opencode-ai/${InstallationChannel}`)
+        expect(pnpmCalls).toContain(`https://registry.npmjs.org/bharatcode/${InstallationChannel}`)
       }),
     )
 
-    testEffect(testLayer(() => jsonResponse({ version: "2.3.4" }))).effect("reads scoop manifest versions", () =>
+    testEffect(
+      testLayer((request) => {
+        expect(request.url).toBe("https://raw.githubusercontent.com/ScoopInstaller/Main/master/bucket/bharatcode.json")
+        return jsonResponse({ version: "2.3.4" })
+      }),
+    ).effect("reads scoop manifest versions", () =>
       Effect.gen(function* () {
         const result = yield* Installation.use.latest("scoop")
         expect(result).toBe("2.3.4")
       }),
     )
 
-    testEffect(testLayer(() => jsonResponse({ d: { results: [{ Version: "3.4.5" }] } }))).effect(
-      "reads chocolatey feed versions",
-      () =>
-        Effect.gen(function* () {
-          const result = yield* Installation.use.latest("choco")
-          expect(result).toBe("3.4.5")
-        }),
+    testEffect(
+      testLayer((request) => {
+        expect(request.url).toContain("Id%20eq%20%27bharatcode%27")
+        return jsonResponse({ d: { results: [{ Version: "3.4.5" }] } })
+      }),
+    ).effect("reads chocolatey feed versions", () =>
+      Effect.gen(function* () {
+        const result = yield* Installation.use.latest("choco")
+        expect(result).toBe("3.4.5")
+      }),
     )
 
     testEffect(
@@ -149,8 +199,8 @@ describe("installation", () => {
         () => jsonResponse({ versions: { stable: "2.0.0" } }),
         (cmd, args) => {
           // getBrewFormula: return core formula (no tap)
-          if (cmd === "brew" && args.includes("--formula") && args.includes("anomalyco/tap/opencode")) return ""
-          if (cmd === "brew" && args.includes("--formula") && args.includes("opencode")) return "opencode"
+          if (cmd === "brew" && args.includes("--formula") && args.includes("BharatCode-ai/tap/bharatcode")) return ""
+          if (cmd === "brew" && args.includes("--formula") && args.includes("bharatcode")) return "bharatcode"
           return ""
         },
       ),
@@ -168,7 +218,8 @@ describe("installation", () => {
       testLayer(
         () => jsonResponse({}), // HTTP not used for tap formula
         (cmd, args) => {
-          if (cmd === "brew" && args.includes("anomalyco/tap/opencode") && args.includes("--formula")) return "opencode"
+          if (cmd === "brew" && args.includes("BharatCode-ai/tap/bharatcode") && args.includes("--formula"))
+            return "bharatcode"
           if (cmd === "brew" && args.includes("--json=v2")) return brewInfoJson
           return ""
         },
@@ -203,7 +254,10 @@ describe("installation", () => {
 
     testEffect(
       testLayer(
-        () => new Response("install script with token=secret", { status: 200 }),
+        (request) => {
+          expect(request.url).toBe("https://bharatcode.ai/install")
+          return new Response("install script with token=secret", { status: 200 })
+        },
         (cmd, args) => {
           if (cmd === "bash" && args[0] === "--version") return "GNU bash"
           if (cmd === "bash" || cmd === "sh") return { code: 1, stderr: "script output with token=secret" }
