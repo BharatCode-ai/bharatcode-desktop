@@ -277,6 +277,14 @@ native(
       })
       expect(() => store.read()).toThrow("could not be verified")
       expect(() => store.publish('{"synthetic-secret":"not-printed"}')).toThrow("Re-read account state")
+      try {
+        store.prepareParent()
+        throw new Error("timeout must fail closed")
+      } catch (error) {
+        expect(error).toBeInstanceOf(Error)
+        expect((error as Error).cause).toBe("CREDENTIAL_HELPER_TIMEOUT")
+        expect(String(error)).not.toContain(root)
+      }
     } finally {
       await rm(root, { recursive: true, force: true })
     }

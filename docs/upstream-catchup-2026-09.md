@@ -10,6 +10,31 @@ than resolving 499 overlapping files at once.
 
 ## Where it stands
 
+### Hosted follow-up corrections — September 23, 2026
+
+At `c9c5cc0a3a`, hosted Linux unit tasks all passed, as did generated-client drift.
+The following HTTP exerciser failed on eight missing BharatCode route scenarios.
+Added account status/PKCE URL creation, unknown-state rejection, idempotent logout,
+dictation status/input validation, and capabilities read/unknown-ID validation.
+These use isolated state and do not open an OAuth URL or send a real model request.
+Coverage and auth modes pass all 216 scenarios. Executing the entire route set
+then exposed stale auth-file paths and sharing assertions: the harness still used
+the old `opencode` data directory and expected share success despite explicitly
+disabling sharing. It now resolves branded paths and verifies the current disabled
+sharing rejection. Targeted auth/config/share executions pass; full execution is
+being rerun, not yet claimed green.
+
+Candidate run 35882653684 passed source admission, WSL and Linux packaging.
+Windows failed credential-helper initialization; both macOS architectures exhausted
+Node's approximately 2 GiB heap during the renderer build, before signing. The build
+step now permits 6 GiB heap. Windows helper failures preserve their safe public
+messages and add only a fixed timeout/start/rejection cause, never raw stderr or
+credential/path values. Native Windows injected-timeout test passes (1/1, five
+assertions); this does not establish the hosted failure's cause or fix it.
+Core/OpenCode types pass. No credential policy/timeout has been relaxed, and no
+user installation or profile was used. Browser failures and dev integration remain
+open. Hosted Mac memory correction still requires a new candidate run.
+
 ### First hosted CI pass — September 23, 2026
 
 PR #58 is open against `dev`; no merge/publication/installation has occurred.

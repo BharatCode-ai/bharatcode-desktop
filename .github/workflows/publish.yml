@@ -135,6 +135,8 @@ jobs:
           "BHARATCODE_WSL_RUNTIME_ARCH=x64" >> $env:GITHUB_ENV
       - name: Build same-source CLI, server and renderer
         working-directory: packages/desktop
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
         run: |
           bun scripts/prebuild.ts
           bun x electron-vite build

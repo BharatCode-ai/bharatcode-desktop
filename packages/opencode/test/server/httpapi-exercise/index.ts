@@ -58,6 +58,65 @@ function locationData(validate: (value: any) => void) {
 }
 
 const scenarios: Scenario[] = [
+  http.protected.get("/account/status", "account.status").json(200, (body) => {
+    object(body)
+    check(body.state === "signed-out", "isolated account should be signed out")
+    check(Object.keys(body).length === 1, "signed-out status should expose no credential fields")
+  }),
+  http.protected
+    .post("/account/authorize", "account.authorize")
+    .at((ctx) => ({
+      path: "/account/authorize",
+      headers: ctx.headers(),
+      body: { redirectUri: "bharatcode://auth/callback", selectAccount: true },
+    }))
+    .json(200, (body) => {
+      object(body)
+      check(typeof body.url === "string", "authorization should return a URL without opening it")
+      const url = new URL(body.url as string)
+      check(url.protocol === "https:", "authorization URL must use HTTPS")
+      check(url.searchParams.get("redirect_uri") === "bharatcode://auth/callback", "fixed Desktop callback")
+      check(url.searchParams.get("code_challenge_method") === "S256", "authorization must use PKCE")
+      check(url.searchParams.get("prompt") === "select_account", "account selection must be retained")
+      check(typeof body.expiresAt === "number", "authorization must expire")
+      check(!("verifier" in body), "private PKCE verifier must not be returned")
+    }),
+  http.protected
+    .post("/account/callback", "account.callback.unknown-state")
+    .at((ctx) => ({
+      path: "/account/callback",
+      headers: ctx.headers(),
+      body: { callbackUrl: "bharatcode://auth/callback?state=unknown-fixture-state&code=synthetic-secret" },
+    }))
+    .json(400, (body) => {
+      check(!JSON.stringify(body).includes("synthetic-secret"), "callback errors must omit supplied secrets")
+    }),
+  http.protected
+    .post("/account/logout", "account.logout")
+    .mutating()
+    .json(200, (body) => {
+      object(body)
+      check(body.ok === true, "signed-out logout should be idempotent")
+    }),
+  http.protected.get("/account/dictation", "account.dictation.status").json(200, (body) => {
+    object(body)
+    check(body.available === false, "signed-out account must not advertise usable dictation")
+  }),
+  http.protected
+    .post("/account/dictation", "account.dictation.invalid")
+    .at((ctx) => ({ path: "/account/dictation", headers: ctx.headers(), body: { audio: "", mimeType: "audio/webm" } }))
+    .json(400),
+  http.protected.get("/capabilities", "capabilities.get").json(200, (body) => {
+    object(body)
+    array(body.catalog)
+    object(body.state)
+    object(body.configuration)
+    check(body.configuration.scope === "runtime-defaults", "capabilities should describe runtime defaults")
+  }),
+  http.protected
+    .post("/capabilities/{id}", "capabilities.change.unknown")
+    .at((ctx) => ({ path: "/capabilities/unknown-fixture", headers: ctx.headers(), body: { action: "enable" } }))
+    .json(400),
   http.protected
     .get("/global/health", "global.health")
     .global()
@@ -1652,28 +1711,28 @@ const scenarios: Scenario[] = [
     }))
     .json(404, object, "status"),
   http.protected
-    .post("/session/{sessionID}/share", "session.share")
+    .post("/session/{sessionID}/share", "session.share.disabled")
     .mutating()
     .seeded((ctx) => ctx.session({ title: "Share session" }))
     .at((ctx) => ({ path: route("/session/{sessionID}/share", { sessionID: ctx.state.id }), headers: ctx.headers() }))
     .json(
-      200,
-      (body, ctx) => {
+      500,
+      (body) => {
         object(body)
-        check(body.id === ctx.state.id, "share should return the session")
+        check(body._tag === "InternalServerError", "disabled sharing must reject publication")
       },
       "status",
     ),
   http.protected
-    .delete("/session/{sessionID}/share", "session.unshare")
+    .delete("/session/{sessionID}/share", "session.unshare.disabled")
     .mutating()
     .seeded((ctx) => ctx.session({ title: "Unshare session" }))
     .at((ctx) => ({ path: route("/session/{sessionID}/share", { sessionID: ctx.state.id }), headers: ctx.headers() }))
     .json(
-      200,
-      (body, ctx) => {
+      500,
+      (body) => {
         object(body)
-        check(body.id === ctx.state.id, "unshare should return the session")
+        check(body._tag === "InternalServerError", "disabled sharing must reject remote removal")
       },
       "status",
     ),

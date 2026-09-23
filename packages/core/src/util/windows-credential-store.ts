@@ -38,6 +38,14 @@ export function windowsCredentialStore(file: string, options: { spawn?: typeof s
           : operation === "publish"
             ? "Windows credential publication was not confirmed. Re-read account state before retrying."
             : "Windows credential permissions or access could not be verified.",
+        {
+          cause:
+            result.error && "code" in result.error && result.error.code === "ETIMEDOUT"
+              ? "CREDENTIAL_HELPER_TIMEOUT"
+              : result.error
+                ? "CREDENTIAL_HELPER_START_FAILED"
+                : "CREDENTIAL_HELPER_REJECTED",
+        },
       )
     }
     const response: unknown = JSON.parse(result.stdout)
