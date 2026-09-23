@@ -1,13 +1,15 @@
 import { expect } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Provider } from "../../src/provider/provider"
+import { Auth } from "../../src/auth"
+import { providerAuth } from "../fixture/provider-auth"
 
 import { Effect } from "effect"
 import { testEffect } from "../lib/effect"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 
 const DIGITALOCEAN = ProviderV2.ID.make("digitalocean")
-const it = testEffect(LayerNode.compile(Provider.node))
+const it = testEffect(LayerNode.compile(LayerNode.group([Provider.node, Auth.node])))
 
 const withEnv = <A, E, R>(values: Record<string, string>, effect: Effect.Effect<A, E, R>) =>
   Effect.acquireUseRelease(
@@ -27,18 +29,10 @@ const withEnv = <A, E, R>(values: Record<string, string>, effect: Effect.Effect<
   )
 
 const withAuth = <A, E, R>(metadata: Record<string, string> | undefined, effect: Effect.Effect<A, E, R>) =>
-  withEnv(
-    {
-      OPENCODE_AUTH_CONTENT: JSON.stringify({
-        digitalocean: {
-          type: "api",
-          key: "sk_do_test",
-          ...(metadata ? { metadata } : {}),
-        },
-      }),
-    },
-    effect,
-  )
+  Effect.gen(function* () {
+    yield* providerAuth("digitalocean", { type: "api", key: "sk_do_test", ...(metadata ? { metadata } : {}) })
+    return yield* effect
+  })
 
 it.instance(
   "digitalocean provider autoloads from DIGITALOCEAN_ACCESS_TOKEN",

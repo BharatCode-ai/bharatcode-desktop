@@ -1,10 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Effect } from "effect"
-import path from "path"
-import { unlink } from "fs/promises"
-import { Global } from "@opencode-ai/core/global"
-import { Filesystem } from "@/util/filesystem"
+import { Auth } from "../../src/auth"
+import { providerAuth } from "../fixture/provider-auth"
 import { Env } from "../../src/env"
 import { Provider } from "@/provider/provider"
 
@@ -13,7 +11,7 @@ import { testEffect } from "../lib/effect"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
 
-const it = testEffect(LayerNode.compile(LayerNode.group([Provider.node, Env.node])))
+const it = testEffect(LayerNode.compile(LayerNode.group([Provider.node, Env.node, Auth.node])))
 
 const originalEnv = new Map<string, string | undefined>()
 
@@ -44,29 +42,6 @@ const mantleModelConfig = {
   },
 }
 
-const withAuthJson = (contents: string) =>
-  Effect.acquireRelease(
-    Effect.promise(async () => {
-      const authPath = path.join(Global.Path.data, "auth.json")
-      let original: string | undefined
-      try {
-        original = await Filesystem.readText(authPath)
-      } catch {
-        original = undefined
-      }
-      await Filesystem.write(authPath, contents)
-      return { authPath, original }
-    }),
-    ({ authPath, original }) =>
-      Effect.promise(async () => {
-        if (original !== undefined) {
-          await Filesystem.write(authPath, original)
-          return
-        }
-        await unlink(authPath).catch(() => undefined)
-      }),
-  )
-
 it.instance(
   "Bedrock: config region takes precedence over AWS_REGION env var",
   () =>
@@ -94,7 +69,7 @@ it.instance(
   "Bedrock: loads when bearer token from auth.json is present",
   () =>
     Effect.gen(function* () {
-      yield* withAuthJson(JSON.stringify({ "amazon-bedrock": { type: "api", key: "test-bearer-token" } }))
+      yield* providerAuth("amazon-bedrock", { type: "api", key: "test-bearer-token" })
       yield* set("AWS_PROFILE", "")
       yield* set("AWS_ACCESS_KEY_ID", "")
       yield* set("AWS_BEARER_TOKEN_BEDROCK", "")

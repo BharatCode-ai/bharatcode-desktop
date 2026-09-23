@@ -15,13 +15,15 @@ import { Provider } from "@/provider/provider"
 import { ProviderError } from "@/provider/error"
 import { MessageV2 } from "@/session/message-v2"
 import { SessionRetry } from "@/session/retry"
+import { Auth } from "../../src/auth"
+import { providerAuth } from "../fixture/provider-auth"
 
 afterEach(async () => {
   await disposeAllInstances()
 })
 
 const it = testEffect(
-  LayerNode.compile(LayerNode.group([Provider.node, Env.node, Plugin.node, CrossSpawnSpawner.node])),
+  LayerNode.compile(LayerNode.group([Provider.node, Env.node, Plugin.node, CrossSpawnSpawner.node, Auth.node])),
 )
 
 it.live("headerTimeout does not abort delayed SSE body after headers arrive", () =>
@@ -284,23 +286,17 @@ async function delayedBodyServer(delay: number): Promise<{ server: Server; url: 
   return { server, url: `http://127.0.0.1:${address.port}` }
 }
 
-function withAuthContent<A, E, R>(self: Effect.Effect<A, E, R>, value: Record<string, unknown> = defaultAuthContent()) {
-  return Effect.acquireUseRelease(
-    Effect.sync(() => {
-      const previous = process.env.OPENCODE_AUTH_CONTENT
-      process.env.OPENCODE_AUTH_CONTENT = JSON.stringify(value)
-      return previous
-    }),
-    () => self,
-    (previous) =>
-      Effect.sync(() => {
-        if (previous === undefined) delete process.env.OPENCODE_AUTH_CONTENT
-        else process.env.OPENCODE_AUTH_CONTENT = previous
-      }),
-  )
+function withAuthContent<A, E, R>(
+  self: Effect.Effect<A, E, R>,
+  value: Record<string, Auth.Info> = defaultAuthContent(),
+) {
+  return Effect.gen(function* () {
+    for (const [provider, info] of Object.entries(value)) yield* providerAuth(provider, info)
+    return yield* self
+  }).pipe(Effect.scoped)
 }
 
-function defaultAuthContent() {
+function defaultAuthContent(): Record<string, Auth.Info> {
   return {
     openai: { type: "oauth", refresh: "refresh", access: "access", expires: Date.now() + 60_000 },
   }

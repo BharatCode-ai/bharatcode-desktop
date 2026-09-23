@@ -10,6 +10,37 @@ than resolving 499 overlapping files at once.
 
 ## Where it stands
 
+### Provider fixtures and refreshed Linux packages — September 23, 2026
+
+The five historical provider failures were reproduced and diagnosed rather than
+waived. They do **not** require real bearer tokens: two synthetic fixtures wrote
+unprotected `auth.json` files, while three relied on `OPENCODE_AUTH_CONTENT`, an
+upstream injection path absent from the protected BharatCode store. The fixtures
+now acquire and restore their synthetic provider credentials through the real
+Auth service. The old raw-file writer and environment-injection helpers were
+removed. No production auth permissions, provider eligibility, networking or
+error behavior changed. Full provider suite: **718/718, 1,672 assertions**;
+OpenCode typecheck passes. Auth regression suite: **46 pass, 19 platform/fixture
+skips, 0 fail, 388 assertions**; skips are not counted as Linux passes. Logs:
+`/tmp/bc-provider-auth-regression.log`, `/tmp/bc-final-provider-suite.log` (RED),
+`/tmp/bc-final-provider-green.log`, `/tmp/bc-provider-fixture-typecheck.log`.
+A separate compiled fresh-home Linux Auth publication check also passed.
+
+Clean Linux CLI/Node/Electron and AppImage/deb construction passed at exact
+`c37f07d772315d5eefc9a8b3bd0cab29716851db`, with publication disabled. Debian
+extraction confirms version 1.15.35, embedded source identity, and identical
+CLI/app.asar bytes versus the unpacked builder output. Artifact SHA-256:
+
+- AppImage: `3075467f4c7812032184f0e01d157b6c7ee11fedde39620f860fe679073c5c27`
+- deb: `b1db46d9a96cc4d9b2c819480252bfee2c9ef15c0757f0c744a30a1d9b702276`
+- bundled CLI: `31439647a8cec81dade04a571de482a2ef4a96638624719e7b74819a6bc954b8`
+- app.asar: `57e43fa54079dfa25c8b2d8b087b890e4b7f9fde87e43d5e0b333809d6532b00`
+
+Evidence: `/tmp/bc-final-{prebuild,electron,linux-package}.log` and
+`/tmp/bc-final-linux-inspection.json`. These artifacts precede the subsequent
+test-only fixture correction, and are not a completed cross-platform cohort.
+No installation, launch, protocol registration or publication was performed.
+
 ### Desktop suite and CI inclusion — September 23, 2026
 
 The former Desktop suite failure was reproduced: Bun 1.3.14 cannot import
@@ -952,8 +983,10 @@ Schema suite now passes **16 tests**, including the new shared Goal schema check
 | upstream provider suite  | 713 pass / 5 fail — **identical to baseline**     |
 | upstream session + agent | 462 pass / 0 fail — identical to baseline         |
 
-The 5 provider failures are pre-existing and auth-dependent (they want real
-bearer tokens); I confirmed them against a stashed baseline before and after.
+The 5 provider failures were present in that baseline. The original explanation
+that they required real bearer tokens was incorrect: the current fixture audit
+above identifies unsafe file fixtures and unsupported environment injection and
+closes all five without real credentials or a production relaxation.
 
 ## Done
 

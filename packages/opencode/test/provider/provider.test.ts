@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test"
-import { mkdir, unlink } from "fs/promises"
+import { mkdir } from "fs/promises"
 import path from "path"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
@@ -11,6 +11,7 @@ import { Global } from "@opencode-ai/core/global"
 import { disposeAllInstances, provideInstanceEffect, tmpdirScoped, TestInstance } from "../fixture/fixture"
 import { markPluginDependenciesReady } from "../fixture/plugin"
 import { Auth } from "@/auth"
+import { providerAuth } from "../fixture/provider-auth"
 import { Config } from "@/config/config"
 import { Env } from "../../src/env"
 import { Plugin } from "../../src/plugin/index"
@@ -84,7 +85,7 @@ const paid = (providers: Record<string, { models: Record<string, { cost: { input
 
 const languageBaseURL = (language: unknown) => (language as { config: { baseURL: string } }).config.baseURL
 
-const it = testEffect(LayerNode.compile(LayerNode.group([Provider.node, Env.node, Plugin.node])))
+const it = testEffect(LayerNode.compile(LayerNode.group([Provider.node, Env.node, Plugin.node, Auth.node])))
 const experimentalModels = testEffect(providerLayer({ enableExperimentalModels: true }))
 
 const alphaProviderConfig = {
@@ -2098,17 +2099,7 @@ it.effect("opencode loader keeps paid models when auth exists", () =>
 
     const none = paid(yield* listIn(noneDir))
 
-    const authPath = path.join(Global.Path.data, "auth.json")
-    const original = yield* Effect.promise(() => Filesystem.readText(authPath).catch(() => undefined))
-
-    yield* Effect.acquireRelease(
-      Effect.promise(() => Filesystem.write(authPath, JSON.stringify({ opencode: { type: "api", key: "test-key" } }))),
-      () =>
-        Effect.promise(async () => {
-          if (original !== undefined) await Filesystem.write(authPath, original)
-          else await unlink(authPath).catch(() => undefined)
-        }),
-    )
+    yield* providerAuth("opencode", { type: "api", key: "test-key" })
 
     const keyedCount = paid(yield* listIn(keyedDir))
 
