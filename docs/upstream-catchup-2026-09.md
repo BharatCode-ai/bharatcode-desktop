@@ -1432,6 +1432,29 @@ One Linux job can compile the CLI target set. Electron installers, native module
 packaging and macOS signing/notarization remain separate platform responsibilities.
 The candidate workflow uploads artifacts only and has no publication authority.
 
+### September 23: restore CLI package assembly without upstream publishing
+
+The retained-release audit found an unported upstream `script/publish.ts`: it
+would construct `bharatcode-ai` rather than `bharatcode` and retained upstream
+Docker/AUR/Homebrew publication paths. No invocation or publication occurred.
+That script and its now-unreferenced postinstall copier are removed. The existing
+branded Node launcher remains the npm entrypoint and needs no postinstall hook.
+
+`bun run pack:cli` (from `packages/opencode`, after the unfiltered build) now
+assembles all 12 exact-version platform tarballs plus the `bharatcode` wrapper.
+It rejects missing/unexpected platforms, mixed or altered manifests, empty or
+unexpected binary contents, and existing output directories. SHA-256/size
+metadata is written only after all 13 tarballs exist. This is package assembly,
+not independent proof of build provenance or permission to publish.
+
+Synthetic archive tests inspect the actual wrapper tarball, complete optional
+dependencies and bundled distribution module. The real intermediate 12-target
+build also packed successfully into `/tmp/bc-cli-pack-129b76`; unpacking the actual
+wrapper and Linux packages and launching through Node returned `1.15.35` with an
+isolated home. This does not establish npm registry publication/installation or
+execution of all foreign-architecture binaries. A dedicated one-runner CLI
+candidate workflow and authorized publication integration remain to be completed.
+
 ## What is left
 
 This is the current checklist; earlier checkpoint paragraphs describe evidence
