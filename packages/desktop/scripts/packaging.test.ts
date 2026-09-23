@@ -10,6 +10,7 @@ test("packaging cannot substitute an upstream product, protocol, CLI or update d
   expect(bundledCliFilename("win32")).toBe("bharatcode-cli.exe")
   expect(bundledCliFilename("linux")).toBe("bharatcode-cli")
   expect(config.mac?.hardenedRuntime).toBe(true)
+  expect(config.mac?.extendInfo?.NSMicrophoneUsageDescription).toBeTruthy()
   expect(config.linux?.target).toEqual(["AppImage", "deb"])
   expect(config.win?.extraResources).toEqual([{ from: "resources/wsl-runtime", to: "wsl-runtime", filter: ["*"] }])
   expect(config.files).toContain("!resources/wsl-runtime/**/*")

@@ -17,6 +17,7 @@ import { createWindowRegistry } from "./window-registry"
 import { safeWindowURL } from "./window-state"
 import { resolveExternalURL, resolveLocalFilePath } from "./external-url"
 import { createSidecarAuthorizations } from "./sidecar-authorizations"
+import { allowMicrophonePermission } from "./renderer-media-permission"
 
 const root = dirname(fileURLToPath(import.meta.url))
 const rendererRoot = join(root, "../renderer")
@@ -518,6 +519,18 @@ function allowRendererPermissions(win: BrowserWindow) {
   const webContentsId = win.webContents.id
 
   win.webContents.session.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    if (permission === "media") {
+      callback(
+        allowMicrophonePermission({
+          ownerID: webContentsId,
+          senderID: webContents.id,
+          trusted: isTrustedRendererUrl(details.requestingUrl),
+          isMainFrame: details.isMainFrame,
+          mediaTypes: "mediaTypes" in details ? details.mediaTypes : undefined,
+        }),
+      )
+      return
+    }
     callback(
       rendererPermissions.has(permission) &&
         isTrustedRendererUrl(details.requestingUrl) &&
@@ -525,6 +538,14 @@ function allowRendererPermissions(win: BrowserWindow) {
     )
   })
   win.webContents.session.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
+    if (permission === "media")
+      return allowMicrophonePermission({
+        ownerID: webContentsId,
+        senderID: webContents?.id,
+        trusted: isTrustedRendererUrl(details.requestingUrl),
+        isMainFrame: details.isMainFrame,
+        mediaType: details.mediaType,
+      })
     if (!rendererPermissions.has(permission)) return false
     if (webContents && webContents.id !== webContentsId) return false
     return isTrustedRendererUrl(details.requestingUrl) || isTrustedRendererUrl(requestingOrigin)

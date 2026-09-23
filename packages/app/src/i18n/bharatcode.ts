@@ -1,6 +1,7 @@
 // Product-specific copy uses English fallback until translations are reviewed.
 // Kept separate from upstream's positional native-menu translation arrays.
 export const BHARATCODE_NATIVE_ENGLISH = {
+  "desktop.dictation.microphone": "BharatCode uses your microphone when you choose to dictate a prompt.",
   "desktop.wsl.error.sender": "This window cannot manage BharatCode WSL.",
   "desktop.wsl.error.request": "The WSL action could not be completed. Check WSL status and try again.",
   "desktop.wsl.error.start": "BharatCode could not start the WSL runtime. Check the selected distribution and retry.",
@@ -22,6 +23,13 @@ export const BHARATCODE_NATIVE_ENGLISH = {
 
 export const BHARATCODE_ENGLISH = {
   ...BHARATCODE_NATIVE_ENGLISH,
+  "dictation.start": "Dictate",
+  "dictation.stop": "Stop recording",
+  "dictation.requesting": "Opening microphone…",
+  "dictation.transcribing": "Transcribing…",
+  "dictation.error.microphone": "Could not record audio. Check microphone permission, then try again.",
+  "dictation.error.size": "Recording is too large. Try a shorter recording.",
+  "dictation.error.request": "Could not transcribe audio. Check Account settings or try recording again.",
   "session.goal.title": "Goal Mode",
   "session.goal.objective": "Goal Mode objective",
   "session.goal.status.active": "Active",

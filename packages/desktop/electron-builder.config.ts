@@ -1,6 +1,7 @@
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { Arch, type Configuration } from "electron-builder"
+import { BHARATCODE_NATIVE_ENGLISH } from "../app/src/i18n/bharatcode"
 import { verifyWslArtifact, wslRuntimeFilename } from "./src/main/wsl/artifact"
 import {
   BRANDING,
@@ -72,6 +73,7 @@ const config: Configuration = {
     category: "public.app-category.developer-tools",
     icon: "resources/icons/icon.icns",
     hardenedRuntime: true,
+    extendInfo: { NSMicrophoneUsageDescription: BHARATCODE_NATIVE_ENGLISH["desktop.dictation.microphone"] },
     gatekeeperAssess: false,
     entitlements: "resources/entitlements.plist",
     entitlementsInherit: "resources/entitlements.plist",

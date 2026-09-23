@@ -10,6 +10,53 @@ than resolving 499 overlapping files at once.
 
 ## Where it stands
 
+### Dictation composer and microphone permission — September 23, 2026
+
+Both composer layouts now use the selected runtime's generated account API for
+dictation. The compact control appears only after that runtime reports an eligible
+speech model and a valid input limit; stale availability while switching runtimes
+cannot enable recording. There is no hard-coded model or renderer bearer token.
+Start/stop, cancel/Escape and the retained Cmd/Ctrl+Shift+M shortcut are wired.
+Recordings stop after two minutes or at the advertised byte limit, whichever
+comes first. Transcription never submits a prompt automatically.
+
+The controller releases microphone tracks on cancellation, failure, navigation
+and disposal, suppresses duplicate starts/stops, aborts uploads, and rejects late
+permission/transcript results after a runtime/session change. Insertion uses a
+text node and the existing editor input event; failed transcription preserves
+the existing draft and exposes only localized fixed error text.
+
+The upstream Electron permission allowlist denied all microphone requests. It now
+permits audio only from the trusted main frame of the owning window; camera,
+mixed media, unknown media, other windows and untrusted frames remain denied.
+macOS packaging now includes the microphone usage description; its existing
+audio-input entitlement is unchanged.
+
+Evidence:
+
+- Controller RED (missing implementation), then five tests / 22 assertions GREEN.
+- Full App unit **742/742, 3,076 assertions** and browser-controller
+  **50/50, 147 assertions** pass. App and Desktop typechecks pass.
+- Permission/packaging RED, then **3/3, 29 assertions** GREEN.
+- Fresh production frontend build and **2/2 Chromium tests**, one per composer,
+  pass. Synthetic microphone/audio and mocked runtime responses cover error and
+  retry, preserved draft, literal insertion, cancellation without upload, and
+  hiding the control when speech is unavailable. No live credentials, account,
+  microphone recording or speech-provider request was used.
+- Bounded screenshots confirm the existing compact toolbar style is preserved.
+- Production timeline smoke before/after: no wrong-destination, blank, unknown or
+  replaced-review-host samples. One trial each, 72 review diffs: closed cold
+  46.4→105.4 ms; closed hot 33.0→48.2 ms; open cold 59.2→92.8 ms; open hot
+  45.8→65.4 ms to stable. These timings increased in this single local sample;
+  this is not statistical performance clearance or an improvement claim.
+
+Logs: `/tmp/bc-dictation-ui-{types,build-final,e2e-final}.log`,
+`/tmp/bc-dictation-app-tests-final.log`,
+`/tmp/bc-dictation-permission-red.log`, and
+`/tmp/bc-dictation-timeline-{before,after}.log`.
+Real-device Electron/OS permission and packaged microphone acceptance remain
+pending. Current live speech availability is not established by these mocks.
+
 ### Dictation runtime boundary — September 23, 2026
 
 The previous Desktop implementation hard-coded a retired Whisper model and read
@@ -36,10 +83,10 @@ The obsolete account fixture asserting that signed-out users cannot discover the
 public catalog now checks the actual shipped signed-out account boundary; public
 discovery is covered separately without a live network dependency.
 
-**Pending:** renderer microphone/recording/insertion integration and browser
-acceptance. This backend checkpoint does not claim end-to-end dictation or live
-speech-service availability. The marketplace audit also remains open: the old
-main-process Windows config writer must not configure a selected WSL runtime.
+The renderer integration and mocked browser acceptance are now covered by the
+checkpoint above. Neither checkpoint establishes live speech-service availability.
+The marketplace audit remains open: the old main-process Windows config writer
+must not configure a selected WSL runtime.
 
 ### Repeated tool-failure protection — September 23, 2026
 
@@ -129,9 +176,10 @@ runtime checks, not installed Electron or cross-platform acceptance.
 
 Remaining, updated after the September 23 checkpoints:
 
-1. Finish the retained capabilities/marketplace, dictation and branding/assets
-   audit and integration. Error/recovery UI, Goal ribbon and repeated-tool-failure
-   protection are locally implemented and tested as detailed in the checkpoints.
+1. Finish the retained capabilities/marketplace and branding/assets audit and
+   integration. Dictation, error/recovery UI, Goal ribbon and repeated-tool-failure
+   protection are locally implemented and tested as detailed in the checkpoints;
+   dictation still needs real-device/package acceptance.
 2. Complete native package verification of the implemented WSL provisioning and
    runtime/account isolation. Do not reinstate the legacy startup recovery gate.
 3. Regenerate affected SDKs and reconcile release workflows with exact-source

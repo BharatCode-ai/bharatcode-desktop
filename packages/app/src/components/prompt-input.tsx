@@ -73,6 +73,8 @@ import {
   type PromptInputSubmission,
 } from "./prompt-input/contracts"
 import { createPromptSubmit } from "./prompt-input/submit"
+import { DictationButton } from "./prompt-input/dictation-button"
+import { insertDictation } from "./prompt-input/dictation"
 import { PromptPopover, type AtOption, type SlashCommand } from "./prompt-input/slash-popover"
 import { PromptContextItems } from "./prompt-input/context-items"
 import { PromptImageAttachments } from "./prompt-input/image-attachments"
@@ -1575,6 +1577,15 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
             />
 
             <div class="flex items-center gap-1 pointer-events-auto">
+              <DictationButton
+                sessionID={props.controls.session.id}
+                disabled={store.mode !== "normal"}
+                onInsert={(text) => {
+                  editorRef.focus()
+                  setCursorPosition(editorRef, savedCursor ?? prompt.cursor() ?? promptLength(prompt.current()))
+                  insertDictation(editorRef, text)
+                }}
+              />
               <Tooltip placement="top" inactive={!working() && blank()} value={tip()}>
                 <IconButton
                   data-action="prompt-submit"
