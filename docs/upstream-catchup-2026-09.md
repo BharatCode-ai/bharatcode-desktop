@@ -26,6 +26,17 @@ environment names or protocol defaults. RED: the prefix assertion rejected
 tests passed 19/19, 37 snapshots, 121 assertions; OpenCode typecheck passed.
 The full snapshot diff was reviewed, including account and catalog semantics.
 
+The task-name correction is verified against Turbo's executable dry-run graph,
+not a source-text assertion. Newly exposed fixture failures are being corrected:
+MCP subprocess tests now resolve the branded platform-specific config root;
+workspace tests seed the protected credential store via its service instead of
+the retired environment credential import. Focused MCP/help tests pass 3/3 (82
+assertions), workspace tests pass 36/36 (119 assertions). The CLI test preload and
+each subprocess fixture now isolate Windows AppData as well as XDG roots; no
+native Windows suite has been run with this new fixture change yet. Full CLI
+acceptance remains open, including two argument-validation ordering failures and
+a bundled Azure-plugin Node initialization side effect discovered by that run.
+
 The runtime/UI/SDK ports and candidate/publication paths are implemented locally;
 the retained-feature/ancestry audit and final exact-source package acceptance are
 not yet complete. Desktop-only beta updater selection and retired upstream

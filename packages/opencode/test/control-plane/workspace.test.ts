@@ -32,6 +32,7 @@ import { RuntimeFlags } from "@/effect/runtime-flags"
 import { Ripgrep } from "@opencode-ai/core/ripgrep"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { Auth } from "@/auth"
 
 const originalEnv = {
   OPENCODE_AUTH_CONTENT: process.env.OPENCODE_AUTH_CONTENT,
@@ -45,6 +46,7 @@ const workspaceLayer = (experimentalWorkspaces: boolean) =>
   AppNodeBuilder.build(
     LayerNode.group([
       Workspace.node,
+      Auth.node,
       SessionNs.node,
       SessionProjector.node,
       Database.node,
@@ -439,7 +441,9 @@ describe("workspace CRUD", () => {
       Effect.gen(function* () {
         const instance = yield* requireInstance
         const workspace = yield* Workspace.Service
-        process.env.OPENCODE_AUTH_CONTENT = JSON.stringify({ test: { type: "api", key: "secret" } })
+        const auth = yield* Auth.Service
+        yield* auth.set("test", { type: "api", key: "secret" })
+        yield* Effect.addFinalizer(() => auth.remove("test").pipe(Effect.orDie))
         process.env.OTEL_EXPORTER_OTLP_HEADERS = "authorization=otel"
         process.env.OTEL_EXPORTER_OTLP_ENDPOINT = "https://otel.test"
         process.env.OTEL_RESOURCE_ATTRIBUTES = "service.name=opencode-test"

@@ -44,6 +44,9 @@ process.env["OPENCODE_EXPERIMENTAL_WORKSPACES"] = "true"
 const testHome = path.join(dir, "home")
 await fs.mkdir(testHome, { recursive: true })
 process.env["OPENCODE_TEST_HOME"] = testHome
+// Branded Windows storage uses AppData, not XDG. Never inherit the real profile.
+process.env["APPDATA"] = path.join(dir, "roaming")
+process.env["LOCALAPPDATA"] = path.join(dir, "local")
 
 // Set test managed config directory to isolate tests from system managed settings
 const testManagedConfigDir = path.join(dir, "managed")

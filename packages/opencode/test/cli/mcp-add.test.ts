@@ -6,7 +6,7 @@ import { cliIt } from "../lib/cli-process"
 describe("opencode mcp add (non-interactive subprocess)", () => {
   cliIt.concurrent(
     "adds a remote server with HTTP headers",
-    ({ home, opencode }) =>
+    ({ configDirectory, opencode }) =>
       Effect.gen(function* () {
         const result = yield* opencode.spawn([
           "mcp",
@@ -21,9 +21,7 @@ describe("opencode mcp add (non-interactive subprocess)", () => {
         ])
         opencode.expectExit(result, 0)
 
-        const config = yield* Effect.promise(() =>
-          Bun.file(path.join(home, ".config", "opencode", "opencode.json")).json(),
-        )
+        const config = yield* Effect.promise(() => Bun.file(path.join(configDirectory, "opencode.json")).json())
         expect(config.mcp.github).toEqual({
           type: "remote",
           url: "https://example.com/mcp",
@@ -38,7 +36,7 @@ describe("opencode mcp add (non-interactive subprocess)", () => {
 
   cliIt.concurrent(
     "adds a local server while preserving argv and environment values",
-    ({ home, opencode }) =>
+    ({ configDirectory, opencode }) =>
       Effect.gen(function* () {
         const result = yield* opencode.spawn([
           "mcp",
@@ -57,9 +55,7 @@ describe("opencode mcp add (non-interactive subprocess)", () => {
         ])
         opencode.expectExit(result, 0)
 
-        const config = yield* Effect.promise(() =>
-          Bun.file(path.join(home, ".config", "opencode", "opencode.json")).json(),
-        )
+        const config = yield* Effect.promise(() => Bun.file(path.join(configDirectory, "opencode.json")).json())
         expect(config.mcp.local).toEqual({
           type: "local",
           command: ["npx", "-y", "@example/server", "--label", "two words"],
