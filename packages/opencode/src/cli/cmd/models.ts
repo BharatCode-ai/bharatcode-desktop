@@ -44,7 +44,7 @@ export const ModelsCommand = effectCmd({
         type: "boolean",
       })
       .option("refresh", {
-        describe: "refresh the authenticated BharatCode model catalog",
+        describe: "refresh the public BharatCode model catalog",
         type: "boolean",
       }),
   handler: Effect.fn("Cli.models")(function* (args) {

@@ -9,7 +9,7 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { AuthLock } from "./lock"
 import { windowsCredentialStore } from "./windows-store"
 
-export const OAUTH_DUMMY_KEY = "opencode-oauth-dummy-key"
+export { OAUTH_DUMMY_KEY } from "./constants"
 
 export class Oauth extends Schema.Class<Oauth>("OAuth")({
   type: Schema.Literal("oauth"),

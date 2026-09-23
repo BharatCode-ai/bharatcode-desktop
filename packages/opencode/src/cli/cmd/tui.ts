@@ -151,16 +151,6 @@ export const TuiThreadCommand = cmd({
     }
     const noReplay = args.replay === false || args.noReplay === true
 
-    // Only an interactive entrypoint may start browser authorization.
-    // Scripted run/serve/ACP requests retain their non-interactive errors.
-    try {
-      await AppRuntime.runPromise(ensureSignedIn())
-    } catch (error) {
-      UI.error(errorMessage(error))
-      process.exitCode = 1
-      return
-    }
-
     if (args.mini) {
       const network = ["--port", "--hostname", "--mdns", "--no-mdns", "--mdns-domain", "--cors"].find((option) =>
         process.argv.some((arg) => arg === option || arg.startsWith(option + "=")),
@@ -170,7 +160,32 @@ export const TuiThreadCommand = cmd({
         process.exitCode = 1
         return
       }
+    }
 
+    const unsupported =
+      !args.mini &&
+      [
+        ["--no-replay", noReplay],
+        ["--replay-limit", args.replayLimit !== undefined],
+        ["--demo", args.demo !== undefined],
+      ].find((entry) => entry[1])?.[0]
+    if (unsupported) {
+      UI.error(`${unsupported} requires --mini`)
+      process.exitCode = 1
+      return
+    }
+
+    // Validate local arguments before authorization, but keep both UI entrypoints
+    // behind the account gate. Scripted run/serve/ACP retain their own errors.
+    try {
+      await AppRuntime.runPromise(ensureSignedIn())
+    } catch (error) {
+      UI.error(errorMessage(error))
+      process.exitCode = 1
+      return
+    }
+
+    if (args.mini) {
       const { runMini } = await import("./run")
       await runMini({
         directory: resolveThreadDirectory(args.project),
@@ -184,17 +199,6 @@ export const TuiThreadCommand = cmd({
         replayLimit: args.replayLimit,
         demo: args.demo,
       })
-      return
-    }
-
-    const unsupported = [
-      ["--no-replay", noReplay],
-      ["--replay-limit", args.replayLimit !== undefined],
-      ["--demo", args.demo !== undefined],
-    ].find((entry) => entry[1])?.[0]
-    if (unsupported) {
-      UI.error(`${unsupported} requires --mini`)
-      process.exitCode = 1
       return
     }
 

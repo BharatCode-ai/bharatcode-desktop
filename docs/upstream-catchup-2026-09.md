@@ -14,8 +14,10 @@ Latest audit correction: the Turbo task was still named `opencode#test`, but
 the CLI package is `bharatcode`. An actual `bun turbo test --dry=json` showed
 the CLI test task was absent. Therefore the prior hosted unit job successes
 must not be interpreted as CLI-suite acceptance. The local task-name correction
-adds `bharatcode#test` with its build dependencies; a direct full CLI run is now
-in progress, with failures still to resolve. No checks have been waived.
+adds `bharatcode#test` with its build dependencies. The direct full CLI run finished
+with 3,880 passes, 8 failures, 48 skips and 1 todo across 283 files (391 seconds).
+All eight failure cases now pass in the focused rerun described below, but a new
+full-suite run is still required. No checks have been waived.
 
 The direct CLI help audit also exposed stale upstream snapshots and an obsolete
 `providers` inventory which silently returned root help. The test now verifies
@@ -33,9 +35,25 @@ workspace tests seed the protected credential store via its service instead of
 the retired environment credential import. Focused MCP/help tests pass 3/3 (82
 assertions), workspace tests pass 36/36 (119 assertions). The CLI test preload and
 each subprocess fixture now isolate Windows AppData as well as XDG roots; no
-native Windows suite has been run with this new fixture change yet. Full CLI
-acceptance remains open, including two argument-validation ordering failures and
-a bundled Azure-plugin Node initialization side effect discovered by that run.
+native Windows suite has been run with this new fixture change yet.
+
+The remaining failures were resolved locally: invalid TUI flags are checked before
+sign-in while valid full/mini entrypoints remain account-gated; provider adapters
+import their OAuth sentinel from a side-effect-free constants module instead of
+initializing the protected store/SQLite just to read a string; read-only CLI smokes
+use `auth status` and the public catalog rather than retired provider commands.
+The catalog smoke intercepts HTTP only in its isolated child, rejects unexpected
+requests/credentials, and runs the actual CLI against a synthetic coding record.
+The original models smoke unexpectedly performed a public production catalog GET;
+it did not send credentials, but CI no longer depends on that live request.
+Help now correctly describes catalog discovery as public. Focused rerun including
+all failed files and affected adapters: 131/131, 37 snapshots, 525 assertions;
+OpenCode typecheck passes. No production auth bypass or warning suppression added.
+
+The new full HTTP progress run reached `worktree.create` and remained live beyond
+its scenario deadline. A separate traced prefix through that scenario passed
+90/90, and a focused worktree trace passed 5/5. Timing-sensitive worktree lifecycle
+or teardown remains under investigation; these passing probes do not close it.
 
 The runtime/UI/SDK ports and candidate/publication paths are implemented locally;
 the retained-feature/ancestry audit and final exact-source package acceptance are

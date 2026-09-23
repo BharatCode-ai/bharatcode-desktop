@@ -2,7 +2,7 @@ import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import { which } from "@opencode-ai/core/util/which"
 import type { Hooks } from "@opencode-ai/plugin"
 import { Schema } from "effect"
-import { OAUTH_DUMMY_KEY } from "../auth"
+import { OAUTH_DUMMY_KEY } from "../auth/constants"
 import { Process } from "../util/process"
 
 const AZURE_COGNITIVE_SERVICES_SCOPE = "https://cognitiveservices.azure.com/.default"

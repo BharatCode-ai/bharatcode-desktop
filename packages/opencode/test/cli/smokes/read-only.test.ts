@@ -16,6 +16,7 @@
 // cuts per-spawn cost when this suite gets bigger.
 import { describe, expect } from "bun:test"
 import { Effect } from "effect"
+import { fileURLToPath } from "node:url"
 import { cliIt } from "../../lib/cli-process"
 
 describe("opencode read-only commands (smoke)", () => {
@@ -32,32 +33,29 @@ describe("opencode read-only commands (smoke)", () => {
     60_000,
   )
 
-  // `providers list` enumerates credentials + env-resolved providers.
-  // (Not config-injected ones — those don't appear here by design.) The
-  // Credentials header always renders; the Environment header only renders
-  // when at least one provider env var is set, which the isolation harness
-  // deliberately doesn't guarantee. Assert the always-present marker so the
-  // test passes on a clean CI runner without env-var leakage.
+  // BharatCode replaces upstream provider management with its account surface.
   cliIt.live(
-    "providers list: exits 0 and prints the credentials section",
+    "auth status: exits 0 and reports the isolated signed-out account",
     ({ opencode }) =>
       Effect.gen(function* () {
-        const r = yield* opencode.spawn(["providers", "list"])
-        opencode.expectExit(r, 0, "providers list")
-        expect(r.stdout).toContain("Credentials")
+        const r = yield* opencode.spawn(["auth", "status"])
+        opencode.expectExit(r, 0, "auth status")
+        expect(r.stdout + r.stderr).toContain("Signed out of BharatCode.")
       }),
     60_000,
   )
 
-  // `models` lists models from configured providers. Our test/test-model
-  // should appear because it's wired into the test provider config.
+  // Model discovery uses the public catalog, not config-injected providers.
+  // Stub only HTTP in this child so CI never depends on production availability.
   cliIt.live(
-    "models: exits 0 and lists the test model",
+    "models: exits 0 and lists the public catalog model",
     ({ opencode }) =>
       Effect.gen(function* () {
-        const r = yield* opencode.spawn(["models"])
+        const r = yield* opencode.spawn(["models"], {
+          preload: fileURLToPath(new URL("../fixtures/public-catalog-preload.ts", import.meta.url)),
+        })
         opencode.expectExit(r, 0, "models")
-        expect(r.stdout).toContain("test/test-model")
+        expect(r.stdout.trim()).toBe("bharatcode/fixture-coder")
       }),
     60_000,
   )

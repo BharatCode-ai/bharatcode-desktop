@@ -98,4 +98,14 @@ describe("tui thread", () => {
       expect(result.stderr).toContain("--port cannot be used with --mini")
     }),
   )
+
+  cliIt.live("keeps valid full and mini entrypoints behind sign-in", ({ opencode }) =>
+    Effect.gen(function* () {
+      for (const args of [[], ["--mini"]]) {
+        const result = yield* opencode.spawn(args)
+        opencode.expectExit(result, 1)
+        expect(result.stderr).toContain("Sign in to BharatCode to continue: bharatcode auth login")
+      }
+    }),
+  )
 })
