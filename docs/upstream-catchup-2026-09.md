@@ -10,6 +10,23 @@ than resolving 499 overlapping files at once.
 
 ## Where it stands
 
+### Downloaded search-tool integrity — September 23, 2026
+
+The accepted `58ef562c50` checksum policy was missing from upstream's relocated
+`packages/core/src/ripgrep/binary.ts`. Restored all seven unchanged ripgrep
+15.1.0 archive pins and verify the downloaded bytes before writing an archive or
+starting extraction. System/cached binary selection and the upstream extractor
+remain unchanged. Removed the unused HTTP-client import in the touched module.
+
+RED: hostile bytes reached the extraction boundary. GREEN: downloader/search
+**6/6**, Core typecheck, and full Core **1,123/1,123, 3,125 assertions**.
+An additional Linux smoke used the real downloader with a fresh isolated home,
+no system ripgrep in PATH, the actual pinned GitHub archive, and real extraction:
+`rg --version` returned 15.1.0 and a second resolution reused the cached binary.
+The entire temporary home was removed afterward. No user installation/profile
+was used. Logs: `/tmp/bc-ripgrep-{red,green,types,core-suite,native}.log`;
+the live archive test is Linux-only, not a cross-platform execution claim.
+
 ### Deferred workspace capture — September 23, 2026
 
 Ported the accepted `9343b71ea3` behavior to the current Effect processor without
