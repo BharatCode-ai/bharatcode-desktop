@@ -10,6 +10,33 @@ than resolving 499 overlapping files at once.
 
 ## Where it stands
 
+### Retained sharing and DNS safeguards — September 23, 2026
+
+Auditing the accepted release history found two omitted runtime policies.
+The permanent `ENOTFOUND` fail-fast rule is restored in the bundled V1 retry
+path; temporary `EAI_AGAIN` remains retryable. The new upstream retry delays,
+jitter and bounded retry count are preserved. The V2 runner has no corresponding
+automatic provider retry loop to patch.
+
+The existing `SHARE_NEXT_ENABLED=false` flag had become dead code while upstream
+sharing remained reachable. Shipped builds now consume that gate through the
+existing ProductPolicy and reject request/create/remove/public-URL operations
+with the established safe unavailable error before any sharing network request.
+Background sharing remains inactive. Generic internal upstream fixtures keep
+their original behavior; no new sharing provider, credential reader or API was
+introduced. The compiled beta fixture verifies POST/DELETE rejection, unchanged
+unshared session state and zero external fetch attempts.
+
+Both omissions have RED regressions. GREEN: retry/sharing **69/69, 124
+assertions**, OpenCode typecheck, compiled Node account/SDK lifecycle **2/2**.
+Logs: `/tmp/bc-dns-red.log`, `/tmp/bc-share-gate-red.log`,
+`/tmp/bc-retained-guards-green.log`, `/tmp/bc-retained-guards-types.log`,
+`/tmp/bc-retained-node-smoke.log`. No live sharing or provider calls occurred.
+
+The audit also found upstream package identities still in runtime installation,
+upgrade and uninstall. Restoring the accepted DISTRIBUTION-driven implementation
+is the next concrete correction; the feature audit is not yet complete.
+
 ### Native Windows-to-WSL argument boundary — September 23, 2026
 
 A real native Windows launcher test exposed a production defect: `wsl --`
@@ -31,6 +58,13 @@ from clean source `31d8d49650d7767e0d4495a95f0d42e1cd10c154` (SHA-256
 `4c73080e719562d8af2f9d6236860e37c2d7826a76db8fab8d96c568cded7c65`).
 That first pass used the pending corrected Desktop harness, not a same-SHA
 packaged cohort. Exact-source rebuilding follows the corrective commit.
+
+The subsequent clean **5d20fa1450bd18a3b47a4b0699b7cd8404419a91** build and
+native Windows script passed the full same-source lifecycle. Runtime SHA-256:
+`7874c3e0ae7593e9fe4f99cd4a08f5ce716dc3551eec84b8c8b2208de60cdc33`.
+The compiled Linux transport suite also passed **3/3, 33 assertions**, including
+EOF shutdown. This establishes the actual Windows/WSL process boundary, not
+installed Electron UI or a completed cross-platform package cohort.
 
 Only freshly created test roots were mutated and removed. No installed app,
 protocol handler, real credentials, model requests or user profile was used.

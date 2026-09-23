@@ -87,6 +87,11 @@ export function retryable(error: Err, provider: string) {
   if (SessionV1.ContextOverflowError.isInstance(error)) return undefined
   if (SessionV1.APIError.isInstance(error)) {
     const status = error.data.statusCode
+    if (
+      error.data.metadata?.code?.toUpperCase() === "ENOTFOUND" ||
+      error.data.message.toUpperCase().includes("GETADDRINFO ENOTFOUND")
+    )
+      return undefined
     // 5xx errors are transient server failures and should always be retried,
     // even when the provider SDK doesn't explicitly mark them as retryable.
     if (

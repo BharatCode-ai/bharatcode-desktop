@@ -32,6 +32,22 @@ function wrap(message: unknown): ReturnType<NamedError["toObject"]> {
   return { name: "", data: { message } }
 }
 
+test("permanent DNS lookup failures fail fast while temporary resolver failures remain retryable", () => {
+  for (const data of [
+    { message: "Cannot connect: getaddrinfo ENOTFOUND bharatcode.ai" },
+    { message: "Cannot connect", metadata: { code: "ENOTFOUND" } },
+  ]) {
+    const error = Schema.decodeUnknownSync(SessionV1.APIError.Schema)(
+      new SessionV1.APIError({ ...data, isRetryable: true }).toObject(),
+    )
+    expect(SessionRetry.retryable(error, "bharatcode")).toBeUndefined()
+  }
+  const temporary = Schema.decodeUnknownSync(SessionV1.APIError.Schema)(
+    new SessionV1.APIError({ message: "getaddrinfo EAI_AGAIN", isRetryable: true }).toObject(),
+  )
+  expect(SessionRetry.retryable(temporary, "bharatcode")).toBeDefined()
+})
+
 describe("session.retry.delay", () => {
   test("caps delay at 30 seconds when headers missing", () => {
     const error = apiError()

@@ -26,6 +26,16 @@ test("compiled Node sidecar migrates marketplace before serving protected signed
         if (specifier === "@lydell/node-pty") return {url:${JSON.stringify(pty)},shortCircuit:true};
         return next(specifier,context);
       }});
+      const network = globalThis.fetch;
+      let externalRequests = 0;
+      globalThis.fetch = async (input, init) => {
+        const url = new URL(input instanceof Request ? input.url : input);
+        if (url.hostname !== "127.0.0.1") {
+          externalRequests += 1;
+          throw Error("External network prohibited in compiled fixture");
+        }
+        return network(input, init);
+      };
       const { Server, migrateDesktopCapabilities } = await import(${JSON.stringify(moduleUrl)});
       const userData = path.join(process.env.HOME,"electron");
       await mkdir(userData,{mode:0o700});
@@ -54,6 +64,17 @@ test("compiled Node sidecar migrates marketplace before serving protected signed
         assert.equal(snapshot.state.installed["superpowers-obra"].enabled,false);
         assert.equal(snapshot.state.installed.github.enabled,false);
         assert.equal(snapshot.state.legacy,undefined);
+        const headers = {authorization:"Basic "+Buffer.from("opencode:synthetic-smoke-only").toString("base64"),"content-type":"application/json"};
+        const created = await fetch(new URL("/session",server.url),{method:"POST",headers,body:JSON.stringify({title:"Private sharing fixture"})});
+        assert.equal(created.status,200);
+        const session = await created.json();
+        for (const method of ["POST","DELETE"]) {
+          const blocked = await fetch(new URL("/session/"+session.id+"/share",server.url),{method,headers});
+          assert.equal(blocked.status,500);
+        }
+        const unshared = await fetch(new URL("/session/"+session.id,server.url),{headers});
+        assert.equal((await unshared.json()).share,undefined);
+        assert.equal(externalRequests,0);
         console.log("COMPILED_ACCOUNT_PASS");
       } finally { await server.stop(true); }
       process.exit(0);

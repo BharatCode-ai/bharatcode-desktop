@@ -10,7 +10,8 @@ import { AccessToken, AccountID, OrgID, RefreshToken } from "../../src/account/s
 import { AccountRepo } from "../../src/account/repo"
 import { EventV2Bridge } from "../../src/event-v2-bridge"
 import { Session } from "@/session/session"
-import type { SessionID } from "../../src/session/schema"
+import { SessionID } from "../../src/session/schema"
+import { ProductPolicy } from "../../src/product/policy"
 import { ShareNext } from "@/share/share-next"
 import { SessionShareTable } from "@opencode-ai/core/share/sql"
 import { Database } from "@opencode-ai/core/database/database"
@@ -82,6 +83,33 @@ beforeEach(async () => {
 })
 
 describe("ShareNext", () => {
+  it.live("shipped sharing fails closed before selecting or contacting upstream infrastructure", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const service = yield* ShareNext.Service
+        yield* service.init()
+        for (const action of [
+          service.request(),
+          service.url(),
+          service.create(SessionID.make("ses_unshared_fixture")),
+          service.remove(SessionID.make("ses_unshared_fixture")),
+        ]) {
+          const result = yield* Effect.exit(action)
+          expect(Exit.isFailure(result)).toBe(true)
+          expect(JSON.stringify(result)).toContain("BharatCode Share is not available in this beta.")
+          expect(JSON.stringify(result)).not.toContain("opncd.ai")
+        }
+      }).pipe(
+        Effect.provide(
+          LayerNode.compile(ShareNext.node, [
+            [httpClient, Layer.succeed(HttpClient.HttpClient, none)],
+            [ProductPolicy.node, ProductPolicy.shippedLayer],
+          ]),
+        ),
+      ),
+    ),
+  )
+
   it.live("request uses legacy share API without active org account", () =>
     provideTmpdirInstance(
       () =>

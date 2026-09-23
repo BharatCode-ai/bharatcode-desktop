@@ -19,8 +19,16 @@ import { SessionShareTable } from "@opencode-ai/core/share/sql"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { EventV2 } from "@opencode-ai/core/event"
+import { ProductPolicy } from "@/product/policy"
+import { SHARE_NEXT_ENABLED } from "@/product/feature-gates"
 
-const disabled = process.env["OPENCODE_DISABLE_SHARE"] === "true" || process.env["OPENCODE_DISABLE_SHARE"] === "1"
+export class UnavailableError extends Schema.TaggedErrorClass<UnavailableError>()("BharatCodeShareNextUnavailable", {
+  message: Schema.String,
+}) {}
+
+function unavailable() {
+  return new UnavailableError({ message: "BharatCode Share is not available in this beta." })
+}
 
 export type Api = {
   create: string
@@ -112,6 +120,11 @@ function key(item: Data) {
 const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
+    const policy = yield* ProductPolicy.Service
+    const disabled =
+      (policy.isShipped && !SHARE_NEXT_ENABLED) ||
+      process.env["OPENCODE_DISABLE_SHARE"] === "true" ||
+      process.env["OPENCODE_DISABLE_SHARE"] === "1"
     const account = yield* Account.Service
     const events = yield* EventV2Bridge.Service
     const cfg = yield* Config.Service
@@ -204,6 +217,7 @@ const layer = Layer.effect(
     )
 
     const request = Effect.fn("ShareNext.request")(function* () {
+      if (disabled) return yield* Effect.fail(unavailable())
       const headers: Record<string, string> = {}
       const active = yield* account.active()
       if (Option.isNone(active) || !active.value.active_org_id) {
@@ -308,7 +322,7 @@ const layer = Layer.effect(
     })
 
     const create = Effect.fn("ShareNext.create")(function* (sessionID: SessionID) {
-      if (disabled) return { id: "", url: "", secret: "" }
+      if (disabled) return yield* Effect.fail(unavailable())
       yield* Effect.logInfo("creating share", { sessionID: sessionID })
       const req = yield* request()
       const result = yield* HttpClientRequest.post(`${req.baseUrl}${req.api.create}`).pipe(
@@ -336,7 +350,7 @@ const layer = Layer.effect(
     })
 
     const remove = Effect.fn("ShareNext.remove")(function* (sessionID: SessionID) {
-      if (disabled) return
+      if (disabled) return yield* Effect.fail(unavailable())
       yield* Effect.logInfo("removing share", { sessionID: sessionID })
       const s = yield* InstanceState.get(state)
       const share = yield* getCached(sessionID)
@@ -365,7 +379,16 @@ const layer = Layer.effect(
 export const node = LayerNode.make({
   service: Service,
   layer: layer,
-  deps: [Account.node, EventV2Bridge.node, Config.node, Database.node, httpClient, Provider.node, Session.node],
+  deps: [
+    ProductPolicy.node,
+    Account.node,
+    EventV2Bridge.node,
+    Config.node,
+    Database.node,
+    httpClient,
+    Provider.node,
+    Session.node,
+  ],
 })
 
 export * as ShareNext from "./share-next"
