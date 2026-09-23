@@ -10,6 +10,25 @@ than resolving 499 overlapping files at once.
 
 ## Where it stands
 
+### Desktop suite and CI inclusion — September 23, 2026
+
+The former Desktop suite failure was reproduced: Bun 1.3.14 cannot import
+`node:sqlite`, which is the production Electron/Node binding. The existing draft
+test now bundles the unchanged store and executes it in an isolated Node child.
+It retains the original latest-buffer/flush/blob assertions and consolidates the
+separate disk-reopen smoke, adding unreferenced-blob cleanup and persisted deletion.
+No database mock, runtime binding replacement or skipped assertion was introduced.
+The duplicated draft smoke was removed from the separate compiled-sidecar suite.
+
+Desktop previously had no package test command or Turbo test task. Both are now
+present, so the normal CI test graph includes `bun test src`. A dry graph confirms
+that exact command. Full Desktop source suite: **140/140, 449 Bun assertions**,
+plus child Node assertions; Desktop typecheck passes. Separate compiled-sidecar
+and SDK smoke: **2/2, 7 assertions**. Logs: `/tmp/bc-desktop-full-audit.log`
+(RED), `/tmp/bc-desktop-full-green.log` and `/tmp/bc-desktop-task-graph.json`.
+This closes the previously documented Bun/Node Desktop test mismatch; it does
+not certify installed Electron or the remaining provider-auth-dependent suites.
+
 ### Native Windows storage/recovery refresh — September 23, 2026
 
 Fresh Windows execution verifies credential ACL rejection, no-follow/link and

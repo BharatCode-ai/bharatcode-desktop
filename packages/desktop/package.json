@@ -10,6 +10,7 @@
     "email": "hello@bharatcode.ai"
   },
   "scripts": {
+    "test": "bun test src",
     "typecheck": "tsgo -b",
     "predev": "bun ./scripts/predev.ts",
     "dev": "electron-vite dev",
