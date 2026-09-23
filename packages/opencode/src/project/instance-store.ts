@@ -69,9 +69,11 @@ const layer: Layer.Layer<Service, never, Project.Service | InstanceBootstrap.Ser
         return true
       })
 
-    const completeLoad = (directory: string, input: LoadInput, entry: Entry) =>
+    // Shutdown can interrupt a load between boot and deferred completion.
+    // An exit finalizer settles waiters even when boot or reload preparation is
+    // interrupted; otherwise disposeAll waits forever on the abandoned entry.
+    const completeLoad = (directory: string, entry: Entry) => (exit: Exit.Exit<InstanceContext>) =>
       Effect.gen(function* () {
-        const exit = yield* Effect.exit(boot({ ...input, directory }))
         if (Exit.isFailure(exit)) yield* removeEntry(directory, entry)
         yield* Deferred.done(entry.deferred, exit).pipe(Effect.asVoid)
       })
@@ -116,8 +118,8 @@ const layer: Layer.Layer<Service, never, Project.Service | InstanceBootstrap.Ser
           cache.set(directory, entry)
           yield* Effect.gen(function* () {
             yield* Effect.logInfo("creating instance", { directory: directory })
-            yield* completeLoad(directory, input, entry)
-          }).pipe(Effect.forkIn(scope, { startImmediately: true }))
+            return yield* boot({ ...input, directory })
+          }).pipe(Effect.onExit(completeLoad(directory, entry)), Effect.forkIn(scope, { startImmediately: true }))
           return yield* restore(Deferred.await(entry.deferred))
         }),
       ).pipe(Effect.withSpan("InstanceStore.load"))
@@ -137,8 +139,8 @@ const layer: Layer.Layer<Service, never, Project.Service | InstanceBootstrap.Ser
               yield* Effect.promise(() => runDisposers(directory))
               yield* emitDisposed({ directory, project: input.project?.id })
             }
-            yield* completeLoad(directory, input, entry)
-          }).pipe(Effect.forkIn(scope, { startImmediately: true }))
+            return yield* boot({ ...input, directory })
+          }).pipe(Effect.onExit(completeLoad(directory, entry)), Effect.forkIn(scope, { startImmediately: true }))
           return yield* restore(Deferred.await(entry.deferred))
         }),
       ).pipe(Effect.withSpan("InstanceStore.reload"))

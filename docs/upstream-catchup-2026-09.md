@@ -65,10 +65,26 @@ Help now correctly describes catalog discovery as public. Focused rerun includin
 all failed files and affected adapters: 131/131, 37 snapshots, 525 assertions;
 OpenCode typecheck passes. No production auth bypass or warning suppression added.
 
-The new full HTTP progress run reached `worktree.create` and remained live beyond
-its scenario deadline. A separate traced prefix through that scenario passed
-90/90, and a focused worktree trace passed 5/5. Timing-sensitive worktree lifecycle
-or teardown remains under investigation; these passing probes do not close it.
+The HTTP shutdown stall is now reproduced and corrected locally. A repeating
+real HTTP worktree create/remove probe hung on iteration two with only
+`InstanceStore.disposeAll` pending. A controlled interrupted-bootstrap probe
+confirmed the cause: the load fiber could be interrupted after boot exited but
+before its completion deferred was settled. Shutdown then waited forever on
+that abandoned entry. Load and reload now settle their deferred in an exit
+finalizer, covering cancellation during bootstrap and reload preparation.
+The controlled test failed before the correction and now passes for load,
+reload, and reload overlapping an unfinished load.
+
+Untraced GREEN: the real HTTP worktree probe completed 50 consecutive cycles;
+the full HTTP gate completed all three modes (coverage/auth/effect), each with
+216 passes, zero failures/skips/missing/extra routes. Related instance, bootstrap,
+worktree and HTTP regression suites passed 37 tests with one existing fsmonitor
+skip (84 assertions). The first cold real-plugin bootstrap test had exceeded
+Bun's default five-second test budget twice; measured with a bounded 15-second
+integration budget it completed in 7.92 seconds. Its assertions are unchanged,
+and the deterministic shutdown child still has a separate ten-second failure
+bound. OpenCode typecheck passes. Temporary tracer/stress scripts were removed.
+No timeout, incomplete run, or forced termination is counted as a pass.
 
 A separate deterministic lifecycle regression exposed a concrete harness defect:
 SQLite files were removed before the scenario's application scope closed, while
@@ -79,12 +95,10 @@ storage, swallows deletion failures, or uses a fixed 25ms sleep. A child-process
 probe observes the actual application finalizer on success, assertion failure,
 and setup failure; it failed before the correction and passes afterward. The
 existing caller-directory isolation test also passes (2/2, six assertions).
-OpenCode typecheck passes. The full HTTP gate remains under investigation; this
-cleanup-order fix is not proof that the worktree stall is resolved: an instrumented
-full run again stalled after `worktree.create: shared use done`, locating the
-remaining wait after the HTTP response and assertions. A separate prefix through
-the same route passed 90/90. Temporary periodic sampling was removed from source;
-opt-in handler-disposal phase traces remain for the continuing investigation.
+This cleanup-order correction alone did not resolve the stall: phase sampling
+subsequently placed it after HTTP-handler disposal, leading to the interrupted
+instance-load correction above. Optional handler-disposal traces remain; periodic
+sampling was removed.
 
 The runtime/UI/SDK ports and candidate/publication paths are implemented locally;
 the retained-feature/ancestry audit and final exact-source package acceptance are
@@ -98,14 +112,13 @@ but predate subsequent fixes, so they remain intermediate artifacts. No release,
 installation, live profile, or sister-thread operation is authorized by these
 checks. Recent local commits have not been pushed.
 
-Hosted run `35898998270` still has a live Linux HTTP exerciser step after passing
-both unit-test steps and both browser jobs. A local full-gate run likewise reached
-Effect mode and remained alive without a final report, while two separate traced
-Effect runs each passed 216/216 and exited successfully. This is inconsistent evidence,
-not broad test closure or a proven cause. Progress output is now enabled for each
-HTTP scenario; CI has a 15-minute failure bound. Optional reset-phase tracing
-distinguishes web-handler, instance and DB cleanup. Assertions and the existing
-30-second per-scenario bound are unchanged; no timeout is treated as success.
+The last inspected hosted run `35898998270` used the older remote source and was
+still waiting in the Linux HTTP exerciser after its other test steps passed.
+It does not contain these local corrections. Earlier traced passes were
+insufficient to close the race; the controlled RED/GREEN and untraced complete
+gate above are the new evidence. Progress output and CI's 15-minute step bound
+remain, as does the 30-second scenario bound. Fresh hosted/native acceptance is
+still required after authorization to push the final source.
 
 ## Verification history
 
