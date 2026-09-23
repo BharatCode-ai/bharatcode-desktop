@@ -10,6 +10,29 @@ than resolving 499 overlapping files at once.
 
 ## Where it stands
 
+### Retained dependency security versions — September 23, 2026
+
+Restored DOMPurify 3.4.11 from accepted `e252c31658` at its new consumer,
+`session-ui/markdown-cache.tsx`, using the shared dependency catalog. Removed
+the unused UI-package DOMPurify dependency and the unused OpenCode-package
+minimatch dependency; actual glob matching already lives in Core and retains
+the accepted minimatch 10.2.5 pin. The obsolete 10.0.3 package and its two orphaned
+dependencies disappear from the lockfile. No sanitizer options were weakened.
+
+Frozen install passes. Session UI **83/83**, App **745/745**, browser-condition
+tests **55/55**, production App build and all **19/19 workspace typechecks** pass.
+Real Chromium against the production renderer passed **4/4**: both layouts
+remove scripts/styles/frames, event handlers and javascript URLs while preserving
+safe markdown and noreferrer/noopener links; compaction visibility remains green.
+No production network/account was used.
+
+The previous E2E typecheck did not include `session-compaction.spec.ts`, so that
+earlier claim was narrower than intended. Both new safety and compaction tests
+are now explicitly included with their fixture dependencies. Corrected the
+fixture's literal-ID/optional-text typing; the expanded E2E typecheck passes.
+Logs: `/tmp/bc-security-{deps-install,deps-frozen,session-ui,session-ui-types,
+app-tests,app-build,browser,e2e-types,all-types}.log`.
+
 ### CLI terminal completion and output — September 23, 2026
 
 The subprocess audit exposed a deferred-capture integration regression: updating

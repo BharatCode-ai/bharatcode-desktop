@@ -270,8 +270,8 @@ const childMessages = Array.from({ length: 4 }, (_, index) => [
 
 function renderable(part: MessagePart) {
   if (part.type === "tool" && part.tool === "todowrite") return false
-  if (part.type === "text") return !!part.text.trim()
-  if (part.type === "reasoning") return !!part.text.trim()
+  if (part.type === "text") return !!part.text?.trim()
+  if (part.type === "reasoning") return !!part.text?.trim()
   return part.type !== "step-start" && part.type !== "step-finish" && part.type !== "patch"
 }
 
@@ -330,9 +330,9 @@ export const fixture = {
       time: { created: 1700000002000, updated: 1700000002000 },
     },
   ],
-  sourceID,
-  targetID,
-  childID,
+  sourceID: sourceID as typeof sourceID,
+  targetID: targetID as typeof targetID,
+  childID: childID as typeof childID,
   messages: { [sourceID]: sourceMessages, [targetID]: targetMessages, [childID]: childMessages },
   expected: {
     sourceTitle: "Uncommitted changes inquiry",
