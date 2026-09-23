@@ -9,6 +9,7 @@ import { SettingsKeybinds } from "../settings-keybinds"
 import { SettingsProvidersV2 } from "./providers"
 import { SettingsModelsV2 } from "./models"
 import { SettingsAccount } from "../settings-account"
+import { SettingsMarketplace } from "../settings-marketplace"
 import "./settings-v2.css"
 import { SettingsServersV2 } from "./servers"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
@@ -97,6 +98,10 @@ export const DialogSettings: Component<{
                       <Icon name="models" />
                       {language.t("settings.models.title")}
                     </TabsV2.Trigger>
+                    <TabsV2.Trigger value="marketplace">
+                      <Icon name="providers" />
+                      {language.t("marketplace.title")}
+                    </TabsV2.Trigger>
                   </div>
                 </div>
               </div>
@@ -130,6 +135,9 @@ export const DialogSettings: Component<{
         </Show>
         <TabsV2.Content value="models" class="settings-v2-panel">
           <SettingsModelsV2 />
+        </TabsV2.Content>
+        <TabsV2.Content value="marketplace" class="settings-v2-panel">
+          <SettingsMarketplace v2 />
         </TabsV2.Content>
       </TabsV2>
     </Dialog>

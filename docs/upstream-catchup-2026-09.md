@@ -10,6 +10,39 @@ than resolving 499 overlapping files at once.
 
 ## Where it stands
 
+### Marketplace lifecycle controls in both settings layouts — September 23, 2026
+
+Both settings layouts now expose the selected runtime's marketplace through the
+generated SDK: install disabled, explicit enable/disable, remove, refresh, and
+confirmed runtime reload. The existing settings components, hierarchy and tokens
+are retained. Runtime changes and disposal abort requests and reject stale reads
+or mutations; duplicate actions are suppressed. A failed mutation or reload has
+an uncertain outcome, displays only fixed safe copy, and requires an authoritative
+refresh before another mutation. It never automatically retries publication or
+claims an unconfirmed change was saved. Reload warns that active sessions will
+be interrupted and is never triggered silently after a settings change.
+
+Evidence: **742/742 App unit tests, 3,076 assertions**; **55/55 browser-controller
+tests, 169 assertions**; App and Desktop typechecks and the production frontend
+build pass. The two production-frontend browser fixtures exercise both layouts,
+including a mutation that commits but returns a synthetic 503, refresh recovery,
+all four lifecycle actions and explicit reload. No real MCP, OAuth or application
+profile is involved; external traffic is blocked. The fixtures must use the same
+server and preview port because production web routing uses the page origin.
+An initial mismatched fixture port failed before settings and was corrected in
+the test invocation, not by changing application routing. The unconfirmed-save
+label also has a rendered RED/GREEN regression.
+
+Logs: `/tmp/bc-marketplace-{app-tests,browser-final,app-types-final,desktop-types}.log`,
+`/tmp/bc-marketplace-ui-build-final.log`, `/tmp/bc-marketplace-e2e-final.log` and
+`/tmp/bc-marketplace-save-red.log`. Screenshots are local synthetic evidence at
+`/tmp/bc-marketplace-{legacy,new}.png`.
+
+This completes lifecycle controls, not the full marketplace: effective custom
+configuration status, permission/trust details, connector setup/authentication,
+live connection health and matching installed-package acceptance remain open.
+Nothing was installed, published, or changed in a real profile.
+
 ### One-time marketplace choice migration — September 23, 2026
 
 Native Desktop now imports the previous Electron `bharatcode.capabilities`
