@@ -56,6 +56,7 @@ import { ConstrainDragXAxis, getDraggableId } from "@/utils/solid-dnd"
 import { DebugBar } from "@/components/debug-bar"
 import { TabsInfoPopup } from "@/components/help-button"
 import { Titlebar, type TitlebarUpdate } from "@/components/titlebar"
+import { ChatImportNotice } from "../components/chat-import-notice"
 import { useDirectoryPicker } from "@/components/directory-picker"
 import { ServerConnection, useServer } from "@/context/server"
 import { useLanguage, type Locale } from "@/context/language"
@@ -2259,6 +2260,7 @@ export default function LegacyLayout(props: ParentProps) {
       <Show when={updateVersion() !== undefined}>
         <UpdateAvailableToast version={updateVersion() ?? ""} install={installUpdate} language={language} />
       </Show>
+      <ChatImportNotice />
       <div class="flex-1 min-h-0 min-w-0 flex">
         <div class="flex-1 min-h-0 relative">
           <div class="size-full relative overflow-x-hidden">

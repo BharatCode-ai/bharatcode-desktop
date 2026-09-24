@@ -48,7 +48,11 @@ export default defineConfig({
     },
     build: {
       rollupOptions: {
-        input: { index: "src/main/index.ts", sidecar: "src/main/sidecar.ts" },
+        input: {
+          index: "src/main/index.ts",
+          sidecar: "src/main/sidecar.ts",
+          "chat-import-worker": "src/main/chat-import-worker.ts",
+        },
         // Keep this identical to electron-vite's Node 20.11+ shim. Its regex insertion can
         // corrupt bundled TypeScript, while a Rollup banner places the shim safely.
         output: {
@@ -101,6 +105,9 @@ const require = __cjs_mod__.createRequire(import.meta.url);
     },
   },
   renderer: {
+    define: {
+      "import.meta.env.OPENCODE_CHANNEL": JSON.stringify(channel),
+    },
     plugins: [appPlugin, sentry],
     publicDir: "../../../app/public",
     root: "src/renderer",

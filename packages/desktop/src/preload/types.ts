@@ -55,6 +55,7 @@ export type FatalRendererError = {
 }
 
 export type ElectronAPI = {
+  getChatImportStatus: () => Promise<{ state: "pending" | "complete" | "failed"; imported: number; skipped: number }>
   getAccountStatus: (runtimeId?: string) => Promise<BharatCodeAccountStatus>
   refreshAccountStatus: (runtimeId?: string) => Promise<BharatCodeAccountStatus>
   beginSignIn: (input?: BharatCodeSignInOptions) => Promise<BharatCodeAccountStatus>

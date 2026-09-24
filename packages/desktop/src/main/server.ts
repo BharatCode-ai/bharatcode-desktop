@@ -6,6 +6,7 @@ import { getLogger } from "./logging"
 import { getUserShell, loadShellEnv } from "./shell-env"
 import { getStore } from "./store"
 import { DEFAULT_SERVER_URL_KEY } from "./store-keys"
+import { setChatImportStatus } from "./chat-import-status"
 
 export type HealthCheck = { wait: Promise<void> }
 
@@ -61,6 +62,7 @@ export async function spawnLocalServer(
   options: SpawnLocalServerOptions,
 ) {
   const sidecar = join(dirname(fileURLToPath(import.meta.url)), "sidecar.js")
+  setChatImportStatus({ state: "pending", imported: 0, skipped: 0 })
   const child = utilityProcess.fork(sidecar, [], {
     cwd: process.cwd(),
     env: createSidecarEnv(),
@@ -68,6 +70,7 @@ export async function spawnLocalServer(
     stdio: "pipe",
   })
   let exited = false
+  let importer: ReturnType<typeof utilityProcess.fork> | undefined
   const exit = defer<number>()
 
   const onProcessGone = (_event: unknown, details: Details) => {
@@ -78,6 +81,7 @@ export async function spawnLocalServer(
   app.on("child-process-gone", onProcessGone)
   child.once("exit", (code) => {
     exited = true
+    importer?.kill()
     app.off("child-process-gone", onProcessGone)
     options.onExit?.(code)
     exit.resolve(code)
@@ -162,6 +166,48 @@ export async function spawnLocalServer(
     }
 
     await Promise.race([ready(), gone])
+    // Recovery is never a readiness barrier. A separate process prevents a
+    // locked or damaged old database from hanging the local server or window.
+    try {
+      importer = utilityProcess.fork(join(dirname(sidecar), "chat-import-worker.js"), [], {
+        env: createSidecarEnv(),
+        serviceName: "BharatCode chat import",
+        stdio: "ignore",
+      })
+      let settled = false
+      const timeout = setTimeout(() => {
+        importer?.kill()
+        fail()
+      }, 60_000)
+      const fail = () => {
+        if (settled) return
+        settled = true
+        clearTimeout(timeout)
+        setChatImportStatus({ state: "failed", imported: 0, skipped: 0 })
+        getLogger()?.warn("Previous chat import was not confirmed")
+      }
+      importer.on("message", (value) => {
+        if (settled) return
+        if (
+          (value?.state !== "complete" && value?.state !== "failed") ||
+          !Number.isSafeInteger(value.imported) ||
+          !Number.isSafeInteger(value.skipped)
+        )
+          return fail()
+        settled = true
+        clearTimeout(timeout)
+        setChatImportStatus(value)
+        getLogger()?.info("Previous chat import", {
+          state: value.state,
+          imported: value.imported,
+          skipped: value.skipped,
+        })
+      })
+      importer.once("error", fail)
+      importer.once("exit", fail)
+    } catch {
+      setChatImportStatus({ state: "failed", imported: 0, skipped: 0 })
+    }
   })()
 
   let stopping: Promise<void> | undefined
@@ -170,6 +216,7 @@ export async function spawnLocalServer(
     listener: {
       stop: () => {
         if (stopping) return stopping
+        importer?.kill()
         if (exited) return Promise.resolve()
         child.postMessage({ type: "stop" })
         stopping = Promise.race([

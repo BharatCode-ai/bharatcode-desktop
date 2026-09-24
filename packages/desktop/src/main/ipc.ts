@@ -26,6 +26,7 @@ import { createDesktopDraftStore } from "./draft-store"
 import { nativeT } from "./native-translations"
 import type { createRuntimeAccounts } from "./runtime-accounts"
 import { isOwnedRenderer } from "./windows"
+import { getChatImportStatus } from "./chat-import-status"
 
 const pickerFilters = (ext?: string[]) => {
   if (!ext || ext.length === 0) return undefined
@@ -58,6 +59,11 @@ type Deps = {
 }
 
 export function registerIpcHandlers(deps: Deps) {
+  ipcMain.handle("chat-import-status", (event) => {
+    if (!isOwnedRenderer(event.sender.id) || event.senderFrame !== event.sender.mainFrame)
+      throw new Error("Invalid sender")
+    return getChatImportStatus()
+  })
   const accountAction =
     <T>(run: (input: unknown) => Promise<T> | T) =>
     async (event: IpcMainInvokeEvent, input?: unknown) => {

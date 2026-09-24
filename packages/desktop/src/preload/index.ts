@@ -11,6 +11,7 @@ const updaterHandler = (_: unknown, state: UpdaterState) => {
 }
 
 const api: ElectronAPI = {
+  getChatImportStatus: () => ipcRenderer.invoke("chat-import-status"),
   getAccountStatus: (id) => ipcRenderer.invoke("account-status", id),
   refreshAccountStatus: (id) => ipcRenderer.invoke("account-refresh", id),
   beginSignIn: (input) => ipcRenderer.invoke("account-sign-in", input),

@@ -1,6 +1,8 @@
 // Product-specific copy uses English fallback until translations are reviewed.
 // Kept separate from upstream's positional native-menu translation arrays.
 export const BHARATCODE_NATIVE_ENGLISH = {
+  "desktop.chatImport.interrupted": "Interrupted before chat import",
+  "desktop.chatImport.previousError": "Previous request failed",
   "desktop.dictation.microphone": "BharatCode uses your microphone when you choose to dictate a prompt.",
   "desktop.wsl.error.sender": "This window cannot manage BharatCode WSL.",
   "desktop.wsl.error.request": "The WSL action could not be completed. Check WSL status and try again.",
@@ -23,6 +25,12 @@ export const BHARATCODE_NATIVE_ENGLISH = {
 
 export const BHARATCODE_ENGLISH = {
   ...BHARATCODE_NATIVE_ENGLISH,
+  "chatImport.pending": "Restoring previous chats in the background…",
+  "chatImport.complete": "Restored {{count}} previous chats. Refresh this view to see them.",
+  "chatImport.failed":
+    "Could not confirm the previous chat import. Your original chats are safe. Reopen BharatCode to check and retry.",
+  "chatImport.refresh": "Refresh view",
+  "chatImport.dismiss": "Dismiss",
   "marketplace.title": "Marketplace",
   "marketplace.scope":
     "Settings belong to the selected runtime. Reload to apply changes. Custom configuration can override these settings.",

@@ -218,6 +218,7 @@ const createPlatform = (windowState: DesktopWindowState): Platform => {
     },
 
     exportDebugLogs: () => window.api.exportDebugLogs(),
+    getChatImportStatus: () => window.api.getChatImportStatus(),
 
     setForceFocus: (enabled) => window.api.setForceFocus(enabled),
 
