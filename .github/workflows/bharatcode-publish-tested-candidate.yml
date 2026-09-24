@@ -4,31 +4,35 @@ on:
   workflow_dispatch:
     inputs:
       source_sha:
-        description: Exact source SHA of the manually tested candidate
+        description: Exact source SHA of the tested Desktop candidate
         required: true
         type: string
       build_run_id:
-        description: Successful Build release candidate run ID (no rebuild is performed)
+        description: Successful Desktop candidate workflow run (no rebuild)
+        required: true
+        type: string
+      build_run_attempt:
+        description: Exact successful attempt that produced the tested artifacts
         required: true
         type: string
       candidate_sha256:
-        description: SHA-256 of desktop-candidate.tar.gz recorded before manual testing
+        description: SHA-256 of the tested artifact's cohort.json
         required: true
         type: string
       manual_acceptance_confirmed:
-        description: I completed and approved the platform checklist for these exact artifacts
+        description: I approve publication of these exact tested artifacts and documented limitations
         required: true
-        default: false
         type: boolean
+        default: false
       acceptance_notes:
-        description: Tester, date, tested OS/architectures, checklist results, and explicitly approved limitations
+        description: Tester, date, OS/architectures, checklist results and explicitly approved limitations
         required: true
         type: string
       notify_website:
-        description: Notify the website after publication and successful download checks
+        description: Notify the website only after publication and download verification
         required: true
-        default: false
         type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -41,149 +45,128 @@ concurrency:
 env:
   SOURCE_SHA: ${{ inputs.source_sha }}
   SOURCE_RUN_ID: ${{ inputs.build_run_id }}
+  SOURCE_RUN_ATTEMPT: ${{ inputs.build_run_attempt }}
   CANDIDATE_SHA256: ${{ inputs.candidate_sha256 }}
 
 jobs:
   publish:
     if: inputs.manual_acceptance_confirmed && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-    runs-on: ubuntu-24.04
     environment: desktop-beta-release
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
       actions: read
     steps:
-      - name: Check operator approval and build identity
+      - name: Verify original producer and explicit acceptance
         env:
           GH_TOKEN: ${{ github.token }}
           ACCEPTANCE_NOTES: ${{ inputs.acceptance_notes }}
         shell: bash
         run: |
           set -euo pipefail
+          [[ "$GITHUB_REPOSITORY" == 'BharatCode-ai/bharatcode-desktop' ]]
           [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$SOURCE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$SOURCE_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
           [[ "$CANDIDATE_SHA256" =~ ^[0-9a-f]{64}$ ]]
-          [[ -n "$ACCEPTANCE_NOTES" ]]
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID" > "$RUNNER_TEMP/candidate-run.json"
-          jq -e --arg sha "$SOURCE_SHA" --arg run "$SOURCE_RUN_ID" '
-            (.id | tostring) == $run and .head_sha == $sha and .event == "workflow_dispatch" and
-            .conclusion == "success" and .path == ".github/workflows/bharatcode-next-beta-candidate.yml"
-          ' "$RUNNER_TEMP/candidate-run.json" > /dev/null
+          [[ -n "${ACCEPTANCE_NOTES//[[:space:]]/}" ]]
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/attempts/$SOURCE_RUN_ATTEMPT" \
+            | jq -e --arg sha "$SOURCE_SHA" --arg run "$SOURCE_RUN_ID" --arg attempt "$SOURCE_RUN_ATTEMPT" '
+              (.id | tostring) == $run and (.run_attempt | tostring) == $attempt and
+              .head_sha == $sha and .event == "workflow_dispatch" and
+              .status == "completed" and .conclusion == "success" and
+              .repository.full_name == "BharatCode-ai/bharatcode-desktop" and
+              .path == ".github/workflows/publish.yml"
+            ' > /dev/null
 
-      - name: Checkout exact candidate tooling, not moving branch HEAD
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - name: Checkout exact candidate tooling
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          persist-credentials: false
           ref: ${{ inputs.source_sha }}
-      - name: Setup repository-pinned Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+          persist-credentials: false
+      - name: Setup pinned Bun without installing or rebuilding
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: package.json
-      - name: Download the tested archive from its original run
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      - name: Download the exact tested cohort
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           github-token: ${{ github.token }}
           run-id: ${{ inputs.build_run_id }}
-          name: desktop-candidate-${{ inputs.build_run_id }}
-          path: candidate-download
-          digest-mismatch: error
-      - name: Verify the tested archive, then extract it
+          name: desktop-cohort-${{ inputs.build_run_id }}-${{ inputs.build_run_attempt }}
+          path: ${{ runner.temp }}/tested-cohort
+      - name: Verify all bytes and assemble updater metadata
+        id: stage
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]]
-          cd candidate-download
-          # These three bind the archive: the operator recorded this digest from
-          # the artifacts they tested, download-artifact fails on a digest
-          # mismatch, and the previous step already proved the run that produced
-          # it was this workflow, at this commit, and succeeded. A sigstore
-          # attestation chain on top verified the same facts against the same
-          # trust root, and was the most failure-prone step in the pipeline.
-          printf '%s  desktop-candidate.tar.gz\n' "$CANDIDATE_SHA256" | sha256sum --check -
-          # The archive is flat: reject traversal, links, devices, and extra directories.
-          tar -tzf desktop-candidate.tar.gz > "$RUNNER_TEMP/candidate-entries.txt"
-          if grep -Ev '^(\./)?[A-Za-z0-9][A-Za-z0-9._-]*$|^\./$' "$RUNNER_TEMP/candidate-entries.txt"; then exit 1; fi
-          if tar -tvzf desktop-candidate.tar.gz | grep -Ev '^[-d]'; then exit 1; fi
-          mkdir ../release-assets
-          tar -xzf desktop-candidate.tar.gz -C ../release-assets --no-same-owner
-          cd ..
-          bun packages/desktop/scripts/batch-release.mjs verify
-          (cd release-assets && sha256sum --check SHA256SUMS)
-          tag="$(jq -r .tag release-assets/release-manifest.json)"
-          [[ "$tag" =~ ^desktop-beta-[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
+          bun packages/desktop/scripts/stage-tested-release.ts "$RUNNER_TEMP/tested-cohort" "$RUNNER_TEMP/release-assets"
+          (cd "$RUNNER_TEMP/release-assets" && sha256sum --check SHA256SUMS)
 
-      - name: Record manual acceptance and create a new draft without overwrite
+      - name: Create new draft and upload without overwrite
+        id: draft
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.stage.outputs.tag }}
           ACCEPTANCE_NOTES: ${{ inputs.acceptance_notes }}
         shell: bash
         run: |
           set -euo pipefail
-          # The repo-level immutable-releases setting is not read here:
-          # GITHUB_TOKEN cannot be granted the Administration permission it
-          # needs, and `permissions:` has no key for it. The next step asserts
-          # `.immutable == true` on the release itself, which is the fact that
-          # actually matters and is readable.
-          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo 'Release already exists. Refusing overwrite; investigate or abandon the candidate.' >&2; exit 1
-          fi
-          [[ -z "$(git ls-remote origin "refs/tags/$RELEASE_TAG")" ]]
+          [[ "$RELEASE_TAG" =~ ^desktop-beta-[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/releases" --paginate --slurp \
+            | jq -e --arg tag "$RELEASE_TAG" '[.[][] | select(.tag_name == $tag)] | length == 0' > /dev/null
+          gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/$RELEASE_TAG" \
+            | jq -e --arg ref "refs/tags/$RELEASE_TAG" '[.[] | select(.ref == $ref)] | length == 0' > /dev/null
           {
-            echo 'BharatCode Desktop beta. Windows and Linux are unsigned. Both macOS architectures are Developer ID signed and notarized.'
+            echo 'BharatCode Desktop beta. Windows and Linux are unsigned; both macOS architectures are Developer ID signed and notarized.'
             echo
             echo "Source: $SOURCE_SHA"
-            echo "Build: https://github.com/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID"
-            echo "Tested archive SHA-256: $CANDIDATE_SHA256"
+            echo "Build: https://github.com/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/attempts/$SOURCE_RUN_ATTEMPT"
+            echo "Tested cohort manifest SHA-256: $CANDIDATE_SHA256"
             echo "Manual acceptance approved by $GITHUB_ACTOR at $(date -u +%FT%TZ):"
             printf '%s\n' "$ACCEPTANCE_NOTES"
             echo
-            echo 'Automated Hyper-V/JIT and upgrade/rollback harnesses were not run; manual acceptance is not an automated PASS.'
+            echo 'Package-build receipts remain acceptance pending; this operator approval does not turn unexecuted automated tests into PASS.'
           } > "$RUNNER_TEMP/release-notes.md"
-          gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --target "$SOURCE_SHA" \
-            --title "BharatCode $RELEASE_TAG" --notes-file "$RUNNER_TEMP/release-notes.md" --draft --prerelease
-          gh release upload "$RELEASE_TAG" release-assets/* --repo "$GITHUB_REPOSITORY"
-          # A draft carries a tag_name but creates no git ref, so it can only be
-          # addressed by id until it is published.
-          release_id="$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
-            --jq "[.[] | select(.tag_name == \"$RELEASE_TAG\" and .draft == true)] | first | .id")"
-          [[ "$release_id" =~ ^[1-9][0-9]*$ ]]
-          echo "RELEASE_ID=$release_id" >> "$GITHUB_ENV"
+          jq -n --arg tag "$RELEASE_TAG" --arg sha "$SOURCE_SHA" --rawfile notes "$RUNNER_TEMP/release-notes.md" \
+            '{tag_name:$tag,target_commitish:$sha,name:("BharatCode " + $tag),body:$notes,draft:true,prerelease:true}' \
+            | gh api "repos/$GITHUB_REPOSITORY/releases" --method POST --input - > "$RUNNER_TEMP/draft.json"
+          release_id=$(jq -er '.id | select(type == "number")' "$RUNNER_TEMP/draft.json")
+          echo "id=$release_id" >> "$GITHUB_OUTPUT"
+          gh release upload "$RELEASE_TAG" "$RUNNER_TEMP"/release-assets/* --repo "$GITHUB_REPOSITORY"
 
-      - name: Verify uploaded bytes, then publish
+      - name: Verify uploaded digests before publication
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.stage.outputs.tag }}
+          RELEASE_ID: ${{ steps.draft.outputs.id }}
         shell: bash
         run: |
           set -euo pipefail
-          # Compare the digests GitHub computed for the uploaded assets against
-          # SHA256SUMS, which `sha256sum --check` already bound to these exact
-          # files. SHA256SUMS does not list itself, so add its own digest.
-          { cat release-assets/SHA256SUMS
-            printf '%s  SHA256SUMS\n' "$(sha256sum release-assets/SHA256SUMS | cut -d' ' -f1)"
-          } | sort > "$RUNNER_TEMP/expected-digests.txt"
-          # A draft is addressable by id only: it has a tag_name but no git ref,
-          # so /releases/tags/{tag} 404s until it is published.
-          gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
-            --jq '.assets[] | "\(.digest | ltrimstr("sha256:"))  \(.name)"' \
+          cd "$RUNNER_TEMP/release-assets"
+          sha256sum --check SHA256SUMS
+          { cat SHA256SUMS; sha256sum SHA256SUMS; } | sort > "$RUNNER_TEMP/expected-digests.txt"
+          gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" > "$RUNNER_TEMP/uploaded.json"
+          jq -e --arg sha "$SOURCE_SHA" --arg tag "$RELEASE_TAG" \
+            '.draft == true and .prerelease == true and .target_commitish == $sha and .tag_name == $tag' "$RUNNER_TEMP/uploaded.json" > /dev/null
+          jq -r '.assets[] | "\(.digest | ltrimstr("sha256:"))  \(.name)"' "$RUNNER_TEMP/uploaded.json" \
             | sort > "$RUNNER_TEMP/uploaded-digests.txt"
           diff "$RUNNER_TEMP/expected-digests.txt" "$RUNNER_TEMP/uploaded-digests.txt"
-
-          gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --method PATCH \
-            -F draft=false -F prerelease=true > /dev/null
-
-          # Publication seals the release. Confirm it landed sealed, at the
-          # tested source, carrying the same asset set.
-          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > release-state.json
+          gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --method PATCH -F draft=false -F prerelease=true > /dev/null
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > "$RUNNER_TEMP/published.json"
           jq -e --arg sha "$SOURCE_SHA" --arg tag "$RELEASE_TAG" \
-            --argjson count "$(wc -l < "$RUNNER_TEMP/expected-digests.txt")" '
-            .draft == false and .prerelease == true and .immutable == true and
-            .tag_name == $tag and .target_commitish == $sha and (.assets | length) == $count
-          ' release-state.json > /dev/null
+            '.draft == false and .prerelease == true and .immutable == true and .target_commitish == $sha and .tag_name == $tag' "$RUNNER_TEMP/published.json" > /dev/null
+          jq -r '.assets[] | "\(.digest | ltrimstr("sha256:"))  \(.name)"' "$RUNNER_TEMP/published.json" \
+            | sort > "$RUNNER_TEMP/published-digests.txt"
+          diff "$RUNNER_TEMP/expected-digests.txt" "$RUNNER_TEMP/published-digests.txt"
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir "$RUNNER_TEMP/live-downloads"
+          (cd "$RUNNER_TEMP/live-downloads" && sha256sum --check "$RUNNER_TEMP/expected-digests.txt")
 
-      - name: Notify website only after live downloads pass
+      - name: Notify website only after download verification
         if: inputs.notify_website
         env:
           GH_TOKEN: ${{ secrets.BHARATCODE_WEBSITE_DISPATCH_TOKEN }}
+          RELEASE_TAG: ${{ steps.stage.outputs.tag }}
         shell: bash
         run: |
           set -euo pipefail
