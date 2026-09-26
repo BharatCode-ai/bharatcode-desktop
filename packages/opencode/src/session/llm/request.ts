@@ -14,6 +14,7 @@ import { Effect, Record } from "effect"
 import { jsonSchema, tool as aiTool, type ModelMessage, type Tool } from "ai"
 import type { Plugin } from "@/plugin"
 import { mergeDeep } from "remeda"
+import { repairMessages } from "./repair"
 
 const USER_AGENT = `opencode/${InstallationVersion}`
 
@@ -98,7 +99,7 @@ export const prepare = Effect.fn("LLMRequestPrep.prepare")(function* (input: Pre
   }
   if (isOpenaiOauth) options.instructions = system.join("\n")
 
-  const messages =
+  const assembled =
     isOpenaiOauth || input.isWorkflow
       ? input.messages
       : [
@@ -110,6 +111,14 @@ export const prepare = Effect.fn("LLMRequestPrep.prepare")(function* (input: Pre
           ),
           ...input.messages,
         ]
+  const { messages, issues } = repairMessages(assembled)
+  if (issues.length > 0)
+    yield* Effect.logWarning("repaired prompt messages that failed the AI SDK schema", {
+      "session.id": input.sessionID,
+      providerID: input.model.providerID,
+      modelID: input.model.id,
+      issues: JSON.stringify(issues),
+    })
 
   const params = yield* input.plugin.trigger(
     "chat.params",
