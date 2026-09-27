@@ -182,33 +182,37 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Read the registry uncached. npm's own cache and the registry CDN both hold a
+          # package document for up to 300s, so a read taken before publishing can keep
+          # answering "not published" long after the version exists.
+          registry() {
+            curl -fsS --retry 2 -H 'Cache-Control: no-cache' -H 'Accept: application/json' \
+              "https://registry.npmjs.org/$1?nocache=$(date +%s%N)"
+          }
           published() {
-            npm view "$1@$VERSION" dist.integrity --json --registry https://registry.npmjs.org 2> /dev/null \
-              | jq -e --arg expected "$2" '. == $expected' > /dev/null 2>&1
+            registry "$1/$VERSION" 2> /dev/null | jq -e --arg expected "$2" '.dist.integrity == $expected' > /dev/null 2>&1
           }
           tagged() {
-            npm view "$1" dist-tags --json --registry https://registry.npmjs.org 2> /dev/null \
+            registry "-/package/$1/dist-tags" 2> /dev/null \
               | jq -e --arg tag "$NPM_TAG" --arg version "$VERSION" '.[$tag] == $version' > /dev/null 2>&1
           }
           jq -er '.packages[] | [.name,.file,.integrity] | @tsv' "$RUNNER_TEMP/verified-cli.json" | while IFS=$'\t' read -r name file integrity; do
-            # A rerun after a partial publication must not republish: npm versions are
-            # immutable. Skip only when the registry already holds these exact bytes;
-            # anything else goes to npm publish, which rejects a conflicting version.
-            if published "$name" "$integrity"; then
-              echo "$name@$VERSION already published with the verified integrity"
-            else
-              npm publish "$RUNNER_TEMP/cli-candidate/$file" --access public --provenance --ignore-scripts --tag "$NPM_TAG" --registry https://registry.npmjs.org
-            fi
-            # The registry can take minutes to serve a new version; wait for the exact
-            # bytes and the dist-tag before publishing the next package (the wrapper is last).
-            for attempt in $(seq 1 45); do
-              if published "$name" "$integrity" && tagged "$name"; then break; fi
-              if [ "$attempt" = 45 ]; then
-                echo "::error::$name@$VERSION is not visible on npm with the verified integrity and $NPM_TAG tag"
-                exit 1
+            npm publish "$RUNNER_TEMP/cli-candidate/$file" --access public --provenance --ignore-scripts --tag "$NPM_TAG" --registry https://registry.npmjs.org < /dev/null
+            # The registry takes a minute or two to serve a new version; wait for the
+            # exact bytes and the dist-tag before publishing the next (the wrapper is last).
+            verified=false
+            for _ in $(seq 1 45); do
+              if published "$name" "$integrity" && tagged "$name"; then
+                verified=true
+                break
               fi
               sleep 20
             done
+            if [ "$verified" != true ]; then
+              echo "::error::$name@$VERSION is not visible on npm with the verified integrity and $NPM_TAG tag"
+              exit 1
+            fi
+            echo "$name@$VERSION verified on npm ($NPM_TAG)"
           done
       - name: Publish verified tarballs as a new immutable GitHub release
         if: inputs.publish_github
