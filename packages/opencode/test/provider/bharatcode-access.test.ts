@@ -15,6 +15,7 @@ import { Provider } from "@/provider/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { testEffect } from "../lib/effect"
+import { MODEL_CATALOG_UNAVAILABLE, MODEL_SIGN_IN_REQUIRED } from "@opencode-ai/core/util/model-recovery"
 
 const MESSAGE =
   "BharatCode App is only available to Pro subscribers. If you're a student, please sign in with your student email id instead or reach out at help@bharatcode.ai to verify your student status. BharatCode Chat is free for all users, visit chat.bharatcode.ai."
@@ -23,18 +24,21 @@ const providerLayer = LayerNode.compile(Provider.node, [
   // This file exercises the shipped surface, and a test build is generic by
   // default, so ask for the shipped policy explicitly.
   [ProductPolicy.node, ProductPolicy.shippedLayer],
-  [BharatCodeCatalog.node, Layer.mock(BharatCodeCatalog.Service, {
-    list: () =>
-      Effect.fail(
-        new BharatCodeAccount.ServiceError({
-          operation: "model catalog",
-          status: 402,
-          errorCode: "subscription_required",
-          retriable: false,
-          message: "BharatCode model catalog is currently unavailable.",
-        }),
-      ),
-  })],
+  [
+    BharatCodeCatalog.node,
+    Layer.mock(BharatCodeCatalog.Service, {
+      list: () =>
+        Effect.fail(
+          new BharatCodeAccount.ServiceError({
+            operation: "model catalog",
+            status: 402,
+            errorCode: "subscription_required",
+            retriable: false,
+            message: "BharatCode model catalog is currently unavailable.",
+          }),
+        ),
+    }),
+  ],
 ])
 
 const futureModels: BharatCodeCatalog.Model[] = [
@@ -107,7 +111,10 @@ const currentProviderLayer = LayerNode.compile(Provider.node, [
   // This file exercises the shipped surface, and a test build is generic by
   // default, so ask for the shipped policy explicitly.
   [ProductPolicy.node, ProductPolicy.shippedLayer],
-  [BharatCodeCatalog.node, Layer.mock(BharatCodeCatalog.Service, { list: () => Effect.succeed(futureModels.slice(0, 1)) })],
+  [
+    BharatCodeCatalog.node,
+    Layer.mock(BharatCodeCatalog.Service, { list: () => Effect.succeed(futureModels.slice(0, 1)) }),
+  ],
 ])
 
 const it = testEffect(providerLayer)
@@ -126,6 +133,51 @@ it.instance("carries a protected-catalog subscription denial through model looku
   }),
 )
 
+function failingCatalog(error: BharatCodeCatalog.Error) {
+  return LayerNode.compile(Provider.node, [
+    [ProductPolicy.node, ProductPolicy.shippedLayer],
+    [BharatCodeCatalog.node, Layer.mock(BharatCodeCatalog.Service, { list: () => Effect.fail(error) })],
+  ])
+}
+
+const lookupFailure = Effect.gen(function* () {
+  const provider = yield* Provider.Service
+  const failure = yield* provider
+    .getModel(ProviderV2.ID.make("bharatcode"), ModelV2.ID.make("deepseek-v4.1-flash"))
+    .pipe(Effect.flip)
+  expect(failure).toBeInstanceOf(Provider.ModelNotFoundError)
+  return Provider.modelNotFoundMessage(failure)
+})
+
+// A catalog that fails to load leaves no models; the lookup must say why rather
+// than claim a model that exists was "not found".
+testEffect(
+  failingCatalog(
+    new BharatCodeAccount.ServiceError({
+      operation: "model catalog",
+      status: 503,
+      retriable: true,
+      message: "BharatCode model catalog is currently unavailable.",
+    }),
+  ),
+).instance("explains an unreachable catalog instead of reporting the model as not found", () =>
+  Effect.gen(function* () {
+    const message = yield* lookupFailure
+    expect(message).toBe(MODEL_CATALOG_UNAVAILABLE)
+    expect(message).not.toContain("Model not found")
+  }),
+)
+
+testEffect(failingCatalog(new BharatCodeAccount.SignInRequired({ message: "expired" }))).instance(
+  "asks for sign-in when the catalog load needs a fresh session",
+  () =>
+    Effect.gen(function* () {
+      const message = yield* lookupFailure
+      expect(message).toBe(MODEL_SIGN_IN_REQUIRED)
+      expect(message).toContain("bharatcode auth login")
+    }),
+)
+
 testEffect(futureProviderLayer).instance("lists and resolves every eligible live catalog model without aliases", () =>
   Effect.gen(function* () {
     const provider = yield* Provider.Service
@@ -138,7 +190,10 @@ testEffect(futureProviderLayer).instance("lists and resolves every eligible live
       "bharatcode:qwen36-35b-awq-200k",
     ])
     expect(models).not.toHaveProperty("bharatcode:future-embedding")
-    const future = yield* provider.getModel(ProviderV2.ID.make("bharatcode"), ModelV2.ID.make("bharatcode:future-text-coder"))
+    const future = yield* provider.getModel(
+      ProviderV2.ID.make("bharatcode"),
+      ModelV2.ID.make("bharatcode:future-text-coder"),
+    )
     expect(String(future.id)).toBe("bharatcode:future-text-coder")
     expect(future.capabilities).toMatchObject({
       temperature: false,
@@ -146,7 +201,10 @@ testEffect(futureProviderLayer).instance("lists and resolves every eligible live
       toolcall: true,
       attachment: false,
     })
-    const heavy = yield* provider.getModel(ProviderV2.ID.make("bharatcode"), ModelV2.ID.make("bharatcode:future-heavy-coder"))
+    const heavy = yield* provider.getModel(
+      ProviderV2.ID.make("bharatcode"),
+      ModelV2.ID.make("bharatcode:future-heavy-coder"),
+    )
     expect(String(heavy.id)).toBe("bharatcode:future-heavy-coder")
   }),
 )

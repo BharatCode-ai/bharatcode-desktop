@@ -187,14 +187,10 @@ export function parseAPICallError(input: { providerID: ProviderV2.ID; error: API
       errorCode,
       serverMessage,
     }) ?? message(input.providerID, input.error)
-  // A plan denial is explained by apiDenialMessage; passing the raw body through
-  // as well would surface the upstream provider's wording alongside ours.
+  // A plan denial is fully explained by apiDenialMessage; passing the raw body
+  // through as well would show the same refusal twice.
   const responseBody =
-    input.providerID === "bharatcode" &&
-    errorCode === "model_not_in_plan" &&
-    m === BharatCodeModel.MODEL_ACCESS_DENIED_MESSAGE
-      ? undefined
-      : input.error.responseBody
+    input.providerID === "bharatcode" && errorCode === "model_not_in_plan" ? undefined : input.error.responseBody
   if (isContextOverflow(m) || input.error.statusCode === 413 || body?.error?.code === "context_length_exceeded") {
     return {
       type: "context_overflow",

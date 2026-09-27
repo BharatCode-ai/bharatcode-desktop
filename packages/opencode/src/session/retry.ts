@@ -87,6 +87,18 @@ export function retryable(error: Err, provider: string) {
   if (SessionV1.ContextOverflowError.isInstance(error)) return undefined
   if (SessionV1.APIError.isInstance(error)) {
     const status = error.data.statusCode
+    // BharatCode's API reports a definitive refusal as a 4xx (plan denial, or the
+    // model rejecting the request as invalid). Its message may quote a limit such
+    // as "5000", which the message patterns below would mistake for a status.
+    if (
+      provider === "bharatcode" &&
+      status !== undefined &&
+      status >= 400 &&
+      status < 500 &&
+      status !== 408 &&
+      status !== 429
+    )
+      return undefined
     if (
       error.data.metadata?.code?.toUpperCase() === "ENOTFOUND" ||
       error.data.message.toUpperCase().includes("GETADDRINFO ENOTFOUND")

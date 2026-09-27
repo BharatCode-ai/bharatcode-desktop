@@ -48,6 +48,25 @@ test("permanent DNS lookup failures fail fast while temporary resolver failures 
   expect(SessionRetry.retryable(temporary, "bharatcode")).toBeDefined()
 })
 
+test("BharatCode refusals are final even when their text quotes a status-like number", () => {
+  const decode = (data: Record<string, unknown>) =>
+    Schema.decodeUnknownSync(SessionV1.APIError.Schema)(new SessionV1.APIError(data as any).toObject())
+  for (const statusCode of [400, 403]) {
+    const error = decode({
+      message: "The model rejected this request: max_tokens must be at most 5000",
+      statusCode,
+      isRetryable: false,
+    })
+    expect(SessionRetry.retryable(error, "bharatcode")).toBeUndefined()
+  }
+  expect(
+    SessionRetry.retryable(decode({ message: "Too Many Requests", statusCode: 429, isRetryable: true }), "bharatcode"),
+  ).toBeDefined()
+  expect(
+    SessionRetry.retryable(decode({ message: "Model unavailable.", statusCode: 503, isRetryable: true }), "bharatcode"),
+  ).toBeDefined()
+})
+
 describe("session.retry.delay", () => {
   test("caps delay at 30 seconds when headers missing", () => {
     const error = apiError()
