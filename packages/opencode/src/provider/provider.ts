@@ -1526,7 +1526,9 @@ const layer = Layer.effect(
               baseURL: BharatCodeAccount.MODEL_API_BASE_URL,
               apiKey: "bharatcode-native-oauth",
               fetch: (input: string | URL | Request, init?: RequestInit) =>
-                bridge.promise(bharatCodeAccount.authenticatedFetch(input, init)),
+                bridge
+                  .promise(bharatCodeAccount.authenticatedFetch(input, init))
+                  .catch((error) => Promise.reject(BharatCodeAccount.fetchFailure(init?.signal, error))),
             },
             models,
           }

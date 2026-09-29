@@ -5,6 +5,10 @@ import path from "node:path"
 import { Effect, Layer, Semaphore } from "effect"
 import { Auth } from "@/auth"
 import { BharatCodeAccount } from "@/bharatcode/account"
+import { ProviderV2 } from "@opencode-ai/core/provider"
+import { ProviderError } from "@/provider/error"
+import { MessageV2 } from "@/session/message-v2"
+import { SessionRetry } from "@/session/retry"
 
 function authStore(initial?: Auth.Info) {
   let store: Auth.Store = initial ? { bharatcode: initial } : {}
@@ -807,4 +811,43 @@ describe("BharatCode native account", () => {
       await fs.rm(root, { recursive: true, force: true })
     }
   }, 30_000)
+
+  test("a request its caller aborted is reported as that abort, not as an unreachable service", async () => {
+    // Desktop gives a queued model request 5 minutes to send headers. That
+    // timeout used to surface as "could not reach the service" and was not retried.
+    const controller = new AbortController()
+    const { promise } = run(
+      BharatCodeAccount.use.authenticatedFetch("https://bharatcode.ai/api/model/v1/chat/completions", {
+        method: "POST",
+        signal: controller.signal,
+      }),
+      {
+        initial: oauth({ expires: 9_999_999 }),
+        now: () => 1_000,
+        // Like fetch: an abort rejects with the signal's reason.
+        fetch: (_input, init) =>
+          new Promise((_resolve, reject) => init?.signal?.addEventListener("abort", () => reject(init.signal!.reason))),
+      },
+    )
+    controller.abort(new ProviderError.HeaderTimeoutError(300_000))
+    const error = await promise.catch((error: unknown) => error)
+    expect(error).toBeInstanceOf(BharatCodeAccount.TransportError)
+    expect((error as BharatCodeAccount.TransportError).cause).toBeInstanceOf(ProviderError.HeaderTimeoutError)
+
+    const reported = BharatCodeAccount.fetchFailure(controller.signal, error)
+    expect(reported).toBeInstanceOf(ProviderError.HeaderTimeoutError)
+    const providerID = ProviderV2.ID.make("bharatcode")
+    expect(SessionRetry.retryable(MessageV2.fromError(reported, { providerID }), providerID)).toEqual({
+      message: "Provider response headers timed out after 300000ms",
+    })
+  })
+
+  test("a real network failure still reports the service as unreachable", () => {
+    const error = new BharatCodeAccount.TransportError({
+      operation: "authenticated request",
+      message: "BharatCode authenticated request could not reach the service.",
+    })
+    expect(BharatCodeAccount.fetchFailure(new AbortController().signal, error)).toBe(error)
+    expect(BharatCodeAccount.fetchFailure(undefined, error)).toBe(error)
+  })
 })

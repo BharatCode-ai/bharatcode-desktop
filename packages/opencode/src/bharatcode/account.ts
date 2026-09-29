@@ -161,6 +161,13 @@ function parseIdentity(value: unknown): Identity | undefined {
   }
 }
 
+// A request its caller aborted (a cancel, or a provider timeout such as the
+// response-header timeout) did not fail to reach the service. Report the
+// abort's own reason so it is classified, shown and retried as what it is.
+export function fetchFailure(signal: AbortSignal | null | undefined, error: unknown) {
+  return signal?.aborted && signal.reason !== undefined ? signal.reason : error
+}
+
 function accountChanged(operation: string) {
   return new ServiceError({
     operation,
@@ -232,10 +239,11 @@ export const layerWith = (options: LayerOptions = {}) =>
       ) {
         return yield* Effect.tryPromise({
           try: () => fetchImpl(input, init),
-          catch: () =>
+          catch: (cause) =>
             new TransportError({
               operation,
               message: `BharatCode ${operation} could not reach the service.`,
+              cause,
             }),
         })
       })
