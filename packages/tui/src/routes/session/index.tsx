@@ -1,3 +1,5 @@
+import { outputLimitKey } from "@opencode-ai/ui/i18n/output-limit"
+import { dict as english } from "@opencode-ai/ui/i18n/en"
 import {
   batch,
   createContext,
@@ -1473,6 +1475,7 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
   const sync = useSync()
   const messages = createMemo(() => sync.data.message[props.message.sessionID] ?? [])
   const model = createMemo(() => Model.name(ctx.providers(), props.message.providerID, props.message.modelID))
+  const outputLimit = createMemo(() => outputLimitKey(props.message, props.parts))
 
   const final = createMemo(() => {
     return props.message.finish && !["tool-calls", "unknown"].includes(props.message.finish)
@@ -1544,6 +1547,13 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
         >
           <text fg={theme.textMuted}>{errorMessage(props.message.error)}</text>
         </box>
+      </Show>
+      <Show when={props.message.time.completed && outputLimit()}>
+        {(key) => (
+          <box paddingTop={1} paddingBottom={1} paddingLeft={2} marginTop={1} backgroundColor={theme.backgroundPanel}>
+            <text fg={theme.warning}>{english[key()]}</text>
+          </box>
+        )}
       </Show>
       <Switch>
         <Match when={props.last || final() || props.message.error?.name === "MessageAbortedError"}>

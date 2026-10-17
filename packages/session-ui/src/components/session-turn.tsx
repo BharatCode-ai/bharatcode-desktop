@@ -26,6 +26,7 @@ import { TextReveal } from "@opencode-ai/ui/text-reveal"
 import { createAutoScroll } from "@opencode-ai/ui/hooks"
 import { useI18n } from "@opencode-ai/ui/context/i18n"
 import { normalize } from "./session-diff"
+import { outputLimitKey } from "@opencode-ai/ui/i18n/output-limit"
 
 function record(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value)
@@ -290,6 +291,10 @@ export function SessionTurn(
   )
 
   const interrupted = createMemo(() => assistantMessages().some((m) => m.error?.name === "MessageAbortedError"))
+  const outputLimit = createMemo(() => {
+    const last = assistantMessages().at(-1)
+    return last && outputLimitKey(last, list(data.store.part?.[last.id], emptyParts))
+  })
   const divider = createMemo(() => {
     if (compaction()) return i18n.t("ui.messagePart.compaction")
     if (interrupted()) return i18n.t("ui.message.interrupted")
@@ -529,6 +534,13 @@ export function SessionTurn(
                 <Card variant="error" class="error-card">
                   {errorText()}
                 </Card>
+              </Show>
+              <Show when={!working() && !error() && outputLimit()}>
+                {(key) => (
+                  <Card variant="error" class="error-card">
+                    {i18n.t(key())}
+                  </Card>
+                )}
               </Show>
             </div>
           </Show>
