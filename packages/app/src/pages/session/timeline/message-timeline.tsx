@@ -1222,12 +1222,14 @@ export function MessageTimeline(props: {
           <TimelineRowFrame row={errorRow}>
             <div data-slot="session-turn-message-container" class="w-full px-4 md:px-5">
               <Card variant="error" class="error-card">
-                {errorRow().text}
-                <ModelRecovery
-                  message={errorRow().text}
-                  modelID={modelID()}
-                  requestKey={`${sessionID()}:${errorRow().userMessageID}`}
-                />
+                {errorRow().outputLimit ? language.t(errorRow().outputLimit!) : errorRow().text}
+                <Show when={!errorRow().outputLimit}>
+                  <ModelRecovery
+                    message={errorRow().text}
+                    modelID={modelID()}
+                    requestKey={`${sessionID()}:${errorRow().userMessageID}`}
+                  />
+                </Show>
               </Card>
             </div>
           </TimelineRowFrame>

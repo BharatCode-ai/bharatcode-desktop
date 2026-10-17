@@ -1,6 +1,7 @@
 import type { SnapshotFileDiff } from "@opencode-ai/sdk/v2"
 import type { PartGroup } from "@opencode-ai/session-ui/message-part"
 import { Data, Equal } from "effect"
+import type { outputLimitKey } from "@opencode-ai/ui/i18n/output-limit"
 
 export type SummaryDiff = SnapshotFileDiff & { file: string }
 
@@ -35,6 +36,7 @@ export namespace TimelineRow {
   export class Error extends Data.TaggedClass("Error")<{
     userMessageID: string
     text: string
+    outputLimit?: NonNullable<ReturnType<typeof outputLimitKey>>
   }> {}
   export class Retry extends Data.TaggedClass("Retry")<{
     userMessageID: string

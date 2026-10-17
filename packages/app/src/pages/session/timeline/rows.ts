@@ -5,6 +5,7 @@ import { groupParts, renderable, type PartGroup } from "@opencode-ai/session-ui/
 import { TimelineRow, type SummaryDiff } from "./timeline-row"
 import { uniqueSummaryDiffs } from "./summary-diffs"
 import { compareMessages } from "@/utils/session-message"
+import { outputLimitKey } from "@opencode-ai/ui/i18n/output-limit"
 
 export { TimelineRow, type SummaryDiff } from "./timeline-row"
 
@@ -29,7 +30,7 @@ export type TimelineRowMap = {
   Thinking: { userMessageID: string; reasoningHeading?: string }
   Retry: { userMessageID: string }
   DiffSummary: { userMessageID: string; diffs: SummaryDiff[] }
-  Error: { userMessageID: string; text: string }
+  Error: { userMessageID: string; text: string; outputLimit?: NonNullable<ReturnType<typeof outputLimitKey>> }
 }
 
 export namespace Timeline {
@@ -227,6 +228,10 @@ export namespace Timeline {
           ),
         }),
       )
+    } else if (status === "idle" || !isActive) {
+      const last = visibleAssistants.at(-1)
+      const key = last && outputLimitKey(last, getMessageParts(last.id))
+      if (key) rows.push(new TimelineRow.Error({ userMessageID: userMessage.id, text: "", outputLimit: key }))
     }
 
     return rows

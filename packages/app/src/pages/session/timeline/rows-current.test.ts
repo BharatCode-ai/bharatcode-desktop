@@ -16,6 +16,41 @@ mock.module("@opencode-ai/session-ui/message-part", () => ({
 const { Timeline, TimelineRow } = await import("./rows")
 
 describe("current session timeline rows", () => {
+  test("output-limit notice survives hidden reasoning and preserves partial answer rows", () => {
+    const user = { id: "user", role: "user", sessionID: "session", time: { created: 1 } } as UserMessage
+    const assistant = {
+      id: "assistant",
+      role: "assistant",
+      parentID: user.id,
+      finish: "length",
+      time: { created: 2, completed: 3 },
+    } as AssistantMessage
+    for (const type of ["reasoning", "text"] as const) {
+      const parts = [
+        { id: "part", messageID: assistant.id, sessionID: "session", type, text: "Preserved content" },
+      ] as Part[]
+      const read = (id: string) => (id === assistant.id ? parts : [])
+      const rows = Timeline.constructMessageRows(user, read, [assistant], 0, false, "idle", true, false)
+      expect(rows.filter((row) => row._tag === "Error")).toMatchObject([
+        { outputLimit: type === "text" ? "ui.message.outputLimit.partial" : "ui.message.outputLimit.reasoning" },
+      ])
+      expect(rows.some((row) => row._tag === "AssistantPart")).toBe(true)
+      expect(parts[0]).toHaveProperty("text", "Preserved content")
+      const busy = Timeline.constructMessageRows(user, read, [assistant], 0, false, "busy", true, false)
+      expect(busy.some((row) => row._tag === "Error")).toBe(false)
+      const done = Timeline.constructMessageRows(
+        user,
+        read,
+        [{ ...assistant, finish: "stop" }],
+        0,
+        false,
+        "idle",
+        true,
+        false,
+      )
+      expect(done.some((row) => row._tag === "Error")).toBe(false)
+    }
+  })
   test("compaction keeps its divider without exposing the internal summary or hiding continuation text", () => {
     const user = { id: "msg_compact", role: "user", sessionID: "ses_1", time: { created: 1 } } as UserMessage
     const summary = {
