@@ -14,7 +14,10 @@ test("both support settings layouts export safely and hide unsupported platforms
     logLevel: "error",
   })
   await server.listen()
-  const browser = await chromium.launch({ headless: true })
+  const browser = await chromium.launch({ headless: true }).catch(async (error: unknown) => {
+    await server.close()
+    throw error
+  })
   try {
     const page = await browser.newPage()
     const errors: string[] = []
@@ -40,6 +43,7 @@ test("both support settings layouts export safely and hide unsupported platforms
       await page.getByRole("button", { name: "Complete fixture export" }).waitFor()
       expect(await page.locator('[data-component="settings-support"]').count()).toBe(0)
     }
+    expect(errors).toEqual([])
   } finally {
     await browser.close()
     await server.close()

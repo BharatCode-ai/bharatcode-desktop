@@ -28,6 +28,18 @@ for (const platform of ["linux", "darwin", "win32"] as const) {
   }
 }
 
+test("storage resolution honors sidecar channel/home while retaining the app update channel", () => {
+  const paths = resolveSupportPaths({
+    channel: "beta",
+    platform: "linux",
+    home: "/tmp/original",
+    temp: "/tmp",
+    env: { BHARATCODE_CHANNEL: "prod", OPENCODE_TEST_HOME: "/tmp/isolated" },
+  })
+  expect(paths.database).toBe("/tmp/isolated/.local/share/BharatCode/bharatcode.db")
+  expect(paths.config).toBe("/tmp/isolated/.config/BharatCode")
+})
+
 test("real Node collector reads only metadata and handles missing, legacy, malformed, and locked databases", async () => {
   const root = await mkdtemp(join(tmpdir(), "bc-support-metadata-"))
   try {
@@ -76,18 +88,51 @@ test("real Node collector reads only metadata and handles missing, legacy, malfo
       assert(!JSON.stringify(result).includes(home));
       assert(!JSON.stringify(result).includes('sk-secret'));
       db = new DatabaseSync(paths.database);
-      db.exec('DROP TABLE migration; CREATE TABLE __drizzle_migrations(id INTEGER, created_at INTEGER); INSERT INTO __drizzle_migrations VALUES(1, 1767225600000)');
+      db.exec("DELETE FROM migration; CREATE TABLE __drizzle_migrations(name TEXT); INSERT INTO __drizzle_migrations VALUES('20260101000000_named')");
+      db.close();
+      assert.equal((await collectSupportMetadata(input)).database.migrationFormat, 'legacy');
+      assert.equal((await collectSupportMetadata(input)).database.latestMigration, 20260101000000);
+      db = new DatabaseSync(paths.database);
+      db.exec('DROP TABLE __drizzle_migrations; CREATE TABLE __drizzle_migrations(id INTEGER, created_at INTEGER); INSERT INTO __drizzle_migrations VALUES(1, 1767225600000)');
       db.close();
       assert.equal((await collectSupportMetadata(input)).database.latestMigration, 20260101000000);
       assert.equal((await collectSupportMetadata(input)).database.migrationFormat, 'legacy');
       db = new DatabaseSync(paths.database);
-      db.exec('DROP TABLE __drizzle_migrations; CREATE TABLE migration(unexpected TEXT)'); db.close();
+      db.exec('DROP TABLE migration; DROP TABLE __drizzle_migrations; CREATE TABLE migration(unexpected TEXT)'); db.close();
       assert.equal((await collectSupportMetadata(input)).database.migrationFormat, 'unknown');
       db = new DatabaseSync(paths.database); db.exec('DROP TABLE migration'); db.close();
       assert.equal((await collectSupportMetadata(input)).database.appliedCount, null);
-      db = new DatabaseSync(paths.database); db.exec('BEGIN EXCLUSIVE');
+      db = new DatabaseSync(paths.database); db.exec("BEGIN EXCLUSIVE; INSERT INTO messages VALUES('uncommitted private prompt')");
       assert.equal((await collectSupportMetadata(input)).database.availability, 'unavailable');
       db.exec('ROLLBACK'); db.close();
+      const walFile = join(home, 'wal.db');
+      const walInput = {...input, env: {...input.env, OPENCODE_DB: walFile}};
+      db = new DatabaseSync(walFile);
+      db.exec("PRAGMA journal_mode=WAL; CREATE TABLE migration(id TEXT); INSERT INTO migration VALUES('20260101000000_initial')");
+      db.close();
+      const closedFiles = (await readdir(home)).sort();
+      const closedBytes = await readFile(walFile);
+      assert.equal((await collectSupportMetadata(walInput)).database.latestMigration, 20260101000000);
+      assert.deepEqual((await readdir(home)).sort(), closedFiles);
+      assert.deepEqual(await readFile(walFile), closedBytes);
+      db = new DatabaseSync(walFile);
+      db.exec("INSERT INTO migration VALUES('20260202000000_live')");
+      const activeFiles = (await readdir(home)).sort();
+      const beforeWal = await readFile(walFile + '-wal');
+      const beforeShm = await readFile(walFile + '-shm');
+      assert.equal((await collectSupportMetadata(walInput)).database.availability, 'unavailable');
+      assert.deepEqual((await readdir(home)).sort(), activeFiles);
+      assert.deepEqual(await readFile(walFile + '-wal'), beforeWal);
+      assert.deepEqual(await readFile(walFile + '-shm'), beforeShm);
+      db.close();
+      const isolated = {...input, env: {BHARATCODE_CHANNEL: 'prod', OPENCODE_TEST_HOME: join(home, 'isolated')}};
+      const isolatedPaths = resolveSupportPaths(isolated);
+      await mkdir(isolatedPaths.data, {recursive: true});
+      db = new DatabaseSync(isolatedPaths.database);
+      db.exec("CREATE TABLE migration(id TEXT); INSERT INTO migration VALUES('20260303000000_isolated')");
+      db.close();
+      assert.equal((await collectSupportMetadata(isolated)).database.latestMigration, 20260303000000);
+      assert.equal((await collectSupportMetadata(input)).database.latestMigration, null);
       await writeFile(paths.database, 'not sqlite sk-secret');
       assert.equal((await collectSupportMetadata(input)).database.availability, 'unavailable');
       assert.equal((await collectSupportMetadata({...input, env: {...input.env, OPENCODE_DB: ':memory:'}})).database.availability, 'memory');

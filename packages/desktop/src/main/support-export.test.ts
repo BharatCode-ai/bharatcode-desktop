@@ -149,7 +149,7 @@ test("the production logging export uses real metadata and the same safe archive
       const result = await Bun.build({
         entrypoints: [${JSON.stringify(fileURLToPath(new URL("./logging.ts", import.meta.url)))}],
         outdir: ${JSON.stringify(root)}, target: 'node', format: 'esm', naming: 'logging.mjs',
-        define: { 'import.meta.env.OPENCODE_CHANNEL': '\"beta\"' },
+        define: { 'import.meta.env.OPENCODE_CHANNEL': '"beta"' },
         plugins: [{ name: 'electron-fixture', setup(builder) {
           builder.onResolve({ filter: /^(electron|electron-log)$/ }, args => ({ path: args.path, namespace: 'fixture' }));
           builder.onResolve({ filter: /^electron-log\\/main\\.js$/ }, args => ({ path: args.path, namespace: 'fixture' }));

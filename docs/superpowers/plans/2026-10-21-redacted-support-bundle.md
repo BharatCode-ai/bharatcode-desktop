@@ -100,7 +100,7 @@ The serializer must construct every output field, validate free strings such as 
 - [x] Add temporary filesystem and real Node SQLite fixtures for current/legacy journals, missing DB, missing journal, malformed journal, lock/read failure, and `:memory:`. Assert no new files or changed DB bytes for closed fixture DBs and no writes/migration calls for all cases.
 - [x] Add path-resolution tests for Windows/macOS/Linux, all three Desktop channels, XDG/app-data overrides, config-directory/file overrides, and absolute/relative `OPENCODE_DB`. Verify only symbolic presence reaches the document.
 - [x] Implement pure path resolution using `StoragePaths.resolve` and the actual config/database override rules. Confirm supported global config filenames against current config loading code before adding presence checks.
-- [x] Read only fixed schema/migration metadata with a read-only SQLite connection and bounded lock timeout; close connections in all paths. Validate migration values before returning numeric summaries; never export an arbitrary journal string.
+- [x] Read only fixed schema/migration metadata with immutable SQLite access after journal checks; active journal writes yield unavailable metadata. Validate file identity/journal state after reading; close connections in all paths. Validate migration values before returning numeric summaries; never export an arbitrary journal string.
 - [x] Run `bun test src/main/support-metadata.test.ts src/main/runtime-accounts.test.ts` from `packages/desktop`. Commit as `feat(desktop): collect private support metadata`.
 
 **Done:** Accurate local metadata without touching credentials, conversations, storage initialization, or remote runtimes.
@@ -150,13 +150,13 @@ The serializer must construct every output field, validate free strings such as 
 
 **Files:** add `docs/redacted-support-bundle.md`; finish regression coverage in Tasks 1–5's test files.
 
-- [ ] Seed a synthetic fixture environment with OAuth tokens, API keys, credential files, chats, private URLs, names/emails, logs, network captures, and crash files. Export through the actual archive producer, extract every member, and scan names and contents for each sentinel. Assert expected diagnostic fields remain useful.
-- [ ] Test recovery and command-palette wiring against that producer; check failure and partial-collection paths as well as successful export.
-- [ ] Run `bun test` and `bun typecheck` from `packages/desktop`.
-- [ ] Run `bun test` and `bun typecheck` from `packages/app`. Record existing failures separately if encountered; do not describe a partially passing suite as clean.
-- [ ] Run `git diff --check` and focused lint on changed files using the repository tooling.
-- [ ] Document the schema, local save/reveal behavior, exclusions, current-run error limit, partial-data meanings, and that generating a bundle never uploads it. Record source verification separately from GUI and packaged-platform results.
-- [ ] Prepare the final source diff and evidence for review. A requested PR should reference issue #10; do not close the issue solely because a local test passed.
+- [x] Seed a synthetic fixture environment with OAuth tokens, API keys, credential files, chats, private URLs, names/emails, logs, network captures, and crash files. Export through the actual archive producer, extract every member, and scan names and contents for each sentinel. Assert expected diagnostic fields remain useful.
+- [x] Test recovery and command-palette wiring against that producer; check failure and partial-collection paths as well as successful export.
+- [x] Run `bun test` and `bun typecheck` from `packages/desktop`.
+- [x] Run `bun test` and `bun typecheck` from `packages/app`. Record existing failures separately if encountered; do not describe a partially passing suite as clean.
+- [x] Run `git diff --check` and focused lint on changed files using the repository tooling.
+- [x] Document the schema, local save/reveal behavior, exclusions, current-run error limit, partial-data meanings, and that generating a bundle never uploads it. Record source verification separately from GUI and packaged-platform results.
+- [x] Prepare the final source diff and evidence for review. A requested PR should reference issue #10; do not close the issue solely because a local test passed.
 
 **Done:** Source-level acceptance is demonstrated and the privacy/coverage limits are documented.
 
@@ -184,3 +184,34 @@ Issue acceptance is ready for review when all requested metadata is represented,
 - Existing preload/platform signature is preserved; no public HTTP API or generated client changes are proposed.
 - No mobile connection, OpenTunnel, provider, or agent-execution behavior needs modification.
 - Source implementation is authorized. No release, installation, PR creation, issue comment, or issue closure is authorized.
+
+## Final local result — 2026-10-21
+
+Source tasks 1–6 are complete. Task 7 was not requested and remains unexecuted. No PR, push, release, or installation was performed.
+
+| Check | Result |
+| --- | --- |
+| Desktop `bun run test` | 173 passed, 0 failed |
+| App `bun run test` — unit | 751 passed, 0 failed |
+| App `bun run test` — browser | 56 passed, 0 failed |
+| UI `bun run test` | 29 passed, 0 failed |
+| Desktop/app/UI `bun typecheck` | All passed |
+| New support files, fixture, and fallback `oxlint` | 0 warnings, 0 errors |
+| `git diff --check` | Passed |
+
+These results cover configured local source/UI suites, not separate release/candidate packaging scripts or native packaged-platform acceptance.
+
+A fresh read-only review found three collector issues. Regression tests reproduced and verified fixes for WAL/SHM side effects, effective sidecar home/channel overrides, and empty-current/legacy migration transitions. There were no deferred minor findings. Final suite runs above include the fixes.
+
+### Execution decisions and implications
+
+- Used the existing clean `support-bundle` branch in the approved reference checkout; no additional worktree was needed. Mobile source was not modified.
+- Recorded updater errors in the controller shared by settings and native callers. Only instrumented failures contribute; the counts do not claim to replace full logs.
+- Used the configured `bun run test` scripts. Bare Bun discovery includes separate release/candidate tests and does not apply app test conditions; no release qualification is claimed.
+- Used the existing `bharatcode.ts` shared English fallback for new copy. Other-language translations are not claimed complete.
+- Added a real Chromium fixture alongside controller tests. Playwright Chromium must be installed for that local browser suite.
+- Repaired a pre-existing app parity failure with a shared fallback for four output-limit messages across 61 locale dictionaries. English copy and test expectations were preserved; these messages remain English until reviewed translations are supplied.
+- Isolated Electron-boundary fixture compilation in a fresh Bun subprocess after reproducing Bun 1.3.14's cross-build workspace-resolution failure. The same production exporter/collector remains under test.
+- Used immutable SQLite reads with journal/file stability checks. A nonempty WAL or rollback journal makes DB metadata unavailable; this avoids auxiliary-file mutation and stale metadata from ignored journal contents. The rest of the bundle still exports.
+- Kept existing palette rejection handling and error-page gating. Their safe-export target changed, while pre-existing error-presentation behavior remains.
+- Deferred native packaged-platform verification and all release work because this request is local source/tests only; any later release work requires the mandated Luna/max handoff.
