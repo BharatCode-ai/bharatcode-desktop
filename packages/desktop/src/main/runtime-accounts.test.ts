@@ -79,3 +79,20 @@ test("replacement rejects old replies/callbacks and preserves increasing per-run
   await expect(f.registry.logout("wsl:Ubuntu")).rejects.toThrow()
   f.registry.dispose()
 })
+
+test("support status is a cached local projection, never a credential request or WSL snapshot", async () => {
+  const f = fixture()
+  expect(f.registry.getSupportStatus().state).toBe("unknown")
+  f.registry.bind("wsl:private-project", f.client("wsl"))
+  f.registry.bind("sidecar", f.client("native"))
+  expect(f.registry.getSupportStatus().state).toBe("unknown")
+  expect(f.clients.get("native")).toEqual([])
+  await f.registry.getAccountStatus()
+  expect(f.registry.getSupportStatus()).toEqual({ mode: "bharatcode_oauth", source: "cached", state: "signed_out", authenticated: false })
+  const calls = [...f.clients.get("native")!]
+  JSON.stringify(f.registry.getSupportStatus())
+  expect(f.clients.get("native")).toEqual(calls)
+  f.registry.bind("sidecar")
+  expect(f.registry.getSupportStatus().state).toBe("unknown")
+  f.registry.dispose()
+})
