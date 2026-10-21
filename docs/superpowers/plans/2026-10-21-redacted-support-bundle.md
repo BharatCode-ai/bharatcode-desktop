@@ -224,6 +224,10 @@ User authorized removing the active-WAL limitation for local running Desktop, wi
 - [x] Project and carry it in the existing private sidecar ready message. Bind it to the exact local-sidecar lifetime, clear it on exit/replacement, and ignore old-owner updates.
 - [x] Prefer the snapshot during export, with explicit source/capture time. Preserve conservative immutable-file recovery when no runtime snapshot exists.
 - [x] Exercise the real Node database service and production exporter while WAL is open; assert metadata in the ZIP, no private sentinel values, and unchanged DB/WAL/SHM bytes and directory contents apart from the ZIP.
-- [ ] Finish relevant package tests/typechecks and independent review; record results below.
+- [x] Finish relevant package tests/typechecks and independent review; record results below.
 
 Decision: querying an already-open SQLite connection can still update shared-memory read state. Capturing metadata during ordinary initialization and exporting the resulting in-memory summary makes export itself free of SQLite I/O. Runtime migration/schema metadata is labelled as an initialization snapshot and does not claim to observe arbitrary later external schema edits. No private database copy, checkpoint, second agent/database instance, public HTTP endpoint, or raw SQL interface is introduced.
+
+Follow-up verification (2026-10-21): Desktop 178 passed; server suite 326 passed, 2 pre-existing skips; app unit 751 passed and browser 56 passed; UI 29 passed. Desktop/server/app/UI typechecks passed. New support and snapshot helper files have 0 lint warnings/errors; diff whitespace checks passed. The fresh read-only review found no actionable defects and verified exact database-layer ownership, export's no-SQLite path, boundary projection, and snapshot generation invalidation. No packaging, installation, native platform qualification, push, or PR was performed.
+
+Review scope decisions: packaged/native-platform acceptance remains outside local source verification. The internal observer contract is synchronous and its production consumer is synchronous; promise-returning observers are not part of this hook contract.

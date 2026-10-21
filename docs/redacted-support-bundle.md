@@ -17,7 +17,7 @@ The archive contains exactly one file, `support-bundle.json`, with `formatVersio
 
 No credential contents, OAuth tokens, API keys, account names/emails, raw prompts/chats, repository links, absolute local paths, exception messages, stack traces, log files, crash dumps, or network captures are included. Automatic export offers no switch to include them. Users can supply any additional context separately in their support request.
 
-The runtime snapshot contains only numeric migration/schema metadata, fixed status/source values, and an ISO capture time. It is projected before sidecar IPC and again in the main process. It is cleared when that exact local sidecar exits or is replaced; late messages from an old owner cannot populate the replacement. Snapshot collection or observer failures do not prevent normal startup. No endpoint or renderer action accepts SQL or requests raw database data.
+The runtime snapshot contains only numeric migration/schema metadata, fixed status/source values, and an ISO capture time. It is projected before sidecar IPC and again in the main process. It is cleared when that exact local sidecar exits or is replaced; late messages from an old owner cannot populate the replacement. Snapshot collection failures or synchronous observer errors do not prevent normal startup. No endpoint or renderer action accepts SQL or requests raw database data.
 
 The metadata collector resolves channel/platform-specific storage paths and supported overrides locally. It does not initialize the agent, query a provider, refresh account status, or read conversation rows. Collection failures yield partial diagnostics. Unknown strings and additional fields are discarded by the final document builder, rather than relying on a token-prefix blacklist.
 
@@ -41,3 +41,19 @@ The app browser suite includes a real Chromium fixture for both Support section 
 Desktop tests extract every ZIP member and check synthetic private data is absent; verify trusted IPC, coalescing, write/retry, partial metadata, and reveal failure; and exercise the real read-only Node SQLite collector on fixture databases. The collector tests cover current and legacy journals, missing/malformed/locked storage, memory/overridden database paths, effective sidecar home/channel overrides, empty-current/legacy journal transitions, and platform/channel path resolution. A native Node integration test uses the real initialized database service and actual production exporter with an open WAL database; it checks schema/migration fields in the ZIP, scans for private sentinels, and compares every DB/WAL/SHM byte and directory entry across export. Other closed-WAL and live-WAL fallback fixtures compare directory entries and auxiliary-file bytes as well as the main database.
 
 These are source and local browser checks. They do not establish packaged Electron acceptance, native Windows/macOS verification, publishing, or installation. Any release preparation, packaging, qualification, publishing, or installation must be delegated to `gpt-6-luna` with `max` reasoning.
+
+## Running-database follow-up verification — 2026-10-21
+
+The local source change adds an initialization snapshot to the private sidecar ready message. Native Node tests verify an active-WAL export contains that snapshot, leaves DB/WAL/SHM bytes unchanged, adds only the support ZIP, and excludes private fixture values. Separate tests verify the actual listener callback, harmless observer failure, projected private IPC, and exact-owner invalidation.
+
+| Local check | Result |
+| --- | --- |
+| Desktop source suite | 178 passed |
+| Server suite | 326 passed; 2 pre-existing skipped tests |
+| App unit/browser suites | 751 / 56 passed |
+| UI suite | 29 passed |
+| Desktop/server/app/UI typechecks | Passed |
+| New support/snapshot helper lint | 0 warnings or errors |
+| Diff whitespace | Passed |
+
+An independent read-only review found no actionable defects. These checks do not claim installed-app, packaging, or native Windows/macOS qualification. Everything remains local; no PR was created.
