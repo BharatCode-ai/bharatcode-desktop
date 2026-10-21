@@ -22,7 +22,14 @@ import { supportErrors } from "./support-errors"
 import { createRuntimeAccounts } from "./runtime-accounts"
 import { createDeepLinkEvents } from "./deep-link-events"
 import { openExternalUrl } from "./external-browser"
-import { exportDebugLogs, setSupportAuthReader, initCrashReporter, initLogging, startNetLog, write as writeLog } from "./logging"
+import {
+  exportDebugLogs,
+  setSupportAuthReader,
+  initCrashReporter,
+  initLogging,
+  startNetLog,
+  write as writeLog,
+} from "./logging"
 import { createMenu } from "./menu"
 import {
   finishFirstLaunchOnboarding,

@@ -88,7 +88,12 @@ test("support status is a cached local projection, never a credential request or
   expect(f.registry.getSupportStatus().state).toBe("unknown")
   expect(f.clients.get("native")).toEqual([])
   await f.registry.getAccountStatus()
-  expect(f.registry.getSupportStatus()).toEqual({ mode: "bharatcode_oauth", source: "cached", state: "signed_out", authenticated: false })
+  expect(f.registry.getSupportStatus()).toEqual({
+    mode: "bharatcode_oauth",
+    source: "cached",
+    state: "signed_out",
+    authenticated: false,
+  })
   const calls = [...f.clients.get("native")!]
   JSON.stringify(f.registry.getSupportStatus())
   expect(f.clients.get("native")).toEqual(calls)

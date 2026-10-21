@@ -186,7 +186,7 @@ export async function spawnLocalServer(
         settled = true
         clearTimeout(timeout)
         supportErrors.record("database")
-      setChatImportStatus({ state: "failed", imported: 0, skipped: 0 })
+        setChatImportStatus({ state: "failed", imported: 0, skipped: 0 })
         getLogger()?.warn("Previous chat import was not confirmed")
       }
       importer.on("message", (value) => {

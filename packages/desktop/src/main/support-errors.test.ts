@@ -31,9 +31,38 @@ test("real auth and updater failures record only their fixed category", async ()
   const { createAccountSession } = await import("./account-session")
   const before = supportErrors.summary()
   const secret = new Error("sk-private owner@private.test https://private.test/repo")
-  const updater = createUpdaterController({ enabled: true, currentVersion: "1.0.0", backend: { checkForUpdates: async () => { throw secret }, downloadUpdate: async () => {}, quitAndInstall: () => {} }, persistence: { get: () => undefined, set: () => {}, clear: () => {} }, stop: async () => {} })
+  const updater = createUpdaterController({
+    enabled: true,
+    currentVersion: "1.0.0",
+    backend: {
+      checkForUpdates: async () => {
+        throw secret
+      },
+      downloadUpdate: async () => {},
+      quitAndInstall: () => {},
+    },
+    persistence: { get: () => undefined, set: () => {}, clear: () => {} },
+    stop: async () => {},
+  })
   expect((await updater.check()).status).toBe("error")
-  const account = createAccountSession({ client: { getAccountStatus: async () => { throw secret }, beginSignIn: async () => { throw secret }, completeSignIn: async () => { throw secret }, logout: async () => { throw secret } }, openBrowser: async () => {}, changed: () => {} })
+  const account = createAccountSession({
+    client: {
+      getAccountStatus: async () => {
+        throw secret
+      },
+      beginSignIn: async () => {
+        throw secret
+      },
+      completeSignIn: async () => {
+        throw secret
+      },
+      logout: async () => {
+        throw secret
+      },
+    },
+    openBrowser: async () => {},
+    changed: () => {},
+  })
   await expect(account.getAccountStatus()).rejects.toThrow()
   account.dispose()
   expect(supportErrors.summary().authentication).toBe(before.authentication + 1)

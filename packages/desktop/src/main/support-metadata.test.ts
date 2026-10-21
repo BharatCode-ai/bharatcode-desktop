@@ -11,8 +11,16 @@ for (const platform of ["linux", "darwin", "win32"] as const) {
     test(`${platform}/${channel} resolves branded channel paths and overrides`, () => {
       const home = platform === "win32" ? "C:\\Users\\private" : "/home/private"
       const paths = resolveSupportPaths({ platform, channel, home, temp: home, env: {} })
-      expect(paths.database).toContain(channel === "prod" ? "BharatCode" : `BharatCode ${channel === "dev" ? "Dev" : "Beta"}`)
-      const custom = resolveSupportPaths({ platform, channel, home, temp: home, env: { BHARATCODE_CONFIG_DIR: "private-config", OPENCODE_CONFIG: "private.json", OPENCODE_DB: ":memory:" } })
+      expect(paths.database).toContain(
+        channel === "prod" ? "BharatCode" : `BharatCode ${channel === "dev" ? "Dev" : "Beta"}`,
+      )
+      const custom = resolveSupportPaths({
+        platform,
+        channel,
+        home,
+        temp: home,
+        env: { BHARATCODE_CONFIG_DIR: "private-config", OPENCODE_CONFIG: "private.json", OPENCODE_DB: ":memory:" },
+      })
       expect(custom.config).toBe("private-config")
       expect(custom.override).toBe("private.json")
       expect(custom.database).toBe(":memory:")
@@ -23,9 +31,20 @@ for (const platform of ["linux", "darwin", "win32"] as const) {
 test("real Node collector reads only metadata and handles missing, legacy, malformed, and locked databases", async () => {
   const root = await mkdtemp(join(tmpdir(), "bc-support-metadata-"))
   try {
-    const build = await Bun.build({ entrypoints: [fileURLToPath(import.meta.resolve("./support-metadata.ts"))], outdir: root, target: "node", format: "esm", naming: "metadata.mjs" })
+    const build = await Bun.build({
+      entrypoints: [fileURLToPath(import.meta.resolve("./support-metadata.ts"))],
+      outdir: root,
+      target: "node",
+      format: "esm",
+      naming: "metadata.mjs",
+    })
     expect(build.success).toBe(true)
-    const child = spawnSync("node", ["--input-type=module", "-e", `
+    const child = spawnSync(
+      "node",
+      [
+        "--input-type=module",
+        "-e",
+        `
       import assert from 'node:assert/strict';
       import { DatabaseSync } from 'node:sqlite';
       import { mkdir, writeFile, readFile, readdir } from 'node:fs/promises';
@@ -75,8 +94,13 @@ test("real Node collector reads only metadata and handles missing, legacy, malfo
       assert.equal(resolveSupportPaths({...input, env: {...input.env, OPENCODE_DB: 'custom.db'}}).database, join(paths.data, 'custom.db'));
       assert.equal(resolveSupportPaths({...input, env: {...input.env, OPENCODE_DB: join(home, 'absolute.db')}}).database, join(home, 'absolute.db'));
       console.log('metadata fixtures passed');
-    `], { encoding: "utf8", timeout: 10000 })
+    `,
+      ],
+      { encoding: "utf8", timeout: 10000 },
+    )
     expect({ status: child.status, stderr: child.stderr }).toMatchObject({ status: 0 })
     expect(child.stdout).toContain("metadata fixtures passed")
-  } finally { await rm(root, { recursive: true, force: true }) }
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 })

@@ -29,7 +29,7 @@ export function SettingsSupport(props: { v2?: boolean }) {
   const label = () =>
     language.t(controller.state.status === "saving" ? "settings.support.saving" : "settings.support.export")
   return (
-    <Show when={platform.platform === "desktop" && platform.exportDebugLogs}>
+    <Show when={platform.platform === "desktop" && typeof platform.exportDebugLogs === "function"}>
       <section class={props.v2 ? "settings-v2-section" : "flex flex-col gap-2"} data-component="settings-support">
         <h3 class={props.v2 ? "settings-v2-section-title" : "text-14-medium text-text-strong"}>
           {language.t("settings.support.title")}

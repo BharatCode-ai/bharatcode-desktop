@@ -60,11 +60,22 @@ export function setSupportAuthReader(read: () => SupportAuthSummary) {
 export const exportDebugLogs = createSupportExporter({
   directory: () => app.getPath("downloads"),
   input: async () => {
-    const metadata = await collectSupportMetadata({ channel: CHANNEL, platform: process.platform, home: homedir(), temp: tmpdir(), env: process.env }).catch(() => ({}))
+    const metadata = await collectSupportMetadata({
+      channel: CHANNEL,
+      platform: process.platform,
+      home: homedir(),
+      temp: tmpdir(),
+      env: process.env,
+    }).catch(() => ({}))
     return {
       ...metadata,
-      version: app.getVersion(), platform: process.platform, release: release(), arch: process.arch, channel: CHANNEL,
-      auth: supportAuth(), errors: supportErrors.summary(),
+      version: app.getVersion(),
+      platform: process.platform,
+      release: release(),
+      arch: process.arch,
+      channel: CHANNEL,
+      auth: supportAuth(),
+      errors: supportErrors.summary(),
     }
   },
   reveal: (filename) => shell.showItemInFolder(filename),

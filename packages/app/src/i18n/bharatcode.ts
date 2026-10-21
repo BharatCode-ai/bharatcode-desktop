@@ -28,7 +28,8 @@ export const BHARATCODE_ENGLISH = {
   ...BHARATCODE_NATIVE_ENGLISH,
   "settings.support.title": "Support bundle",
   "settings.support.export": "Export support bundle",
-  "settings.support.description": "Save diagnostic metadata to Downloads. Credentials, chat content, and raw logs are excluded. Nothing is uploaded.",
+  "settings.support.description":
+    "Save diagnostic metadata to Downloads. Credentials, chat content, and raw logs are excluded. Nothing is uploaded.",
   "settings.support.saving": "Saving support bundle…",
   "settings.support.saved": "Support bundle saved to Downloads.",
   "chatImport.pending": "Restoring previous chats in the background…",

@@ -8,14 +8,27 @@ export function createSupportErrors(now: () => number = Date.now) {
     if (entries.length > 200) entries.splice(0, entries.length - 200)
   }
   return {
-    record(category: SupportErrorCategory) {
+    record(this: void, category: SupportErrorCategory) {
       if (!supportErrorCategories.includes(category)) return
       entries.push({ category, time: now() })
       prune()
     },
     summary(): SupportErrorSummary {
       prune()
-      return Object.fromEntries(supportErrorCategories.map((category) => [category, entries.filter((entry) => entry.category === category).length])) as SupportErrorSummary
+      const counts: SupportErrorSummary = {
+        startup: 0,
+        sidecar: 0,
+        authentication: 0,
+        database: 0,
+        update: 0,
+        network: 0,
+        renderer: 0,
+        other: 0,
+      }
+      entries.forEach((entry) => {
+        counts[entry.category]++
+      })
+      return counts
     },
   }
 }

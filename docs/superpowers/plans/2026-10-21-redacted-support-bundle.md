@@ -8,7 +8,7 @@
 
 **Tech stack:** Electron main/preload, TypeScript, SolidJS, existing typed i18n, existing ZIP library, Node SQLite, Bun tests.
 
-**Spec:** The issue linked above plus the requirements and proposed decisions in this document. This is a planning artifact for user review; implementation has not started.
+**Spec:** The issue linked above plus the requirements and proposed decisions in this document. Approved by the user; source implementation is tracked below.
 
 ## Requirements
 
@@ -83,10 +83,10 @@ The serializer must construct every output field, validate free strings such as 
 
 **Interface:** `createSupportBundle(input: SupportBundleInput): SupportBundle`, with an explicit exported input type and JSON-safe output type matching the contract above. Input contains metadata and already-collected summaries, never file contents or arbitrary log objects.
 
-- [ ] Write tests for the exact output keys and fixed value sets; pass sentinel tokens, JWT-shaped strings, emails, repository URLs, prompt text, paths, and nested extra fields through malicious input fixtures. Assert that none reaches serialized output. Validate version/OS release, booleans, finite bounded integers, unknown statuses, and ignored unknown fields.
-- [ ] Run `bun test src/main/support-bundle.test.ts` from `packages/desktop`; confirm the missing contract fails the tests.
-- [ ] Implement explicit field projection and validation. Keep unknown/unavailable values explicit rather than inventing healthy defaults.
-- [ ] Repeat the focused tests until green. Commit as `feat(desktop): define safe support bundle format`.
+- [x] Write tests for the exact output keys and fixed value sets; pass sentinel tokens, JWT-shaped strings, emails, repository URLs, prompt text, paths, and nested extra fields through malicious input fixtures. Assert that none reaches serialized output. Validate version/OS release, booleans, finite bounded integers, unknown statuses, and ignored unknown fields.
+- [x] Run `bun test src/main/support-bundle.test.ts` from `packages/desktop`; confirm the missing contract fails the tests.
+- [x] Implement explicit field projection and validation. Keep unknown/unavailable values explicit rather than inventing healthy defaults.
+- [x] Repeat the focused tests until green. Commit as `feat(desktop): define safe support bundle format`.
 
 **Done:** A tested document builder whose output cannot grow when an input object gains private fields.
 
@@ -96,12 +96,12 @@ The serializer must construct every output field, validate free strings such as 
 
 **Interfaces:** `collectSupportMetadata(input: { channel: Channel; platform: NodeJS.Platform; home: string; temp: string; env: NodeJS.ProcessEnv }): Promise<SupportMetadata>`; `runtimeAccounts.getSupportStatus(): SupportAuthSummary` returns only the projected cached local-sidecar state. Types feed Task 1's input.
 
-- [ ] Add failing tests for auth snapshot projection, signed-out and uninitialized state, and WSL entries with private identifiers. Assert no network or credential operation is needed.
-- [ ] Add temporary filesystem and real Node SQLite fixtures for current/legacy journals, missing DB, missing journal, malformed journal, lock/read failure, and `:memory:`. Assert no new files or changed DB bytes for closed fixture DBs and no writes/migration calls for all cases.
-- [ ] Add path-resolution tests for Windows/macOS/Linux, all three Desktop channels, XDG/app-data overrides, config-directory/file overrides, and absolute/relative `OPENCODE_DB`. Verify only symbolic presence reaches the document.
-- [ ] Implement pure path resolution using `StoragePaths.resolve` and the actual config/database override rules. Confirm supported global config filenames against current config loading code before adding presence checks.
-- [ ] Read only fixed schema/migration metadata with a read-only SQLite connection and bounded lock timeout; close connections in all paths. Validate migration values before returning numeric summaries; never export an arbitrary journal string.
-- [ ] Run `bun test src/main/support-metadata.test.ts src/main/runtime-accounts.test.ts` from `packages/desktop`. Commit as `feat(desktop): collect private support metadata`.
+- [x] Add failing tests for auth snapshot projection, signed-out and uninitialized state, and WSL entries with private identifiers. Assert no network or credential operation is needed.
+- [x] Add temporary filesystem and real Node SQLite fixtures for current/legacy journals, missing DB, missing journal, malformed journal, lock/read failure, and `:memory:`. Assert no new files or changed DB bytes for closed fixture DBs and no writes/migration calls for all cases.
+- [x] Add path-resolution tests for Windows/macOS/Linux, all three Desktop channels, XDG/app-data overrides, config-directory/file overrides, and absolute/relative `OPENCODE_DB`. Verify only symbolic presence reaches the document.
+- [x] Implement pure path resolution using `StoragePaths.resolve` and the actual config/database override rules. Confirm supported global config filenames against current config loading code before adding presence checks.
+- [x] Read only fixed schema/migration metadata with a read-only SQLite connection and bounded lock timeout; close connections in all paths. Validate migration values before returning numeric summaries; never export an arbitrary journal string.
+- [x] Run `bun test src/main/support-metadata.test.ts src/main/runtime-accounts.test.ts` from `packages/desktop`. Commit as `feat(desktop): collect private support metadata`.
 
 **Done:** Accurate local metadata without touching credentials, conversations, storage initialization, or remote runtimes.
 
@@ -111,10 +111,10 @@ The serializer must construct every output field, validate free strings such as 
 
 **Interface:** `createSupportErrors(now?: () => number)` returns `record(category: SupportErrorCategory): void` and `summary(): SupportErrorSummary`. Share one main-process instance. Category vocabulary and retention are specified above.
 
-- [ ] Add failing tests for each allowed category, invalid runtime input, 24-hour expiry, the 200-entry cap, empty startup, and fixed category counts with no original error payload.
-- [ ] Implement the bounded in-memory journal. Keep existing application logging unchanged; add category recording only where the failure source is known.
-- [ ] Exercise representative real failure paths and assert category recording does not alter their existing results or expose raw messages.
-- [ ] Run the focused error-journal and affected lifecycle tests. Commit as `feat(desktop): summarize recent support error categories`.
+- [x] Add failing tests for each allowed category, invalid runtime input, 24-hour expiry, the 200-entry cap, empty startup, and fixed category counts with no original error payload.
+- [x] Implement the bounded in-memory journal. Keep existing application logging unchanged; add category recording only where the failure source is known.
+- [x] Exercise representative real failure paths and assert category recording does not alter their existing results or expose raw messages.
+- [x] Run the focused error-journal and affected lifecycle tests. Commit as `feat(desktop): summarize recent support error categories`.
 
 **Done:** Useful current-run failure summaries that never require parsing or exporting raw logs.
 
@@ -124,12 +124,12 @@ The serializer must construct every output field, validate free strings such as 
 
 **Interface:** `exportSupportBundle(): Promise<string>` orchestrates Tasks 1–3, creates the one-member ZIP, writes it locally, and reveals the completed file. Existing `exportDebugLogs` delegates to this safe exporter, including recovery callers.
 
-- [ ] Write failing archive-level tests: ZIP has exactly `support-bundle.json`, contains valid contract output, and contains none of the private sentinel files placed in log/Crashpad/config directories. No file collector is invoked.
-- [ ] Cover partial metadata failure, sidecar unavailable, concurrent requests sharing one export operation, write failure with no partial archive, and reveal failure after a successful save.
-- [ ] Protect `export-debug-logs` with the existing owned-renderer/main-frame policy; test rejection before file I/O for an unowned sender or subframe.
-- [ ] Wire account summaries without auth requests; recovery exports must still work when account/runtime initialization is unavailable. Preserve local logging, crash reporting, and network capture behavior; remove raw archival collection from the export path.
-- [ ] Save atomically using a unique temporary file and restrictive permissions where supported; clean up on failure. Surface only typed/localized generic errors across IPC, with no raw filesystem exception text.
-- [ ] Run the focused exporter and IPC tests. Commit as `fix(desktop): export only redacted support diagnostics`.
+- [x] Write failing archive-level tests: ZIP has exactly `support-bundle.json`, contains valid contract output, and contains none of the private sentinel files placed in log/Crashpad/config directories. No file collector is invoked.
+- [x] Cover partial metadata failure, sidecar unavailable, concurrent requests sharing one export operation, write failure with no partial archive, and reveal failure after a successful save.
+- [x] Protect `export-debug-logs` with the existing owned-renderer/main-frame policy; test rejection before file I/O for an unowned sender or subframe.
+- [x] Wire account summaries without auth requests; recovery exports must still work when account/runtime initialization is unavailable. Preserve local logging, crash reporting, and network capture behavior; remove raw archival collection from the export path.
+- [x] Save atomically using a unique temporary file and restrictive permissions where supported; clean up on failure. Surface only typed/localized generic errors across IPC, with no raw filesystem exception text.
+- [x] Run the focused exporter and IPC tests. Commit as `fix(desktop): export only redacted support diagnostics`.
 
 **Done:** Every existing diagnostic export path produces the same safe archive.
 
@@ -139,10 +139,10 @@ The serializer must construct every output field, validate free strings such as 
 
 **Interface:** Shared `SettingsSupport` component consumes the existing platform `exportDebugLogs` action and accepts `v2?: boolean` for the two established settings row/button styles.
 
-- [ ] Add failing component tests for desktop visibility, absence when unsupported, action invocation, disabled/in-progress state, successful save feedback, generic failure feedback, and retry after failure. Render both settings layouts to prove the action is discoverable there.
-- [ ] Add new typed keys for “Support bundle”, “Export support bundle”, a short privacy description, progress, saved, and failed states. Preserve existing export-log labels and keys in recovery and the command palette.
-- [ ] Implement the section in General settings using existing UI primitives, language API, and a single store for operation state. Do not render the returned local pathname or exception message.
-- [ ] Run focused app tests with its Solid/happydom preload. Commit as `feat(app): add support bundle export to settings`.
+- [x] Add failing component tests for desktop visibility, absence when unsupported, action invocation, disabled/in-progress state, successful save feedback, generic failure feedback, and retry after failure. Render both settings layouts to prove the action is discoverable there.
+- [x] Add new typed keys for “Support bundle”, “Export support bundle”, a short privacy description, progress, saved, and failed states. Preserve existing export-log labels and keys in recovery and the command palette.
+- [x] Implement the section in General settings using existing UI primitives, language API, and a single store for operation state. Do not render the returned local pathname or exception message.
+- [x] Run focused app tests with its Solid/happydom preload. Commit as `feat(app): add support bundle export to settings`.
 
 **Done:** A visible, accessible, recoverable settings flow in both interfaces.
 
@@ -183,4 +183,4 @@ Issue acceptance is ready for review when all requested metadata is represented,
 - The five review-focus risks each have tests assigned to their owning task.
 - Existing preload/platform signature is preserved; no public HTTP API or generated client changes are proposed.
 - No mobile connection, OpenTunnel, provider, or agent-execution behavior needs modification.
-- Remaining approval is review of this proposed plan. No product implementation, release, installation, issue comment, or issue closure has been performed.
+- Source implementation is authorized. No release, installation, PR creation, issue comment, or issue closure is authorized.
