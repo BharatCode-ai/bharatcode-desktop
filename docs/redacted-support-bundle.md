@@ -50,10 +50,13 @@ The local source change adds an initialization snapshot to the private sidecar r
 | --- | --- |
 | Desktop source suite | 178 passed |
 | Server suite | 326 passed; 2 pre-existing skipped tests |
-| App unit/browser suites | 751 / 56 passed |
+| App unit suite | 750 passed; 1 pre-existing localization-parity failure |
+| App browser suite (run separately) | 56 passed |
 | UI suite | 29 passed |
 | Desktop/server/app/UI typechecks | Passed |
 | New support/snapshot helper lint | 0 warnings or errors |
 | Diff whitespace | Passed |
 
-An independent read-only review found no actionable defects. These checks do not claim installed-app, packaging, or native Windows/macOS qualification. Everything remains local; no PR was created.
+An independent read-only review found no actionable defects in the issue #10 implementation. The current app unit run is not fully green: `i18n parity > non-English locales have every English key and required plural variants` fails because four existing output-limit messages are missing from UI locale dictionaries. UI localization files and that parity test are unchanged from `dev` on this branch. The independent repair is on local branch `localization-fallback` (`aba60e7`), based directly on `dev`; it is not included in `support-bundle`. Its standalone app unit/browser suites passed 749/55 tests, and its UI suite passed 29 tests.
+
+These checks do not claim installed-app, packaging, or native Windows/macOS qualification. Everything remains local; no PR was created.

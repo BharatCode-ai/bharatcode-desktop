@@ -191,12 +191,12 @@ Source tasks 1–6 are complete. Task 7 was not requested and remains unexecuted
 
 | Check | Result |
 | --- | --- |
-| Desktop `bun run test` | 173 passed, 0 failed |
-| App `bun run test` — unit | 751 passed, 0 failed |
+| Desktop `bun run test` | 178 passed, 0 failed |
+| App `bun run test` — unit | 750 passed; 1 pre-existing localization-parity failure |
 | App `bun run test` — browser | 56 passed, 0 failed |
 | UI `bun run test` | 29 passed, 0 failed |
 | Desktop/app/UI `bun typecheck` | All passed |
-| New support files, fixture, and fallback `oxlint` | 0 warnings, 0 errors |
+| New support files and fixture `oxlint` | 0 warnings, 0 errors |
 | `git diff --check` | Passed |
 
 These results cover configured local source/UI suites, not separate release/candidate packaging scripts or native packaged-platform acceptance.
@@ -210,7 +210,7 @@ A fresh read-only review found three collector issues. Regression tests reproduc
 - Used the configured `bun run test` scripts. Bare Bun discovery includes separate release/candidate tests and does not apply app test conditions; no release qualification is claimed.
 - Used the existing `bharatcode.ts` shared English fallback for new copy. Other-language translations are not claimed complete.
 - Added a real Chromium fixture alongside controller tests. Playwright Chromium must be installed for that local browser suite.
-- Repaired a pre-existing app parity failure with a shared fallback for four output-limit messages across 61 locale dictionaries. English copy and test expectations were preserved; these messages remain English until reviewed translations are supplied.
+- The pre-existing output-limit localization-parity failure is outside issue #10. Its independent fix was moved to `localization-fallback` (`aba60e7`), based directly on `dev`. `support-bundle` contains no UI localization delta and no localization-fallback commit.
 - Isolated Electron-boundary fixture compilation in a fresh Bun subprocess after reproducing Bun 1.3.14's cross-build workspace-resolution failure. The same production exporter/collector remains under test.
 - Used immutable SQLite reads with journal/file stability checks. A nonempty WAL or rollback journal makes DB metadata unavailable; this avoids auxiliary-file mutation and stale metadata from ignored journal contents. The rest of the bundle still exports.
 - Kept existing palette rejection handling and error-page gating. Their safe-export target changed, while pre-existing error-presentation behavior remains.
@@ -228,6 +228,12 @@ User authorized removing the active-WAL limitation for local running Desktop, wi
 
 Decision: querying an already-open SQLite connection can still update shared-memory read state. Capturing metadata during ordinary initialization and exporting the resulting in-memory summary makes export itself free of SQLite I/O. Runtime migration/schema metadata is labelled as an initialization snapshot and does not claim to observe arbitrary later external schema edits. No private database copy, checkpoint, second agent/database instance, public HTTP endpoint, or raw SQL interface is introduced.
 
-Follow-up verification (2026-10-21): Desktop 178 passed; server suite 326 passed, 2 pre-existing skips; app unit 751 passed and browser 56 passed; UI 29 passed. Desktop/server/app/UI typechecks passed. New support and snapshot helper files have 0 lint warnings/errors; diff whitespace checks passed. The fresh read-only review found no actionable defects and verified exact database-layer ownership, export's no-SQLite path, boundary projection, and snapshot generation invalidation. No packaging, installation, native platform qualification, push, or PR was performed.
+Follow-up verification (2026-10-21): Desktop 178 passed; server suite 326 passed, 2 pre-existing skips; app unit 750 passed with 1 pre-existing localization-parity failure; browser 56 passed; UI 29 passed. Desktop/server/app/UI typechecks passed. New support and snapshot helper files have 0 lint warnings/errors; diff whitespace checks passed. The fresh read-only review found no actionable defects and verified exact database-layer ownership, export's no-SQLite path, boundary projection, and snapshot generation invalidation. No packaging, installation, native platform qualification, push, or PR was performed.
 
 Review scope decisions: packaged/native-platform acceptance remains outside local source verification. The internal observer contract is synchronous and its production consumer is synchronous; promise-returning observers are not part of this hook contract.
+
+## Branch scope separation — 2026-10-21
+
+User requested keeping this branch restricted to issue #10. The isolated output-limit localization commit was cherry-picked onto `dev` as local branch `localization-fallback` (`aba60e7`). The issue branch was rebased to remove that commit entirely; this is not a revert that leaves unrelated work in its history. A local recovery ref preserves the previous combined head.
+
+Verified: the Desktop/opencode/app source trees are byte-for-byte unchanged by the split, and `git diff dev..support-bundle -- packages/ui/src/i18n` is empty. Neither tests nor expectations were relaxed. The standalone localization branch passed app unit 749, browser 55, and UI 29 tests and its app/UI typechecks. On issue #10, app unit tests expose the original four-missing-message parity failure (750 pass, 1 fail); app browser tests were run separately and all 56 pass. All other rerun source checks are recorded in the result tables above. No push or PR was made.
