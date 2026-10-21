@@ -57,7 +57,7 @@ export function createSupportBundle(input: SupportBundleInput) {
       mode: "bharatcode_oauth" as const,
       source: "cached" as const,
       state,
-      authenticated: state === "signed_in" && auth.authenticated === true,
+      authenticated: (state === "signed_in" || state === "connection_issue") && auth.authenticated === true,
     },
     config: {
       directory: presence(config.directory),

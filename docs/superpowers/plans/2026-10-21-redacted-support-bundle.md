@@ -237,3 +237,14 @@ Review scope decisions: packaged/native-platform acceptance remains outside loca
 User requested keeping this branch restricted to issue #10. The isolated output-limit localization commit was cherry-picked onto `dev` as local branch `localization-fallback` (`aba60e7`). The issue branch was rebased to remove that commit entirely; this is not a revert that leaves unrelated work in its history. A local recovery ref preserves the previous combined head.
 
 Verified: the Desktop/opencode/app source trees are byte-for-byte unchanged by the split, and `git diff dev..support-bundle -- packages/ui/src/i18n` is empty. Neither tests nor expectations were relaxed. The standalone localization branch passed app unit 749, browser 55, and UI 29 tests and its app/UI typechecks. On issue #10, app unit tests expose the original four-missing-message parity failure (750 pass, 1 fail); app browser tests were run separately and all 56 pass. All other rerun source checks are recorded in the result tables above. No push or PR was made.
+
+## Final issue review — 2026-10-21
+
+Compared the isolated branch against Shrey's current issue #10 body (no issue comments) and the current `dev` base `1e97842919d87a350b38ea5fcf55f952af072e2e`. Independent Spec and Standards reviewers each found one actionable item, both fixed and re-reviewed:
+
+- Spec: preserve the cached authenticated flag during `connection_issue`; the previous projection incorrectly converted a signed-in outage into unauthenticated status. A regression test failed before the fix and passed afterward; signed-out, sign-in-required, and unknown states still report false, and account details remain excluded.
+- Standards: run the database-service test through the repository's scoped `testEffect(...).live` helper. Its real database, privacy, and failure assertions remain intact.
+
+Fresh verification after these fixes: Desktop 179 passed; server 326 passed, 2 existing skips; app browser 56 passed; UI 29 passed. Desktop/server/app/UI typechecks passed. Lint on the three changed code/test files reported zero warnings/errors; whitespace checks passed. App unit tests recorded 750 passed and the existing parity failure. Independently extracting the base revision's locale directories and running its parity test reproduced the same four missing output-limit keys (4 passed, 1 failed). The issue branch still contains no UI-locale or parity-test changes.
+
+No remaining actionable Spec or Standards findings. Source review supports opening an issue #10 PR with the independently confirmed baseline test failure disclosed; it does not establish a completely green repository suite or packaged/native-platform acceptance. No PR, push, packaging, installation, or release was performed.

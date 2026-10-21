@@ -120,6 +120,24 @@ test("auth truth cannot contradict state and output never retains input referenc
   input.auth.state = "signed_in"
 })
 
+test("preserves cached authentication during a connection outage without exposing account details", () => {
+  for (const authenticated of [true, false]) {
+    const result = createSupportBundle({
+      ...input,
+      auth: { state: "connection_issue", authenticated, email: "owner@private.test", token: "sk-private" },
+    })
+    expect(result.auth).toEqual({
+      mode: "bharatcode_oauth",
+      source: "cached",
+      state: "connection_issue",
+      authenticated,
+    })
+  }
+  for (const state of ["signed_out", "needs_sign_in", "unknown"]) {
+    expect(createSupportBundle({ auth: { state, authenticated: true } }).auth.authenticated).toBe(false)
+  }
+})
+
 test("database snapshot provenance is fixed and timestamps cannot carry private strings", () => {
   const database = { ...input.database, source: "runtime_snapshot", capturedAt: "2026-10-21T12:00:00.000Z" }
   expect(createSupportBundle({ database }).database).toEqual(database)
