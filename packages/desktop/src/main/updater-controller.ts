@@ -1,3 +1,4 @@
+import { supportErrors } from "./support-errors"
 import type { UpdaterState } from "@opencode-ai/app/updater"
 
 export type { UpdaterState } from "@opencode-ai/app/updater"
@@ -29,6 +30,7 @@ export function createUpdaterController(input: {
   const listeners = new Set<(state: UpdaterState) => void>()
 
   const transition = (next: UpdaterState) => {
+    if (next.status === "error") supportErrors.record("update")
     input.log?.("updater state changed", { from: state.status, to: next.status })
     state = next
     listeners.forEach((listener) => listener(state))
@@ -87,6 +89,7 @@ export function createUpdaterController(input: {
           transition({ status: "ready", version })
         })
         .catch((error) => {
+          supportErrors.record("update")
           transition({ status: "ready", version })
           throw error
         })

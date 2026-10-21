@@ -18,6 +18,7 @@ import { registerIpcHandlers, sendDeepLinks, sendMenuCommand } from "./ipc"
 import { forwardInitializationFailure, initializeConnection } from "./initialization"
 import { BRANDING, appIdForChannel, productNameForChannel, shouldRegisterProtocol } from "./branding"
 import { createBharatCodeAccountClient, type BharatCodeSidecarConnection } from "./bharatcode-auth"
+import { supportErrors } from "./support-errors"
 import { createRuntimeAccounts } from "./runtime-accounts"
 import { createDeepLinkEvents } from "./deep-link-events"
 import { openExternalUrl } from "./external-browser"
@@ -72,6 +73,7 @@ function useEnvProxy() {
     // Electron 41.2 runs Node 24.14.1; latest @types/node@24 is 24.12.2.
     ;(http as any).setGlobalProxyFromEnv()
   } catch (error) {
+    supportErrors.record("network")
     logger.warn("failed to load proxy environment", error)
   }
 }
@@ -183,6 +185,7 @@ const main = Effect.gen(function* () {
   try {
     setDefaultCACertificates([...new Set([...getCACertificates("default"), ...getCACertificates("system")])])
   } catch (error) {
+    supportErrors.record("network")
     logger.warn("failed to load system certificates", error)
   }
 
@@ -344,6 +347,7 @@ const main = Effect.gen(function* () {
   yield* Effect.promise(() => startNetLog()).pipe(
     Effect.catch((error) =>
       Effect.sync(() => {
+        supportErrors.record("network")
         logger.warn("failed to start net log", error)
       }),
     ),
@@ -448,6 +452,7 @@ const main = Effect.gen(function* () {
     Effect.tapCause(() =>
       Effect.sync(() => {
         setSidecarAuthorization()
+        supportErrors.record("startup")
         logger.error("desktop initialization failed")
       }),
     ),

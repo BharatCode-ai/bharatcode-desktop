@@ -2,6 +2,7 @@ import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { app, utilityProcess } from "electron"
 import type { Details } from "electron"
+import { supportErrors } from "./support-errors"
 import { getLogger } from "./logging"
 import { getUserShell, loadShellEnv } from "./shell-env"
 import { getStore } from "./store"
@@ -99,6 +100,7 @@ export async function spawnLocalServer(
       if (done) return
       done = true
       cleanup()
+      supportErrors.record("sidecar")
       reject(error)
     }
 
@@ -183,7 +185,8 @@ export async function spawnLocalServer(
         if (settled) return
         settled = true
         clearTimeout(timeout)
-        setChatImportStatus({ state: "failed", imported: 0, skipped: 0 })
+        supportErrors.record("database")
+      setChatImportStatus({ state: "failed", imported: 0, skipped: 0 })
         getLogger()?.warn("Previous chat import was not confirmed")
       }
       importer.on("message", (value) => {
@@ -206,6 +209,7 @@ export async function spawnLocalServer(
       importer.once("error", fail)
       importer.once("exit", fail)
     } catch {
+      supportErrors.record("database")
       setChatImportStatus({ state: "failed", imported: 0, skipped: 0 })
     }
   })()

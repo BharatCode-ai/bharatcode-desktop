@@ -1,3 +1,4 @@
+import { supportErrors } from "./support-errors"
 import { MainLogger } from "electron-log"
 import log from "electron-log/main.js"
 import { app, crashReporter, netLog, shell } from "electron"
@@ -78,6 +79,10 @@ export function write(
   extra?: Record<string, unknown>,
   level: "info" | "warn" | "error" = "info",
 ) {
+  if (level === "error") {
+    if (name === "renderer" || name === "window") supportErrors.record("renderer")
+    if (name === "utility") supportErrors.record("sidecar")
+  }
   if (!run) return
   const scoped = log.scope(safeLogName(name))
   if (extra !== undefined) {
