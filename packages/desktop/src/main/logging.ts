@@ -1,3 +1,4 @@
+import { supportRuntimeDatabase } from "./support-runtime-database"
 import { supportErrors } from "./support-errors"
 import { MainLogger } from "electron-log"
 import log from "electron-log/main.js"
@@ -60,13 +61,16 @@ export function setSupportAuthReader(read: () => SupportAuthSummary) {
 export const exportDebugLogs = createSupportExporter({
   directory: () => app.getPath("downloads"),
   input: async () => {
-    const metadata = await collectSupportMetadata({
-      channel: CHANNEL,
-      platform: process.platform,
-      home: homedir(),
-      temp: tmpdir(),
-      env: process.env,
-    }).catch(() => ({}))
+    const metadata = await collectSupportMetadata(
+      {
+        channel: CHANNEL,
+        platform: process.platform,
+        home: homedir(),
+        temp: tmpdir(),
+        env: process.env,
+      },
+      supportRuntimeDatabase.read(),
+    ).catch(() => ({}))
     return {
       ...metadata,
       version: app.getVersion(),

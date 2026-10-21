@@ -29,12 +29,7 @@ export function createSupportBundle(input: SupportBundleInput) {
   )
   return {
     formatVersion: 1 as const,
-    generated:
-      typeof input.generated === "string" &&
-      /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(input.generated) &&
-      Number.isFinite(Date.parse(input.generated))
-        ? input.generated
-        : null,
+    generated: timestamp(input.generated),
     version:
       typeof input.version === "string" &&
       /^\d{1,4}\.\d{1,4}\.\d{1,8}(?:-(?:beta|rc|alpha)\.\d{1,8})?$/.test(input.version)
@@ -73,6 +68,8 @@ export function createSupportBundle(input: SupportBundleInput) {
       authStore: presence(config.authStore),
     },
     database: {
+      source: choice(database.source, ["runtime_snapshot", "file_snapshot"] as const, "unknown"),
+      capturedAt: timestamp(database.capturedAt),
       availability: choice(
         database.availability,
         ["available", "missing", "unavailable", "memory"] as const,
@@ -119,4 +116,12 @@ function integer(value: unknown, max: number) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function timestamp(value: unknown) {
+  return typeof value === "string" &&
+    /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(value) &&
+    Number.isFinite(Date.parse(value))
+    ? value
+    : null
 }

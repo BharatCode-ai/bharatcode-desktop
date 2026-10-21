@@ -1,3 +1,4 @@
+import type { SupportDatabaseMetadata } from "./support-database"
 import "./init-projectors"
 
 import { NodeHttpServer } from "@effect/platform-node"
@@ -30,6 +31,7 @@ type ServerApp = {
 }
 
 type ListenOptions = CorsOptions & {
+  onSupportDatabase?: (metadata: SupportDatabaseMetadata) => void
   port: number
   hostname: string
   credentials?: { username: string; password: string }
@@ -107,7 +109,7 @@ const listenEffect: (opts: ListenOptions) => Effect.Effect<EffectListener, unkno
 )
 
 function listenerLayer(opts: ListenOptions, port: number) {
-  return HttpRouter.serve(HttpApiApp.createRoutes(opts), {
+  return HttpRouter.serve(HttpApiApp.createRoutes(opts, opts.onSupportDatabase), {
     middleware: disposeMiddleware,
     disableLogger: true,
     disableListenLog: true,

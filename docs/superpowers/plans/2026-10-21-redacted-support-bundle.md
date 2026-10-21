@@ -215,3 +215,15 @@ A fresh read-only review found three collector issues. Regression tests reproduc
 - Used immutable SQLite reads with journal/file stability checks. A nonempty WAL or rollback journal makes DB metadata unavailable; this avoids auxiliary-file mutation and stale metadata from ignored journal contents. The rest of the bundle still exports.
 - Kept existing palette rejection handling and error-page gating. Their safe-export target changed, while pre-existing error-presentation behavior remains.
 - Deferred native packaged-platform verification and all release work because this request is local source/tests only; any later release work requires the mandated Luna/max handoff.
+
+## Follow-up: database metadata while Desktop is running
+
+User authorized removing the active-WAL limitation for local running Desktop, with no DB/helper-file modification and no private output. Local-only/no-PR/no-release constraints remain.
+
+- [x] Capture a small schema/migration snapshot from the existing database service during normal server initialization; optional observer failures must not block startup.
+- [x] Project and carry it in the existing private sidecar ready message. Bind it to the exact local-sidecar lifetime, clear it on exit/replacement, and ignore old-owner updates.
+- [x] Prefer the snapshot during export, with explicit source/capture time. Preserve conservative immutable-file recovery when no runtime snapshot exists.
+- [x] Exercise the real Node database service and production exporter while WAL is open; assert metadata in the ZIP, no private sentinel values, and unchanged DB/WAL/SHM bytes and directory contents apart from the ZIP.
+- [ ] Finish relevant package tests/typechecks and independent review; record results below.
+
+Decision: querying an already-open SQLite connection can still update shared-memory read state. Capturing metadata during ordinary initialization and exporting the resulting in-memory summary makes export itself free of SQLite I/O. Runtime migration/schema metadata is labelled as an initialization snapshot and does not claim to observe arbitrary later external schema edits. No private database copy, checkpoint, second agent/database instance, public HTTP endpoint, or raw SQL interface is introduced.

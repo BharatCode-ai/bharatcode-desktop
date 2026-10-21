@@ -18,6 +18,8 @@ const input = {
     authStore: true,
   },
   database: {
+    source: "unknown",
+    capturedAt: null,
     availability: "available",
     schemaVersion: 42,
     migrationFormat: "current",
@@ -96,6 +98,8 @@ test("invalid or missing metadata stays unknown and numeric fields are bounded",
   expect(result.auth.authenticated).toBe(false)
   expect(result.config.directory).toBe("unavailable")
   expect(result.database).toEqual({
+    source: "unknown",
+    capturedAt: null,
     availability: "unavailable",
     schemaVersion: null,
     migrationFormat: "unknown",
@@ -114,4 +118,12 @@ test("auth truth cannot contradict state and output never retains input referenc
   input.auth.state = "private secret"
   expect(original.auth.state).toBe("signed_in")
   input.auth.state = "signed_in"
+})
+
+test("database snapshot provenance is fixed and timestamps cannot carry private strings", () => {
+  const database = { ...input.database, source: "runtime_snapshot", capturedAt: "2026-10-21T12:00:00.000Z" }
+  expect(createSupportBundle({ database }).database).toEqual(database)
+  expect(
+    createSupportBundle({ database: { ...database, source: "owner@private.test", capturedAt: "sk-private" } }).database,
+  ).toMatchObject({ source: "unknown", capturedAt: null })
 })

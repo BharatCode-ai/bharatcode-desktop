@@ -31,7 +31,10 @@ export function resolveSupportPaths(input: Input) {
   }
 }
 
-export async function collectSupportMetadata(input: Input): Promise<SupportMetadata> {
+export async function collectSupportMetadata(
+  input: Input,
+  runtimeDatabase?: SupportMetadata["database"],
+): Promise<SupportMetadata> {
   const paths = resolveSupportPaths(input)
   const api = input.platform === "win32" ? path.win32 : path.posix
   const config = Object.fromEntries(
@@ -46,7 +49,11 @@ export async function collectSupportMetadata(input: Input): Promise<SupportMetad
       ].map(async ([name, filename]) => [name, filename ? await present(filename) : false]),
     ),
   )
-  const database = await readDatabase(paths.database)
+  const cached = createSupportBundle({ database: runtimeDatabase }).database
+  const database =
+    cached.source === "runtime_snapshot" && cached.availability === "available" && cached.capturedAt !== null
+      ? cached
+      : await readDatabase(paths.database)
   const bundle = createSupportBundle({ config, database })
   return { config: bundle.config, database: bundle.database }
 }
@@ -87,7 +94,9 @@ async function readDatabase(filename: string) {
       }
     })()
     const after = await databaseSnapshot(filename)
-    return after.busy || before.identity !== after.identity ? { availability: "unavailable" } : result
+    return after.busy || before.identity !== after.identity
+      ? { availability: "unavailable" }
+      : { ...result, source: "file_snapshot", capturedAt: new Date().toISOString() }
   } catch {
     return { availability: "unavailable" }
   }
