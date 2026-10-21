@@ -26,6 +26,7 @@ import { createDesktopDraftStore } from "./draft-store"
 import { nativeT } from "./native-translations"
 import type { createRuntimeAccounts } from "./runtime-accounts"
 import { isOwnedRenderer } from "./windows"
+import { supportExportAction } from "./support-export"
 import { getChatImportStatus } from "./chat-import-status"
 
 const pickerFilters = (ext?: string[]) => {
@@ -150,7 +151,14 @@ export function registerIpcHandlers(deps: Deps) {
   ipcMain.handle("updater-check", () => deps.updater.check())
   ipcMain.handle("updater-install", () => deps.updater.install())
   ipcMain.handle("set-background-color", (_event: IpcMainInvokeEvent, color: string) => deps.setBackgroundColor(color))
-  ipcMain.handle("export-debug-logs", () => deps.exportDebugLogs())
+  ipcMain.handle(
+    "export-debug-logs",
+    supportExportAction({
+      owned: isOwnedRenderer,
+      run: () => deps.exportDebugLogs(),
+      failure: () => new Error(nativeT("desktop.support.error.export")),
+    }),
+  )
   ipcMain.handle("set-force-focus", (event: IpcMainInvokeEvent, enabled: boolean) =>
     setForceFocus(event.sender, enabled),
   )

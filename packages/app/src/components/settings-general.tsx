@@ -1,3 +1,4 @@
+import { SettingsSupport } from "./settings-support"
 import { Component, Show, createMemo, createResource, onMount, type JSX } from "solid-js"
 import { Button } from "@opencode-ai/ui/button"
 import { Icon } from "@opencode-ai/ui/icon"
@@ -765,6 +766,8 @@ export const SettingsGeneral: Component = () => {
         <SoundsSection />
 
         <UpdatesSection />
+
+        <SettingsSupport />
 
         <DisplaySection />
 

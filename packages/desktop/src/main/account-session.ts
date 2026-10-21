@@ -1,6 +1,7 @@
 import type { BharatCodeAccountStatus } from "../preload/types"
 import type { createBharatCodeAccountClient } from "./bharatcode-auth"
 import { isBharatCodeAuthCallback } from "./bharatcode-auth"
+import { supportErrors } from "./support-errors"
 import { nativeT } from "./native-translations"
 
 type Client = Pick<
@@ -83,6 +84,7 @@ export function createAccountSession(options: {
     generation++
     pending = undefined
     attempt.clear()
+    supportErrors.record("authentication")
     state("needs_sign_in", message)
     attempt.reject(new Error(message))
   }
@@ -100,6 +102,7 @@ export function createAccountSession(options: {
     const read = ++reads
     const next = await options.client.getAccountStatus().catch(() => {
       if (epoch !== generation || read !== reads || disposed) return latest
+      supportErrors.record("authentication")
       throw new Error(nativeT("desktop.account.error.status"))
     })
     if (epoch !== generation || read !== reads || disposed) return latest
@@ -187,6 +190,7 @@ export function createAccountSession(options: {
     })
       .catch(() => {
         if (epoch === generation && !disposed) state("connection_issue", nativeT("desktop.account.error.logout"))
+        supportErrors.record("authentication")
         throw new Error(nativeT("desktop.account.error.logout"))
       })
       .finally(() => {

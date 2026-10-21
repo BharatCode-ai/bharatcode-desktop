@@ -1,3 +1,4 @@
+import { createSupportBundle } from "./support-bundle"
 import * as http from "node:http"
 import * as tls from "node:tls"
 
@@ -22,7 +23,7 @@ type StopCommand = { type: "stop" }
 type SidecarCommand = StartCommand | StopCommand
 
 type SidecarMessage =
-  | { type: "ready" }
+  | { type: "ready"; databaseMetadata?: unknown }
   | { type: "stopped" }
   | { type: "error"; error: { message: string; stack?: string } }
 
@@ -56,12 +57,16 @@ async function start(command: StartCommand) {
     useEnvProxy()
     const { Server } = await import("virtual:opencode-server")
 
+    let databaseMetadata: unknown
     listener = await Server.listen({
       port: command.port,
       hostname: command.hostname,
       cors: ["oc://renderer"],
+      onSupportDatabase: (metadata: unknown) => {
+        databaseMetadata = createSupportBundle({ database: metadata }).database
+      },
     })
-    parentPort.postMessage({ type: "ready" })
+    parentPort.postMessage({ type: "ready", databaseMetadata })
   } catch (error) {
     parentPort.postMessage({ type: "error", error: serializeError(error) })
     setImmediate(() => process.exit(1))
