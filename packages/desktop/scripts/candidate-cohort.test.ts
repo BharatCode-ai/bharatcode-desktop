@@ -149,7 +149,17 @@ test("tested-release command binds the original run to a clean exact checkout, n
       "-m",
       "fixture",
     )
-    const value = { ...identity, source: git("rev-parse", "HEAD"), tree: git("rev-parse", "HEAD^{tree}") }
+    // The command reads the real package version, unlike the pure function
+    // fixtures. Keep this integration case valid after routine version bumps.
+    const desktop = await Bun.file(new URL("../package.json", import.meta.url)).json()
+    const cli = await Bun.file(new URL("../../opencode/package.json", import.meta.url)).json()
+    expect(cli.version).toBe(desktop.version)
+    const value = {
+      ...identity,
+      version: desktop.version,
+      source: git("rev-parse", "HEAD"),
+      tree: git("rev-parse", "HEAD^{tree}"),
+    }
     await fixture(input, value)
     const manifest = JSON.stringify(await assembleCohort(input, value))
     await fs.writeFile(path.join(input, "cohort.json"), manifest)

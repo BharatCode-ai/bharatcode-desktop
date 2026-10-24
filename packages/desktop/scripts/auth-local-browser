@@ -1,0 +1,3 @@
+#!/bin/sh
+# Disposable-profile browser launcher used only by auth-desktop-exercise.ts.
+exec "$BHARATCODE_AUTH_BUN" "$BHARATCODE_AUTH_CAPTURE_SCRIPT" "$@"

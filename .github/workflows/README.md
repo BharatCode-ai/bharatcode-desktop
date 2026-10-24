@@ -29,6 +29,10 @@ Publication requires explicit operator approval, the exact tested source/run and
 artifact hash, and the configured release environment. Preserve the existing
 `build-and-publish.yml` filename for npm trusted-publisher configuration.
 
+For the staged first-party Auth migration, also follow the
+[native cutover gates](../../docs/native-auth-cutover.md). Its changed issuer
+default must not be published ahead of the coordinated Auth/API activation.
+
 Windows/Linux beta packages are unsigned by policy. Both macOS architectures
 require Developer ID signing, notarization and stapling. No unsigned macOS
 fallback is allowed. The historical JIT/Hyper-V and version-pinned release
