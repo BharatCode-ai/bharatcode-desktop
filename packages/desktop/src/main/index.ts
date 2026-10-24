@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto"
-import { mkdirSync, rmSync } from "node:fs"
+import { mkdirSync } from "node:fs"
 import * as http from "node:http"
 import { createServer } from "node:net"
 import { homedir, tmpdir } from "node:os"
@@ -56,6 +56,7 @@ import { registerWslIpcHandlers } from "./wsl/ipc"
 import { spawnWslSidecar } from "./wsl/sidecar"
 import { cleanupStoreFiles } from "./store-cleanup"
 import { startBackgroundCli } from "./background-cli"
+import { testProfile } from "./test-profile"
 import { setNativeTranslations } from "./native-translations"
 
 const TEST_ONBOARDING = process.env.BHARATCODE_TEST_ONBOARDING === "1" || process.env.OPENCODE_TEST_ONBOARDING === "1"
@@ -122,28 +123,18 @@ const main = Effect.gen(function* () {
   process.env.OPENCODE_DISABLE_EMBEDDED_WEB_UI = "true"
 
   const appId = appIdForChannel(app.isPackaged ? CHANNEL : "dev")
-  const onboardingTestRoot = ((): string | undefined => {
-    if (!TEST_ONBOARDING) return
-
-    const root = join(tmpdir(), `bharatcode-onboarding-${randomUUID()}`)
-    rmSync(root, { recursive: true, force: true })
-    ;["data", "config", "cache", "state", "desktop", "session"].forEach((dir) =>
-      mkdirSync(join(root, dir), { recursive: true }),
+  const diagnostic = testProfile(process.env, tmpdir(), randomUUID())
+  if (diagnostic) {
+    Object.assign(process.env, diagnostic.env)
+    ;["data", "config", "cache", "state", "desktop", "session", "documents", "roaming", "local"].forEach((dir) =>
+      mkdirSync(join(diagnostic.root, dir), { recursive: true }),
     )
-    process.env.OPENCODE_DB = ":memory:"
-    process.env.XDG_DATA_HOME = join(root, "data")
-    process.env.XDG_CONFIG_HOME = join(root, "config")
-    process.env.XDG_CACHE_HOME = join(root, "cache")
-    process.env.XDG_STATE_HOME = join(root, "state")
-    return root
-  })()
+    app.setPath("sessionData", diagnostic.session)
+    app.setPath("documents", diagnostic.documents)
+  }
   app.setName(productNameForChannel(app.isPackaged ? CHANNEL : "dev"))
   app.setAppUserModelId(appId)
-  app.setPath(
-    "userData",
-    onboardingTestRoot ? join(onboardingTestRoot, "desktop") : join(app.getPath("appData"), appId),
-  )
-  if (onboardingTestRoot) app.setPath("sessionData", join(onboardingTestRoot, "session"))
+  app.setPath("userData", diagnostic ? diagnostic.desktop : join(app.getPath("appData"), appId))
   initializeOldLayoutEligibility(app.getPath("userData"))
   logger = initLogging()
   initCrashReporter()
@@ -189,7 +180,7 @@ const main = Effect.gen(function* () {
   logger.log("app starting", {
     version: app.getVersion(),
     packaged: app.isPackaged,
-    onboardingTest: Boolean(onboardingTestRoot),
+    onboardingTest: Boolean(diagnostic),
   })
 
   ensureLoopbackNoProxy()

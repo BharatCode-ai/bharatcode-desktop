@@ -431,6 +431,50 @@ test("macOS candidate uses the configured repository signing and notarization se
   expect(signing.env?.APPLE_API_KEY_ID).toBe("${{ secrets.APPLE_API_KEY_ID }}")
 })
 
+test("Windows-only candidate keeps exact-source WSL, skips full cohort and cannot relax publication completeness", async () => {
+  const workflow = Bun.YAML.parse(
+    await Bun.file(new URL("../../../.github/workflows/publish.yml", import.meta.url)).text(),
+  ) as {
+    on: { workflow_dispatch: { inputs: { target: { default: string; options: string[] } } } }
+    jobs: {
+      admit: { steps: { id?: string; run?: string }[] }
+      package: { needs: string[]; strategy: { matrix: string } }
+      cohort: { if: string }
+    }
+  }
+  expect(workflow.on.workflow_dispatch.inputs.target).toMatchObject({ default: "all", options: ["all", "windows-x64"] })
+  expect(workflow.jobs.package.needs).toEqual(["admit", "wsl"])
+  expect(workflow.jobs.package.strategy.matrix).toBe("${{ fromJSON(needs.admit.outputs.matrix) }}")
+  expect(workflow.jobs.cohort.if).toBe("inputs.target == 'all' || inputs.target == ''")
+  const script = workflow.jobs.admit.steps
+    .find((step) => step.id === "targets")!
+    .run!.match(/^bun -e '([\s\S]*)'\s*$/)![1]
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "bc-targets-"))
+  try {
+    for (const target of ["all", "", "windows-x64", "invalid"]) {
+      const output = path.join(root, target || "default")
+      const result = spawnSync(process.execPath, ["-e", script], {
+        env: { ...process.env, CANDIDATE_TARGET: target, GITHUB_OUTPUT: output },
+        encoding: "utf8",
+      })
+      if (target === "invalid") {
+        expect(result.status).not.toBe(0)
+        continue
+      }
+      expect(result.status).toBe(0)
+      const matrix = JSON.parse((await fs.readFile(output, "utf8")).trim().slice("matrix=".length)) as {
+        include: { target: string; runner: string; arch: string }[]
+      }
+      expect(matrix.include.map((item) => item.target)).toEqual(
+        target === "windows-x64" ? ["windows-x64"] : ["windows-x64", "darwin-arm64", "darwin-x64", "linux-x64"],
+      )
+      expect(matrix.include[0]).toEqual({ target: "windows-x64", runner: "windows-2022", arch: "x64" })
+    }
+  } finally {
+    await fs.rm(root, { recursive: true, force: true })
+  }
+})
+
 test("notarization key materialization accepts PEM/base64 and rejects invalid input or overwrite", async () => {
   const text = await Bun.file(new URL("../../../.github/workflows/publish.yml", import.meta.url)).text()
   const workflow = Bun.YAML.parse(text) as {

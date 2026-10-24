@@ -28,7 +28,8 @@ export function setupAutoUpdater(stop: () => Promise<void>) {
 
   const store = getStore("bharatcode.updater")
   return createUpdaterController({
-    enabled: UPDATER_ENABLED,
+    enabled:
+      UPDATER_ENABLED && process.env.BHARATCODE_TEST_ONBOARDING !== "1" && process.env.OPENCODE_TEST_ONBOARDING !== "1",
     currentVersion: app.getVersion(),
     backend: {
       checkForUpdates: () => (CHANNEL === "beta" ? checkDesktopBetaUpdate(autoUpdater) : autoUpdater.checkForUpdates()),

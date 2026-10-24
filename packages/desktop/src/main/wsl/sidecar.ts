@@ -18,7 +18,7 @@ export type WslSidecar = {
 }
 
 export async function spawnWslSidecar(distro: string, opts: { healthTimeoutMs?: number } = {}): Promise<WslSidecar> {
-  const issuer = BharatCodeAuth.issuer()
+  const endpoints = BharatCodeAuth.sidecarEnvironment()
   const runtime = await bundledWslRuntime(distro, false)
   const port = await allocatePort()
   const password = randomUUID()
@@ -36,7 +36,7 @@ export async function spawnWslSidecar(distro: string, opts: { healthTimeoutMs?: 
         "TMPDIR=/tmp",
         "OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER=true",
         "OPENCODE_CLIENT=desktop",
-        `BHARATCODE_AUTH_URL=${issuer}`,
+        ...Object.entries(endpoints).map(([key, value]) => `${key}=${value}`),
         runtime.installedPath,
         "serve",
         "--hostname",

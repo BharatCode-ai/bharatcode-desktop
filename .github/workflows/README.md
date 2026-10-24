@@ -16,6 +16,9 @@ The build and publication workflows are separate from those diagnostics:
 
 - `publish.yml`: manually build an exact-source Desktop candidate for Windows,
   macOS arm64/x64, Linux and the bundled WSL runtime. Upload artifacts only.
+  The default `target=all` builds the full cohort. `target=windows-x64` builds
+  only the Windows test artifact and its same-source WSL runtime; no publishable
+  cohort is assembled and publication completeness checks remain unchanged.
 - `build-and-publish.yml`: manually build all CLI targets on one Linux runner.
   A separate explicit `publish-tested` operation verifies the existing tarballs
   before npm/GitHub publication, without rebuilding or overwriting.

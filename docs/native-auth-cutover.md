@@ -21,7 +21,7 @@ document owns only the native release and installed-client acceptance gates.
   S256 PKCE and exact registered callbacks `bharatcode://auth/callback` and
   `http://127.0.0.1:27182/callback`. Do not add a native client secret.
 - Keep app IDs, `bharatcode` protocol registration, storage paths, auth-store
-  format, API URL `https://bharatcode.ai/api/model/v1`, API keys, saved projects and
+  format, default API URL `https://bharatcode.ai/api/model/v1`, API keys, saved projects and
   chats unchanged. Do not reset/import credentials or invoke migrations as an
   Auth update workaround. Windows credential-store protections remain in place.
 - Recognizable stored JWTs from another issuer require fresh sign-in **before**
@@ -126,8 +126,13 @@ claim of an audited network sandbox.
 
 ### Build-only CI candidate
 
-Version 1.15.43 is an unpublished test candidate. Run the existing Desktop
-`publish.yml` workflow with the exact committed `source_sha` and `channel=beta`.
+Version 1.15.44 is an unpublished test candidate. Run the existing Desktop
+`publish.yml` workflow with the exact committed `source_sha`, `channel=beta`
+and `target=windows-x64` for the Windows-only test artifact. This still builds
+and verifies the same-source Linux WSL runtime. It does not run macOS signing
+or assemble a publishable cohort. The default `target=all` still builds all
+four platforms and requires the complete immutable cohort; publication gates
+are unchanged. A Windows-only run cannot be promoted by the tested publisher.
 Despite its filename, this workflow only builds and uploads GitHub Actions
 artifacts; every packager uses `--publish never`. The CLI workflow may run only
 with `operation=build` and publication inputs left false. Do not dispatch the
@@ -140,6 +145,87 @@ override `BHARATCODE_AUTH_URL=https://evgvlcaxfpwupaiwzqqm.supabase.co`.
 This tests the candidate against the still-live hosted authority without
 changing production. It does not pass the first-party installed-login gate.
 Do not persist that override in Windows settings or package it in a release.
+
+### Isolated native Auth + API exercise
+
+`BHARATCODE_API_BASE_URL` is an explicit **process environment** setting, not a
+server/catalog preference or a build-time value. Its default is
+`https://bharatcode.ai`; the Auth default remains `https://auth.bharatcode.ai/auth/v1`.
+For an isolated exercise set **both** Auth and API overrides before starting
+the client/CLI in a disposable profile. Setting only Auth does not retarget the
+API; omitting the API override keeps the production default. Never reuse an
+active user's profile for a rehearsal. An example using local synthetic fixtures:
+
+```powershell
+$env:BHARATCODE_AUTH_URL = 'https://127.0.0.1:48140'
+$env:BHARATCODE_API_BASE_URL = 'https://127.0.0.1:48141'
+# Launch the candidate with the approved isolated profile and fixture CA.
+# Keep TLS verification enabled. Remove these process-only variables afterward.
+```
+
+The API override accepts only a canonical bare HTTPS origin (or exact
+`localhost`, `127.0.0.1`, `[::1]` over HTTP for local tests), with no trailing
+slash, credentials, path, query, fragment or URL-parser repairs. An explicit
+invalid value fails closed before network access. It is frozen at process
+startup: account credential forwarding, catalog discovery, both provider model
+projections and dictation use the same origin. WSL receives only the validated
+Auth/API pair through its sanitized environment, not the parent credentials.
+There is no discovery, redirect following or fallback to production. A catalog
+cannot change this authority. Switching Auth still rejects mismatched-issuer
+sessions without overwriting their saved credentials.
+
+Focused offline checks (from their package directories):
+
+- Core: `bun test test/bharatcode-auth.test.ts`
+- Native: `bun test test/bharatcode/api-origin.test.ts test/bharatcode/account.test.ts test/bharatcode/account-http.test.ts test/bharatcode/catalog.test.ts test/bharatcode/dictation.test.ts`
+- Desktop: `bun test scripts/candidate-cohort.test.ts src/main/bharatcode-auth.test.ts`
+
+The API-origin test launches a separate process with synthetic credentials and
+a disposable profile, then exercises real HTTP PKCE/UserInfo, catalog, AI SDK
+non-streaming/streaming model calls and dictation against a loopback mock. It
+also rejects production/cross-origin credential destinations, catalog-provided
+external endpoints, redirects and an issuer switch. It does not establish that
+the isolated deployed API can infer successfully, or replace installed Windows,
+OS protocol activation and actual self-hosted Auth acceptance.
+
+### Windows owner-only relay launch (no installation)
+
+Use the verified Windows-only artifact from the exact candidate run. Do **not**
+run the NSIS installer or replace the installed Beta. Extract it with an existing
+7-Zip installation into fresh directories, then extract its embedded
+`$PLUGINSDIR/app-64.7z` into a separate portable directory. If that payload is
+absent, stop and inspect the installer listing rather than executing it. This
+does not change the artifact/receipt or claim portable release support.
+
+```powershell
+# $installer, $expanded and $portable must point to the verified artifact and
+# fresh scratch directories. These commands do not execute the installer.
+& 7z x $installer "-o$expanded"
+& 7z x (Join-Path $expanded '$PLUGINSDIR\app-64.7z') "-o$portable"
+& .\packages\desktop\scripts\launch-auth-test.ps1 `
+  -Executable (Join-Path $portable 'BharatCode Beta.exe') `
+  -AuthUrl 'https://auth.bharatcode.ai' -ApiBaseUrl 'https://auth.bharatcode.ai'
+```
+
+The launcher creates a fresh marked TEMP profile, uses an allowlisted child
+environment, and leaves the caller/installed Beta environment untouched. It
+reuses `BHARATCODE_TEST_ONBOARDING=1` and `OPENCODE_TEST_HOME`; diagnostic mode
+now isolates Windows AppData credentials, Electron cookies/settings, documents,
+XDG paths and in-memory chat DB as well. The selected root is stable for a
+second-instance callback or relaunch; it is never erased on startup. Updaters
+and OS protocol registration are disabled in this mode. Use the local Windows
+runtime only; do not add WSL runtimes, existing projects or installed profiles
+to this rehearsal. TLS verification stays enabled; configure the approved
+encrypted relay/trust separately, never set a TLS bypass flag.
+
+Because this test deliberately does not take over `bharatcode://`, the test
+browser/relay must not automatically open the installed Beta's protocol handler.
+Capture the owner-only callback and deliver it with the same extracted EXE and
+the returned `-ProfileRoot`, adding `-DeliverCallback` to the launcher. It prompts
+for the callback privately and sends it to the test app's existing single-instance
+handler. Do not paste callback codes into logs or the chat. This is an explicit
+callback test, not acceptance of OS protocol association. `-PrepareOnly` validates
+and prepares a profile without launching the app. No test credentials are bundled.
 
 ### Optional local Windows packaging
 

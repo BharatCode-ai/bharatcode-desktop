@@ -7,7 +7,9 @@ import { serviceUse } from "@opencode-ai/core/effect/service-use"
 import { NonNegativeInt } from "@opencode-ai/core/schema"
 
 export const PROVIDER_ID = "bharatcode"
-export const API_BASE_URL = "https://bharatcode.ai"
+// Freeze the operator-selected authority at process startup for every native
+// API surface. Invalid explicit configuration must fail before any request.
+export const API_BASE_URL = BharatCodeAuth.apiOrigin()
 export const MODEL_API_BASE_URL = `${API_BASE_URL}/api/model/v1`
 export const OAUTH_ISSUER = BharatCodeAuth.DEFAULT_ISSUER
 export const OAUTH_CLIENT_ID = "4cad332a-232f-4ef2-9363-12fea4420635"
