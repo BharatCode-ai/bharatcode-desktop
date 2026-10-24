@@ -126,7 +126,7 @@ claim of an audited network sandbox.
 
 ### Build-only CI candidate
 
-Version 1.15.44 is an unpublished test candidate. Run the existing Desktop
+Version 1.15.45 is an unpublished test candidate. Run the existing Desktop
 `publish.yml` workflow with the exact committed `source_sha`, `channel=beta`
 and `target=windows-x64` for the Windows-only test artifact. This still builds
 and verifies the same-source Linux WSL runtime. It does not run macOS signing
@@ -137,6 +137,24 @@ Despite its filename, this workflow only builds and uploads GitHub Actions
 artifacts; every packager uses `--publish never`. The CLI workflow may run only
 with `operation=build` and publication inputs left false. Do not dispatch the
 tested-candidate publisher or promote any release, npm tag or updater metadata.
+
+### Windows credential-read sharing race
+
+The native credential helper retries only Windows `ERROR_SHARING_VIOLATION`
+(32) during a read: four attempts, 75 ms between attempts, at most 225 ms added
+backoff within the existing helper timeout. Each retry reacquires the path and
+handles and repeats all owner, ACL, reparse-point, identity and size checks.
+All other errors fail closed without retry; prepare, publication and quarantine
+are never replayed. Exhaustion reports a safe busy/unavailable error instead of
+misclassifying it as unsafe permissions. No native stderr, path or credential
+content is included in the error.
+
+Run the real Windows tests in `packages/core/test/windows-credential-read-retry.test.ts`
+on Windows in addition to the package Auth tests. They use temporary synthetic
+credentials and controlled kernel sharing conflicts; non-Windows runs skip
+these native cases. Passing fixtures is not browser-to-installed-Desktop
+callback acceptance. That requires a clean saved profile, the standard installer
+and its normal OS protocol handler, with no CLI-created session.
 
 Before the coordinated cutover, the new Auth endpoint is restricted staging,
 not a public native OAuth service. For ordinary Windows compatibility testing,

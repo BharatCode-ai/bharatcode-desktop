@@ -1,6 +1,6 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
-  "version": "1.15.44",
+  "version": "1.15.45",
   "name": "bharatcode",
   "type": "module",
   "license": "MIT",

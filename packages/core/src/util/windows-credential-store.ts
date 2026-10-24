@@ -35,19 +35,24 @@ export function windowsCredentialStore(file: string, options: { spawn?: typeof s
       },
     )
     if (result.status !== 0 || result.error) {
+      const busy = operation === "read" && !result.error && result.status === 32
       throw new Error(
         operation === "quarantine-marker"
           ? "Windows schema marker quarantine was not confirmed. Recheck recovery state before retrying."
           : operation === "publish"
             ? "Windows credential publication was not confirmed. Re-read account state before retrying."
-            : "Windows credential permissions or access could not be verified.",
+            : busy
+              ? "Windows credential store is busy. Try again."
+              : "Windows credential permissions or access could not be verified.",
         {
           cause:
             result.error && "code" in result.error && result.error.code === "ETIMEDOUT"
               ? "CREDENTIAL_HELPER_TIMEOUT"
               : result.error
                 ? "CREDENTIAL_HELPER_START_FAILED"
-                : "CREDENTIAL_HELPER_REJECTED",
+                : busy
+                  ? "CREDENTIAL_STORE_BUSY"
+                  : "CREDENTIAL_HELPER_REJECTED",
         },
       )
     }
@@ -103,6 +108,9 @@ using System.Security.Principal;
 using Microsoft.Win32.SafeHandles;
 
 public static class BharatCodeCredentialFile {
+  public sealed class SharingViolation : IOException {
+    public SharingViolation() : base("Credential store is busy") {}
+  }
   const uint READ_CONTROL = 0x20000, SYNCHRONIZE = 0x100000, DELETE = 0x10000;
   const uint READ = 0x80000000, WRITE = 0x40000000, SHARE_READ = 1, SHARE_WRITE = 2, SHARE_DELETE = 4;
   const uint REPARSE = 0x400, DIRECTORY = 0x10;
@@ -187,6 +195,7 @@ public static class BharatCodeCredentialFile {
         var handle = CreateFileW(current, READ_CONTROL | 0x80, SHARE_READ | SHARE_WRITE, IntPtr.Zero, 3, 0x02000000 | 0x00200000, IntPtr.Zero);
         if (handle.IsInvalid) {
           var error = Marshal.GetLastWin32Error(); handle.Dispose();
+          if (error == 32) throw new SharingViolation();
           if (error != 2 && error != 3) throw new IOException("Credential ancestor unavailable");
           if (!create) { chain.Missing = true; return chain; }
           Directory.CreateDirectory(current, PrivateDirectory());
@@ -211,6 +220,7 @@ public static class BharatCodeCredentialFile {
     if (handle.IsInvalid) {
       var error = Marshal.GetLastWin32Error(); handle.Dispose();
       if (error == 2) { missing = true; return null; }
+      if (error == 32) throw new SharingViolation();
       throw new IOException("Credential file unavailable");
     }
     Inspect(handle, false);
@@ -225,6 +235,18 @@ public static class BharatCodeCredentialFile {
     }
   }
   public static string Read(string input) {
+    // Only confirmed sharing violations are transient. Each failed attempt has
+    // disposed every held handle before retrying the complete verification.
+    // Four attempts add at most 225ms backoff; other operations never retry.
+    for (int attempt = 0; ; attempt++) {
+      try { return ReadOnce(input); }
+      catch (SharingViolation) {
+        if (attempt >= 3) throw;
+        System.Threading.Thread.Sleep(75);
+      }
+    }
+  }
+  static string ReadOnce(string input) {
     var file = Full(input);
     using (var parent = PinParent(file, false)) {
       if (parent.Missing) return null;
@@ -359,5 +381,11 @@ public static class BharatCodeCredentialFile {
   elseif ($request.operation -eq 'quarantine-marker') { [BharatCodeCredentialFile]::QuarantineMarker([string]$request.file, [string]$request.destination, [string]$request.identity); $content = $null }
   else { throw 'Invalid operation' }
   [Console]::Out.Write((@{ok=$true;content=$content} | ConvertTo-Json -Compress))
-} catch { exit 1 }
+} catch {
+  $failure = $_.Exception
+  while ($failure.InnerException) { $failure = $failure.InnerException }
+  # A fixed exit code, never stderr/paths/content, distinguishes exhausted reads.
+  if ($request.operation -eq 'read' -and $failure.GetType().FullName -eq 'BharatCodeCredentialFile+SharingViolation') { exit 32 }
+  exit 1
+}
 `
