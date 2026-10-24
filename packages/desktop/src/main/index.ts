@@ -58,6 +58,11 @@ import { cleanupStoreFiles } from "./store-cleanup"
 import { startBackgroundCli } from "./background-cli"
 import { testProfile } from "./test-profile"
 import { setNativeTranslations } from "./native-translations"
+import { guardConsolePipe } from "./stdio"
+
+// Electron's own warnings bypass electron-log's console transport.
+guardConsolePipe(process.stdout)
+guardConsolePipe(process.stderr)
 
 const TEST_ONBOARDING = process.env.BHARATCODE_TEST_ONBOARDING === "1" || process.env.OPENCODE_TEST_ONBOARDING === "1"
 const SIDECAR_VERSION = process.env.OPENCODE_SIDECAR_V2 === "1" ? "v2" : "v1"

@@ -126,7 +126,7 @@ claim of an audited network sandbox.
 
 ### Build-only CI candidate
 
-Version 1.15.45 is an unpublished test candidate. Run the existing Desktop
+Version 1.15.46 is an unpublished test candidate. Run the existing Desktop
 `publish.yml` workflow with the exact committed `source_sha`, `channel=beta`
 and `target=windows-x64` for the Windows-only test artifact. This still builds
 and verifies the same-source Linux WSL runtime. It does not run macOS signing
@@ -139,6 +139,13 @@ with `operation=build` and publication inputs left false. Do not dispatch the
 tested-candidate publisher or promote any release, npm tag or updater metadata.
 
 ### Windows credential-read sharing race
+
+The Desktop main process also guards its stdout/stderr against a launcher pipe
+closing. This covers Electron's own console warnings as well as application
+logging, without a global uncaught-exception handler. Only `EPIPE` on these two
+console streams is disposable; other errors still propagate and file logging
+is unchanged. The focused `src/main/stdio.test.ts` includes actual compiled Node
+stdout/stderr disconnects. This does not change Auth, model streams or the CLI.
 
 The native credential helper retries only Windows `ERROR_SHARING_VIOLATION`
 (32) during a read: four attempts, 75 ms between attempts, at most 225 ms added
