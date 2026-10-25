@@ -1,6 +1,6 @@
 # Desktop–Mobile tunnel trust boundary
 
-This integration uses the existing OpenTunnel SDK against `https://tunnel.bharatcode.ai`, reviewed against `bharatcode-tunnel` commit `fe7dfa73b35ebb035ba42a62482ec230a7e1a8bf`, particularly `packages/client/README.md` and `docs/trust-boundary.md`. It requires no new account or API/Chat service change.
+This integration uses the existing OpenTunnel SDK against `https://tunnel.bharatcode.ai`, reviewed against `bharatcode-tunnel` commit `fe7dfa73b35ebb035ba42a62482ec230a7e1a8bf`, particularly the [client SDK documentation](https://github.com/BharatCode-ai/bharatcode-tunnel/blob/fe7dfa73b35ebb035ba42a62482ec230a7e1a8bf/packages/client/README.md) and [route-target trust boundary](https://github.com/BharatCode-ai/bharatcode-tunnel/blob/fe7dfa73b35ebb035ba42a62482ec230a7e1a8bf/docs/trust-boundary.md). It requires no new account or API/Chat service change.
 
 ## Transport and application authority
 
