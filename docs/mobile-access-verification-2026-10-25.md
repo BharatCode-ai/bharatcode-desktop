@@ -7,7 +7,7 @@ The implementation uses the existing OpenTunnel SDK against `https://tunnel.bhar
 | Gate | Result |
 | --- | --- |
 | Mobile TypeScript and ESLint | Passed |
-| Mobile Jest suite | 53 passed, 10 suites |
+| Mobile Jest suite | 71 passed, 12 suites |
 | Existing certificate/security regressions | 15 passed |
 | Mobile and connector npm audits | 0 known vulnerabilities |
 | Expo dependency compatibility | Dependencies up to date |
@@ -17,7 +17,7 @@ The implementation uses the existing OpenTunnel SDK against `https://tunnel.bhar
 | Desktop package TypeScript and release configuration | Passed |
 | App package TypeScript | Passed |
 | Full Desktop workspace typecheck | 19 tasks passed in isolated sibling checkout |
-| Desktop package source suite | 168 passed |
+| Desktop package source suite | 168 passed; focused owned-renderer authorization checks: 8 passed / 40 assertions |
 | App package unit suite | 748 passed, 1 pre-existing failure; see below |
 
 `packages/app/src/i18n/parity.test.ts` fails because the Arabic UI dictionary lacks `ui.message.outputLimit`, `ui.message.outputLimit.reasoning`, `ui.message.outputLimit.partial`, and `ui.message.outputLimit.tool`. A fresh clean clone at the Desktop base reproduces the exact 748-pass/1-fail result. This integration does not modify those UI files or suppress the failure. The mobile settings keys use the repository's existing shared English fallback pending reviewed translations.
@@ -33,6 +33,8 @@ The review identified a reset path that could wait for a pending certificate. Re
 A final connection-state regression reproduced idle background activity failures leaving Desktop marked connected; the Mobile client now shows offline/reconnecting, retries identity health, retains pairing, and clears the notice on recovery.
 
 Other source regressions exercise expired/replayed/declined claims, bounded public-link enrollment, mandatory explicit approval, invalid origins and malformed/deceptive URLs, wrong device credentials, browser origins, spoofed localhost/forwarding headers, sensitive route denial, provider-secret projection, registry persistence, revocation during requests/streams, readable status and cancellable slow issuance. Native fetch explicitly omits cookies and rejects redirects. See [the documented boundary](mobile-access-trust-boundary.md).
+
+The installed-runtime follow-up exposed two Mobile bugs: a warm pairing link could open the screen without submitting its claim, and long plain replies created a native Text view per Markdown leaf. Native intent routing now validates the original URI before passing it to pairing, with a per-delivery identifier so the same public link can be retried after cancellation. Plain paragraph rendering now joins text leaves while preserving rich Markdown children and heading styles. Regressions cover real store claim submission, repeated intents, malformed links without credential propagation, all 600 reply lines with bounded native view growth, rich spans, and three heading levels. Independent review caught the initial heading-style regression; the revised implementation resolves it. A sustained real-model run also exposed UI starvation from synchronously publishing every streamed text delta. The store now accumulates all deltas and publishes at most once per 100 ms, avoiding a full history reload for each text delta while lifecycle events still reconcile authoritative state. A 200-delta regression reproduces 200 notifications before the fix; the revised path retains every character with bounded notifications. Separate coverage ensures queued text cannot publish after navigation or revocation, and durable replay still reconciles text through history. Independent source review found no actionable issue in this change. The final exact `npm run check` passed TypeScript, ESLint, all 71 Jest tests and all 15 certificate/security checks.
 
 ## Runtime qualification
 
@@ -66,6 +68,19 @@ Android emulator results (API 35, x86_64):
 - Revoking the phone through Desktop IPC produced “This phone is no longer authorized. Pair again.” in native UI. The saved computer metadata remained; no new pairing was performed after revocation. A subsequent native force-stop and launcher relaunch created a new app process and restored the same revoked state within approximately six seconds.
 - A malformed link was rejected natively before a claim. Warm link dispatch worked. Cold link dispatch first opened the Expo development launcher until its remembered Metro server was selected; standalone cold-start behavior remains unverified.
 
-Physical camera scanning, physical Android/iOS, signed distribution, production model generation, and visible Desktop Settings/approval behind real account login remain unverified. No existing installed Mobile app was replaced by the separate QA package.
+The initial isolated-profile run above did not verify production model generation or the signed-in installed Desktop. The follow-up below uses the installed native application and its existing account/session. Physical camera scanning, physical Android/iOS and signed distribution remain unverified. No existing installed Mobile app was replaced by the separate QA package.
 
-No release publication or store submission is part of this work. Runtime tests use isolated Desktop profiles and a separate Android QA application ID. Physical Android/iOS and signed distribution remain separate qualification tiers.
+## Installed native Desktop and real-model follow-up
+
+The follow-up used the installed native Fedora Desktop build, its existing signed-in profile and existing sidecar, plus the separate API 35 Android development QA package. One user-approved controlled Desktop restart restored the same tunnel identity/certificate and paired-device registry. That Desktop process remained running throughout subsequent testing. Approval used the actual owned-renderer preload IPC with matching confirmation codes; pointer-driven Desktop approval UI is not claimed. Three pre-existing paired devices were preserved; disposable QA devices were handled separately.
+
+- A public pairing link submitted a claim and connected Android only after explicit matching-code Desktop approval. Opening the real public link in the already-running Android app also passed: it automatically submitted a pending claim, displayed the matching confirmation and connected only after approval. This used the native-intent fix above; Metro needed its route context refreshed to include the newly added file in the development bundle. No manual paste was used for that final warm-link test.
+- Real account-backed Qwen 3.8 27B requests ran through the phone's authenticated HTTPS tunnel, gateway and existing Desktop sidecar. The completed answers included the requested 1–80, 1–200, 1–120 and 1–1000 sequences. These were model calls, rather than fixture SSE events.
+- During the 200-line request, Android Wi-Fi/data were disabled after admission. Mobile showed Offline and its saved-draft/reconnect notice. Desktop completed generation while the phone was offline. Restoring the network recovered the paired connection, cleared the notice and displayed the completed answer; the authoritative session retained one user/assistant pair for that request, without duplicate admission.
+- The 1000-line stress run exposed UI starvation described above. After the rendering/store fixes, Mobile rendered all 1000 lines in one numeric TextView and Back navigation worked. The first live sampler omitted UIAutomator errors, so its zero counts are invalid measurements and are not used as proof of missing text or successful incremental growth.
+- Incremental real-model rendering passed on the revised source without instrumentation. A read-only React DevTools probe measured the current assistant's committed `Message` props growing from 46 to 114 text characters, with screenshots showing the visible tail advance from line 18 to line 40. The matching assistant's authenticated Desktop lookup explicitly reported incomplete after each screenshot. These pre-revocation samples were approximately 8.24 and 10.17 seconds after sending the prompt. No accessibility-idle assumption or final-response timing was used to infer streaming.
+- Desktop revoked only the disposable QA phone while that response was still incomplete. Mobile automatically switched to Offline with “This phone is no longer authorized. Pair again.” in approximately 1.97 seconds, and native accessibility confirmed Send was visible but disabled. Neither app was restarted. Twelve characters already in flight rendered before the phone's text stabilized at 126 characters. After Desktop finished the 1,893-character answer, eleven further observations over 20.27 seconds confirmed the phone stayed offline/unauthorized at that same partial text, with no further reply growth. Revocation does not retract buffered bytes or automatically cancel work owned by Desktop. The device list returned from four entries to the original three. Earlier fresh requests with revoked credentials also returned the re-pair notice.
+
+Qualification processes ran under a shared 6 GiB memory cap and two-core CPU budget; the emulator child was capped at 4 GiB with 1.5 GiB guest RAM. Earlier attempts that exceeded smaller emulator child caps were discarded. The later UI starvation was observed without a new memory-limit/OOM event.
+
+No release publication or store submission is part of this work. Physical Android/iOS, camera scanning and signed distribution remain separate qualification tiers.
