@@ -16,6 +16,8 @@ export type {
   WslServersState,
 } from "@opencode-ai/app/wsl/types"
 
+import type { MobileAction, MobileState } from "@opencode-ai/app/mobile-types"
+
 export type ServerReadyData = {
   url: string
   username: string | null
@@ -55,6 +57,7 @@ export type FatalRendererError = {
 }
 
 export type ElectronAPI = {
+  mobileAccess: (input: MobileAction) => Promise<MobileState>
   getChatImportStatus: () => Promise<{ state: "pending" | "complete" | "failed"; imported: number; skipped: number }>
   getAccountStatus: (runtimeId?: string) => Promise<BharatCodeAccountStatus>
   refreshAccountStatus: (runtimeId?: string) => Promise<BharatCodeAccountStatus>

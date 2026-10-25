@@ -23,7 +23,10 @@ export const BHARATCODE_NATIVE_ENGLISH = {
   "desktop.account.error.signInRequired": "Sign in to BharatCode again to continue.",
 } as const
 
+import { MOBILE_ENGLISH } from "./mobile"
+
 export const BHARATCODE_ENGLISH = {
+  ...MOBILE_ENGLISH,
   ...BHARATCODE_NATIVE_ENGLISH,
   "chatImport.pending": "Restoring previous chats in the background…",
   "chatImport.complete": "Restored {{count}} previous chats. Refresh this view to see them.",

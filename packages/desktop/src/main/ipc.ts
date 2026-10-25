@@ -36,6 +36,7 @@ const pickerFilters = (ext?: string[]) => {
 const pickedFiles = createPickedFileAuthorizations()
 
 type Deps = {
+  mobileAccess: import("@bharatcode/mobile-connector").MobileAccess
   account: ReturnType<typeof createRuntimeAccounts>
   killSidecar: () => Promise<void> | void
   relaunch: () => void
@@ -104,6 +105,7 @@ export function registerIpcHandlers(deps: Deps) {
     "account-logout",
     accountAction((id) => deps.account.logout(id)),
   )
+  ipcMain.handle("mobile-access", accountAction((input) => deps.mobileAccess.action(input as import("@bharatcode/mobile-connector").MobileAction)))
   const drafts = createDesktopDraftStore(join(app.getPath("userData"), "drafts.sqlite"))
   const updaterSubscriptions = createUpdaterSubscriptions()
   app.once("will-quit", updaterSubscriptions.clear)

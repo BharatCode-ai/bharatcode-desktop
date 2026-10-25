@@ -10,7 +10,8 @@
     "./updater": "./src/updater.ts",
     "./wsl/types": "./src/wsl/types.ts",
     "./vite": "./vite.js",
-    "./index.css": "./src/index.css"
+    "./index.css": "./src/index.css",
+    "./mobile-types": "./src/mobile-types.ts"
   },
   "scripts": {
     "typecheck": "tsgo -b",

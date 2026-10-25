@@ -10,6 +10,7 @@ import { SettingsProvidersV2 } from "./providers"
 import { SettingsModelsV2 } from "./models"
 import { SettingsAccount } from "../settings-account"
 import { SettingsMarketplace } from "../settings-marketplace"
+import { SettingsMobile } from "../settings-mobile"
 import "./settings-v2.css"
 import { SettingsServersV2 } from "./servers"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
@@ -94,6 +95,12 @@ export const DialogSettings: Component<{
                         {language.t("settings.account.title")}
                       </TabsV2.Trigger>
                     </Show>
+                    <Show when={platform.mobileAccess}>
+                      <TabsV2.Trigger value="mobile">
+                        <Icon name="server" />
+                        {language.t("mobile.title")}
+                      </TabsV2.Trigger>
+                    </Show>
                     <TabsV2.Trigger value="models">
                       <Icon name="models" />
                       {language.t("settings.models.title")}
@@ -131,6 +138,11 @@ export const DialogSettings: Component<{
         >
           <TabsV2.Content value="account" class="settings-v2-panel">
             <SettingsAccount />
+          </TabsV2.Content>
+        </Show>
+        <Show when={platform.mobileAccess}>
+          <TabsV2.Content value="mobile" class="settings-v2-panel">
+            <SettingsMobile />
           </TabsV2.Content>
         </Show>
         <TabsV2.Content value="models" class="settings-v2-panel">
