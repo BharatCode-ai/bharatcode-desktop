@@ -35,9 +35,9 @@ test("automatic chat import preserves current chats, projects, history, source W
       const old = await createChatFixture(source);
       const current = await createChatFixture(destination);
       const project = (db, name) => db.prepare("INSERT INTO project (id,worktree,name,time_created,time_updated,sandboxes) VALUES ('project','/project',?,1,1,'[]')").run(name);
-      const session = (db, id, title) => db.prepare("INSERT INTO session (id,project_id,slug,directory,title,version,time_created,time_updated) VALUES (?,'project','slug','/project',?,'1.15.28',1,1)").run(id,title);
+      const session = (db, id, title, goal = null) => db.prepare("INSERT INTO session (id,project_id,slug,directory,title,version,time_created,time_updated,goal) VALUES (?,'project','slug','/project',?,'1.15.28',1,1,?)").run(id,title,goal);
       project(old,'old'); project(current,'current');
-      session(old,'ses_old','old chat'); session(old,'ses_existing','stale chat'); session(current,'ses_existing','current chat');
+      session(old,'ses_old','old chat','retained goal'); session(old,'ses_existing','stale chat'); session(current,'ses_existing','current chat');
       old.exec('PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0');
       const msg = old.prepare('INSERT INTO message (id,session_id,time_created,time_updated,data) VALUES (?,?,?,?,?)');
       msg.run('msg_user','ses_old',1,1,JSON.stringify({role:'user',time:{created:1}}));
@@ -52,6 +52,7 @@ test("automatic chat import preserves current chats, projects, history, source W
       assert.deepEqual(await importPreviousChats(source,destination),{imported:1,skipped:1});
       assert.deepEqual(readFileSync(source),bytes);
       assert.equal(current.prepare("SELECT title FROM session WHERE id='ses_existing'").get().title,'current chat');
+      assert.equal(current.prepare("SELECT goal FROM session WHERE id='ses_old'").get().goal,'retained goal');
       assert.equal(current.prepare("SELECT name FROM project WHERE id='project'").get().name,'current');
       assert.equal(current.prepare('SELECT count(*) n FROM message').get().n,2);
       const projected = current.prepare("SELECT data FROM session_message WHERE id='msg_assistant'").get();
