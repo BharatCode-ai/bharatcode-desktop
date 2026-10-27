@@ -1,0 +1,175 @@
+import { expect, describe, test } from "bun:test"
+import { mkdtemp, rm } from "node:fs/promises"
+import { existsSync, writeFileSync, mkdirSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { Database } from "bun:sqlite"
+import { BlobReader, ZipReader } from "@zip.js/zip.js"
+import { redactString, redactObject, checkDatabaseHealth, generateSupportBundle } from "./support-bundle"
+
+async function safeRm(path: string) {
+  for (let i = 0; i < 5; i++) {
+    try {
+      await rm(path, { recursive: true, force: true })
+      return
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+  }
+}
+
+describe("support-bundle redaction and diagnostics", () => {
+  const sampleOpenAI = ["sk", "abcdef12345678901234567890"].join("-")
+  const sampleAnthropic = ["sk", "ant", "api03-abcdefghijklmnopqrstuvwxyz1234567890"].join("-")
+  const sampleGitHub = ["ghp", "1234567890abcdefghijklmnopqrstuvwxyz1234"].join("_")
+  const sampleSlack = ["xoxb", "123456789012", "abcdefghijklmnopqrstuvwx"].join("-")
+
+  test("redactString scrubs API keys, private keys, bearer tokens, passwords, and user paths", () => {
+    const raw = [
+      `OpenAI Key: ${sampleOpenAI}`,
+      `Anthropic Key: ${sampleAnthropic}`,
+      `GitHub Token: ${sampleGitHub}`,
+      `Slack Token: ${sampleSlack}`,
+      "Auth header: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e30.t-IDN7BhCLtGPN5Qtr6AYbgXA20dfmtAedYnKcPAJ80",
+      "Basic auth: Basic YWRtaW46cGFzc3dvcmQ=",
+      "Database URL: postgres://admin:super_secret_pw123@localhost:5432/db",
+      'JSON log: {"access_token": "secret_token_123", "refresh_token": "refresh_abc_456", "password": "my_plain_pass"}',
+      'Prompt: {"prompt": "Summarize my confidential financial statement for Q3"}',
+      "User path: C:\\Users\\sivaram\\project\\file.ts and /Users/sivaram/repo/app.ts",
+      "-----BEGIN RSA PRIVATE KEY-----",
+      "MIIEowIBAAKCAQEA0Y3y...",
+      "-----END RSA PRIVATE KEY-----",
+    ].join("\n")
+
+    const scrubbed = redactString(raw, { homeDir: "C:\\Users\\sivaram" })
+
+    expect(scrubbed).not.toContain(sampleOpenAI)
+    expect(scrubbed).not.toContain(sampleAnthropic)
+    expect(scrubbed).not.toContain(sampleGitHub)
+    expect(scrubbed).not.toContain(sampleSlack)
+    expect(scrubbed).not.toContain("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9")
+    expect(scrubbed).not.toContain("YWRtaW46cGFzc3dvcmQ=")
+    expect(scrubbed).not.toContain("super_secret_pw123")
+    expect(scrubbed).not.toContain("secret_token_123")
+    expect(scrubbed).not.toContain("refresh_abc_456")
+    expect(scrubbed).not.toContain("my_plain_pass")
+    expect(scrubbed).not.toContain("Summarize my confidential financial statement for Q3")
+    expect(scrubbed).not.toContain("C:\\Users\\sivaram")
+    expect(scrubbed).not.toContain("/Users/sivaram")
+    expect(scrubbed).not.toContain("MIIEowIBAAKCAQEA0Y3y")
+
+    expect(scrubbed).toContain("[REDACTED_OPENAI_KEY]")
+    expect(scrubbed).toContain("[REDACTED_ANTHROPIC_KEY]")
+    expect(scrubbed).toContain("[REDACTED_GITHUB_TOKEN]")
+    expect(scrubbed).toContain("[REDACTED_SLACK_TOKEN]")
+    expect(scrubbed).toContain("Bearer [REDACTED]")
+    expect(scrubbed).toContain("Basic [REDACTED]")
+    expect(scrubbed).toContain("[REDACTED_PROMPT]")
+    expect(scrubbed).toContain("<USER_HOME>")
+    expect(scrubbed).toContain("[REDACTED_PRIVATE_KEY]")
+  })
+
+  test("redactObject deeply scrubs sensitive keys and string values", () => {
+    const sensitive = {
+      user: {
+        id: "usr_1",
+        email: "user@example.com",
+        password: "clear_password_123",
+        token: "tok_secret_value",
+      },
+      config: {
+        apiKey: sampleOpenAI,
+        path: "C:\\Users\\admin\\secrets.env",
+      },
+      prompts: [
+        { role: "user", content: "Tell me the secret launch codes" },
+        { role: "assistant", content: "Here is the answer" },
+      ],
+    }
+
+    const scrubbed = redactObject(sensitive, { homeDir: "C:\\Users\\admin" })
+
+    expect(scrubbed.user.password).toBe("[REDACTED]")
+    expect(scrubbed.user.token).toBe("[REDACTED]")
+    expect(scrubbed.config.apiKey).toBe("[REDACTED]")
+    expect(scrubbed.config.path).toBe("<USER_HOME>\\secrets.env")
+    expect(scrubbed.prompts[0].content).toBe("[REDACTED_PROMPT]")
+    expect(scrubbed.prompts[1].content).toBe("[REDACTED_PROMPT]")
+  })
+
+  test("checkDatabaseHealth inspects SQLite database and returns table statistics safely", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "bc-health-test-"))
+    const dbPath = join(dir, "health.db")
+
+    try {
+      const db = new Database(dbPath)
+      db.run("CREATE TABLE session (id TEXT PRIMARY KEY, title TEXT)")
+      db.run("CREATE TABLE message (id TEXT PRIMARY KEY, data TEXT)")
+      db.run("INSERT INTO session VALUES ('s1', 'first session')")
+      db.run("INSERT INTO session VALUES ('s2', 'second session')")
+      db.run("INSERT INTO message VALUES ('m1', 'hello')")
+      db.close()
+
+      const health = await checkDatabaseHealth(dbPath)
+
+      expect(health.exists).toBe(true)
+      expect(health.integrityOk).toBe(true)
+      expect(health.checks).toEqual(["ok"])
+      expect(health.tableCounts.session).toBe(2)
+      expect(health.tableCounts.message).toBe(1)
+    } finally {
+      await safeRm(dir)
+    }
+  })
+
+  test("generateSupportBundle creates a valid zip containing sanitized manifest, system info, and logs", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "bc-bundle-test-"))
+    const dbPath = join(dir, "bundle.db")
+    const logDir = join(dir, "logs")
+    mkdirSync(logDir, { recursive: true })
+
+    // Create mock log file with secrets that must be scrubbed
+    writeFileSync(
+      join(logDir, "main.log"),
+      `INFO: Server started with key ${sampleOpenAI} on path C:\\Users\\johndoe\\repo\n`,
+    )
+
+    const db = new Database(dbPath)
+    db.run("CREATE TABLE session (id TEXT PRIMARY KEY); INSERT INTO session VALUES ('1')")
+    db.close()
+
+    try {
+      const result = await generateSupportBundle({
+        outputDir: dir,
+        dbPath,
+      })
+
+      expect(existsSync(result.outputPath)).toBe(true)
+      expect(result.outputPath.endsWith(".zip")).toBe(true)
+      expect(result.fileCount).toBeGreaterThanOrEqual(4)
+      expect(result.databaseHealth.integrityOk).toBe(true)
+
+      // Open the generated zip and inspect contents
+      const zipBytes = await Bun.file(result.outputPath).arrayBuffer()
+      const reader = new ZipReader(new BlobReader(new Blob([zipBytes])))
+      const entries = await reader.getEntries()
+      const entryNames = entries.map((e) => e.filename)
+
+      expect(entryNames).toContain("manifest.json")
+      expect(entryNames).toContain("system-info.json")
+      expect(entryNames).toContain("database-health.json")
+      expect(entryNames).toContain("config-sanitized.json")
+
+      // Extract and check manifest
+      const manifestEntry = entries.find((e) => e.filename === "manifest.json")
+      expect(manifestEntry).toBeDefined()
+      const textWriter = new (await import("@zip.js/zip.js")).TextWriter()
+      const manifestText = await manifestEntry!.getData!(textWriter)
+      expect(manifestText).toContain("bharatcode-support-bundle")
+
+      await reader.close()
+    } finally {
+      await safeRm(dir)
+    }
+  })
+})
