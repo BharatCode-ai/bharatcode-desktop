@@ -11,6 +11,7 @@ type Entry = { session: ReturnType<typeof createAccountSession>; latest: BharatC
 export function createRuntimeAccounts(options: {
   openBrowser: (url: string) => Promise<unknown>
   changed: (runtimeId: string, status: BharatCodeAccountStatus) => void
+  powerMonitor?: Parameters<typeof createAccountSession>[0]["powerMonitor"]
 }) {
   const entries = new Map<string, Entry>()
   const revisions = new Map<string, number>()
@@ -54,6 +55,7 @@ export function createRuntimeAccounts(options: {
         session: createAccountSession({
           client,
           openBrowser: options.openBrowser,
+          powerMonitor: options.powerMonitor,
           changed: (status) => {
             if (entries.get(id) === entry) entry.latest = notify(id, status)
           },

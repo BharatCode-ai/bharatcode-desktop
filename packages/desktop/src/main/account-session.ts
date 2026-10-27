@@ -22,6 +22,10 @@ export function createAccountSession(options: {
   openBrowser: (url: string) => Promise<unknown>
   changed: (status: BharatCodeAccountStatus) => void
   schedule?: (fn: () => void, milliseconds: number) => () => void
+  powerMonitor?: {
+    on: (event: any, listener: () => void) => unknown
+    removeListener?: (event: any, listener: () => void) => unknown
+  }
 }) {
   let revision = 0
   let generation = 0
@@ -30,6 +34,7 @@ export function createAccountSession(options: {
   let removing = 0
   let pending: Attempt | undefined
   let tail = Promise.resolve()
+  let inFlightRefresh: Promise<BharatCodeAccountStatus> | undefined
   let latest: BharatCodeAccountStatus = {
     state: "signed_out",
     authenticated: false,
@@ -96,15 +101,33 @@ export function createAccountSession(options: {
 
   const getAccountStatus = async () => {
     if (pending || removing || disposed) return latest
+    if (inFlightRefresh) return inFlightRefresh
     const epoch = generation
     const read = ++reads
-    const next = await options.client.getAccountStatus().catch(() => {
-      if (epoch !== generation || read !== reads || disposed) return latest
-      throw new Error(nativeT("desktop.account.error.status"))
-    })
-    if (epoch !== generation || read !== reads || disposed) return latest
-    return publish(next)
+    inFlightRefresh = (async () => {
+      try {
+        const next = await options.client.getAccountStatus()
+        if (epoch !== generation || read !== reads || disposed) return latest
+        return publish(next)
+      } catch {
+        if (epoch !== generation || read !== reads || disposed) return latest
+        throw new Error(nativeT("desktop.account.error.status"))
+      } finally {
+        inFlightRefresh = undefined
+      }
+    })()
+    return inFlightRefresh
   }
+
+  const onResume = () => {
+    if (disposed || pending || removing) return
+    if (latest.authenticated || latest.state === "needs_sign_in" || latest.state === "connection_issue") {
+      void getAccountStatus().catch(() => {})
+    }
+  }
+
+  options.powerMonitor?.on("resume", onResume)
+  options.powerMonitor?.on("unlock-screen", onResume)
 
   const beginSignIn = (input: { selectAccount?: boolean } = {}) => {
     if (disposed) return Promise.reject(new Error(nativeT("desktop.account.error.unavailable")))
@@ -206,6 +229,8 @@ export function createAccountSession(options: {
     refreshAccountStatus: getAccountStatus,
     dispose: () => {
       disposed = true
+      options.powerMonitor?.removeListener?.("resume", onResume)
+      options.powerMonitor?.removeListener?.("unlock-screen", onResume)
       cancel()
     },
     cancelSignIn: () => {
