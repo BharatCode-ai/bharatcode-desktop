@@ -10,9 +10,11 @@ export const MOBILE_ENGLISH = {
   "mobile.progress.connecting": "Connecting the secure tunnel…",
   "mobile.cancel": "Cancel connection",
   "mobile.reset": "Revoke all phones and reset tunnel",
-  "mobile.resetConfirm": "Revoke all phones and remove this tunnel? Reconnecting will require fresh pairing and a new certificate.",
+  "mobile.resetConfirm":
+    "Revoke all phones and remove this tunnel? Reconnecting will require fresh pairing and a new certificate.",
   "mobile.title": "Mobile devices",
-  "mobile.description": "Continue your BharatCode conversations from your phone. Your computer must stay online with BharatCode running.",
+  "mobile.description":
+    "Continue your BharatCode conversations from your phone. Your computer must stay online with BharatCode running.",
   "mobile.connect": "Connect phone",
   "mobile.preparing": "Preparing secure connection…",
   "mobile.refresh": "Refresh QR",
@@ -29,7 +31,11 @@ export const MOBILE_ENGLISH = {
   "mobile.empty": "No phones paired yet.",
   "mobile.revoke": "Revoke access",
   "mobile.revokeConfirm": "Revoke this phone’s access? It will need a new pairing code to reconnect.",
-  "mobile.error.connection": "The secure connection could not be established. Check your internet connection and retry.",
+  "mobile.scope": "Connects to the local Desktop runtime. WSL workspaces are not available on mobile yet.",
+  "mobile.error.storage":
+    "Mobile-device storage is unavailable. Your existing device data has been kept. Check storage access and try again.",
+  "mobile.error.connection":
+    "The secure connection could not be established. Check your internet connection and retry.",
   "mobile.error.reconnecting": "OpenTunnel is reconnecting. Keep BharatCode running.",
   "mobile.error.action": "This mobile-device action could not be completed. Refresh and try again.",
 } as const

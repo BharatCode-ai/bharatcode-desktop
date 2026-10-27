@@ -2,6 +2,10 @@
 
 The implementation uses the existing OpenTunnel SDK against `https://tunnel.bharatcode.ai` and retains explicit Desktop-approved pairing. Tunnel service reference: `fe7dfa73b35ebb035ba42a62482ec230a7e1a8bf`. Desktop base: `695c2d956e6bc6f27b881a1cdbe0a7acd0764bc3`; Mobile base: `5403d872dbb85d9b42856312a9c503edf7982cae`.
 
+## October 27 correction
+
+The reset claim below originally covered the deletion helper, not cancellation through the Desktop action queue. The October 27 audit reproduced that queue wait and an optional-storage startup failure. Follow-up fixes and current acceptance boundaries are documented in [mobile-access-acceptance.md](mobile-access-acceptance.md). Results below remain historical evidence for the October 25 source and do not qualify a later build.
+
 ## Source verification
 
 | Gate | Result |
