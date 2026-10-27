@@ -27,6 +27,7 @@ import { Database } from "@opencode-ai/core/database/database"
 import { Usage, type LLMEvent } from "@opencode-ai/llm"
 import { ToolLoopGuard } from "@opencode-ai/core/session/tool-loop-guard"
 import { EffectBridge } from "@/effect/bridge"
+import { PerformanceTrace } from "@opencode-ai/core/performance-trace"
 
 const DOOM_LOOP_THRESHOLD = 3
 export type Result = "compact" | "stop" | "continue"
@@ -331,6 +332,7 @@ const layer = Layer.effect(
           state: { status: "pending", input: {}, raw: "" },
           metadata: input.providerExecuted ? { providerExecuted: true } : undefined,
         } satisfies SessionV1.ToolPart)
+        PerformanceTrace.mark(ctx.sessionID, "first_token_emitted")
         ctx.toolcalls[input.id] = {
           done: yield* Deferred.make<void>(),
           partID: part.id,
@@ -391,6 +393,7 @@ const layer = Layer.effect(
               field: "text",
               delta: value.text,
             })
+            PerformanceTrace.mark(ctx.sessionID, "first_token_emitted")
             return
 
           case "reasoning-end":
@@ -409,6 +412,7 @@ const layer = Layer.effect(
 
           case "tool-input-delta":
             yield* ensureToolCall(value)
+            PerformanceTrace.mark(ctx.sessionID, "first_token_emitted")
             return
 
           case "tool-input-end": {
@@ -421,6 +425,7 @@ const layer = Layer.effect(
               throw new Error(`Tool call not allowed while generating summary: ${value.name}`)
             }
             yield* ensureToolCall(value)
+            PerformanceTrace.mark(ctx.sessionID, "first_token_emitted")
             const input = isRecord(value.input) ? value.input : { value: value.input }
             yield* updateToolCall(value.id, (match) => ({
               ...match,
@@ -616,6 +621,7 @@ const layer = Layer.effect(
               field: "text",
               delta: value.text,
             })
+            PerformanceTrace.mark(ctx.sessionID, "first_token_emitted")
             return
 
           case "text-end":
