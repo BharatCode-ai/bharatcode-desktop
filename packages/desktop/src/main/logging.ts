@@ -48,28 +48,11 @@ export async function startNetLog() {
   write("network", "net log started", { path: netLogPath })
 }
 
-export async function exportDebugLogs() {
-  const restartNetLog = netLog.currentlyLogging
-  if (restartNetLog) {
-    await netLog.stopLogging().catch((error) => write("network", "failed to stop net log", { error }))
-  }
+export { exportSupportBundle } from "./support-bundle"
 
-  const output = join(app.getPath("downloads"), `opencode-debug-${stamp()}.zip`)
-  try {
-    write("main", "exporting debug logs", { output })
-    await writeZip(output, [
-      { name: "manifest.json", data: Buffer.from(JSON.stringify(manifest(), null, 2)) },
-      ...collect(root, "desktop"),
-      ...serverLogRoots().flatMap((dir, i) => collect(dir, `server-${i + 1}`)),
-      ...collect(app.getPath("crashDumps"), "crashpad"),
-    ])
-    shell.showItemInFolder(output)
-    return output
-  } finally {
-    if (restartNetLog) {
-      await startNetLog().catch((error) => write("network", "failed to restart net log", { error }))
-    }
-  }
+export async function exportDebugLogs() {
+  const { exportSupportBundle } = await import("./support-bundle")
+  return exportSupportBundle()
 }
 
 export function write(
