@@ -4,6 +4,52 @@ import { mkdtemp, rm, mkdir, writeFile, readFile, readdir } from "node:fs/promis
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { createMobileAccess } from "../src/desktop-access.mjs"
+import QRCode from "qrcode"
+import { PNG } from "pngjs"
+
+test("pairing QR preserves a four-module clear border for physical scanners", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "bc-access-qr-margin-"))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const access = await createMobileAccess({
+    userDataPath: directory,
+    getConnection: () => ({
+      url: "http://127.0.0.1:4096",
+      password: "private",
+    }),
+    tunnelFactory: async () => ({
+      origin: "https://pc.tunnel.bharatcode.ai",
+      events: (async function* () {})(),
+      close: async () => {},
+    }),
+  })
+  t.after(() => access.close())
+  await access.action({ type: "pair" })
+  const state = access.snapshot()
+  const image = PNG.sync.read(Buffer.from(state.qrImage.split(",")[1], "base64"))
+  let left = image.width,
+    top = image.height,
+    right = -1,
+    bottom = -1
+  for (let y = 0; y < image.height; y++) {
+    for (let x = 0; x < image.width; x++) {
+      const offset = (y * image.width + x) * 4
+      if (image.data[offset] > 127 || image.data[offset + 3] === 0) continue
+      left = Math.min(left, x)
+      right = Math.max(right, x)
+      top = Math.min(top, y)
+      bottom = Math.max(bottom, y)
+    }
+  }
+  assert.ok(right > left, "QR must contain a visible symbol")
+  const modules = QRCode.create(state.pairing, { errorCorrectionLevel: "M" }).modules.size
+  const modulePixels = Math.floor(Math.min(right - left + 1, bottom - top + 1) / modules)
+  const clearBorder = Math.min(left, top, image.width - 1 - right, image.height - 1 - bottom)
+  assert.ok(modulePixels > 0)
+  assert.ok(
+    clearBorder >= modulePixels * 4,
+    `clear border ${clearBorder}px is smaller than four ${modulePixels}px modules`,
+  )
+})
 
 test("reset during restoration cannot start a new connection after cancellation", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "bc-access-restore-cancel-"))
@@ -36,7 +82,10 @@ test("malformed optional mobile state cannot reject Desktop initialization or ov
   const path = join(directory, "mobile-access", "devices.json")
   const damaged = '{"version":1,"desktopID":'
   await writeFile(path, damaged)
-  const access = await createMobileAccess({ userDataPath: directory, getConnection: () => undefined })
+  const access = await createMobileAccess({
+    userDataPath: directory,
+    getConnection: () => undefined,
+  })
   await access.restore()
   assert.equal(access.snapshot().enabled, false)
   assert.equal(access.snapshot().status, "error")
@@ -50,7 +99,10 @@ test("unavailable optional mobile directory does not reject initialization or cl
   const directory = await mkdtemp(join(tmpdir(), "bc-access-unavailable-"))
   t.after(() => rm(directory, { recursive: true, force: true }))
   await writeFile(join(directory, "mobile-access"), "keep this file")
-  const access = await createMobileAccess({ userDataPath: directory, getConnection: () => undefined })
+  const access = await createMobileAccess({
+    userDataPath: directory,
+    getConnection: () => undefined,
+  })
   await access.restore()
   assert.equal(access.snapshot().status, "error")
   assert.equal(access.snapshot().errorKey, "mobile.error.storage")
@@ -69,7 +121,10 @@ test("reset cancels pending issuance before joining the action queue", { timeout
     removed = false
   const access = await createMobileAccess({
     userDataPath: directory,
-    getConnection: () => ({ url: "http://127.0.0.1:4096", password: "private" }),
+    getConnection: () => ({
+      url: "http://127.0.0.1:4096",
+      password: "private",
+    }),
     tunnelFactory: async ({ signal }) => {
       begin()
       await new Promise((_, reject) =>
@@ -128,11 +183,16 @@ test("reset cancels a queued pair before it starts provisioning", async (t) => {
 test("failure to persist enabled state closes the new tunnel and leaves access disabled", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "bc-access-write-"))
   t.after(() => rm(directory, { recursive: true, force: true }))
-  await mkdir(join(directory, "mobile-access", "enabled.json"), { recursive: true })
+  await mkdir(join(directory, "mobile-access", "enabled.json"), {
+    recursive: true,
+  })
   let closed = false
   const access = await createMobileAccess({
     userDataPath: directory,
-    getConnection: () => ({ url: "http://127.0.0.1:4096", password: "private" }),
+    getConnection: () => ({
+      url: "http://127.0.0.1:4096",
+      password: "private",
+    }),
     tunnelFactory: async () => ({
       origin: "https://pc.tunnel.bharatcode.ai",
       events: (async function* () {})(),
@@ -156,7 +216,10 @@ test("explicit reset preserves a damaged registry backup and allows fresh pairin
   await writeFile(join(root, "devices.json"), damaged)
   const access = await createMobileAccess({
     userDataPath: directory,
-    getConnection: () => ({ url: "http://127.0.0.1:4096", password: "private" }),
+    getConnection: () => ({
+      url: "http://127.0.0.1:4096",
+      password: "private",
+    }),
     removeTunnel: async () => {},
     tunnelFactory: async () => ({
       origin: "https://pc.tunnel.bharatcode.ai",
@@ -182,7 +245,11 @@ test("Desktop starts no tunnel until enabled, and disabling closes both resource
     closes = 0
   const access = await createMobileAccess({
     userDataPath: directory,
-    getConnection: () => ({ url: "http://127.0.0.1:4096", username: "opencode", password: "private" }),
+    getConnection: () => ({
+      url: "http://127.0.0.1:4096",
+      username: "opencode",
+      password: "private",
+    }),
     tunnelFactory: async () => {
       connects++
       return {
@@ -234,7 +301,10 @@ test(
     const ready = new Promise((resolve) => (began = resolve))
     const access = await createMobileAccess({
       userDataPath: directory,
-      getConnection: () => ({ url: "http://127.0.0.1:4096", password: "private" }),
+      getConnection: () => ({
+        url: "http://127.0.0.1:4096",
+        password: "private",
+      }),
       tunnelFactory: async ({ signal, onProgress }) => {
         onProgress("waiting-certificate")
         began()
@@ -262,10 +332,17 @@ test("Desktop emits credential-free links, restores enabled identity and clears 
     removed = 0
   const options = {
     userDataPath: directory,
-    getConnection: () => ({ url: "http://127.0.0.1:4096", password: "private" }),
+    getConnection: () => ({
+      url: "http://127.0.0.1:4096",
+      password: "private",
+    }),
     tunnelFactory: async () => {
       connects++
-      return { origin: "https://pc.tunnel.bharatcode.ai", events: (async function* () {})(), close: async () => {} }
+      return {
+        origin: "https://pc.tunnel.bharatcode.ai",
+        events: (async function* () {})(),
+        close: async () => {},
+      }
     },
     removeTunnel: async () => {
       removed++
@@ -295,10 +372,17 @@ test("Desktop status reflects a phone unpairing itself immediately", async (t) =
   let target
   const access = await createMobileAccess({
     userDataPath: directory,
-    getConnection: () => ({ url: "http://127.0.0.1:4096", password: "private" }),
+    getConnection: () => ({
+      url: "http://127.0.0.1:4096",
+      password: "private",
+    }),
     tunnelFactory: async (options) => {
       target = options.target
-      return { origin: "https://pc.tunnel.bharatcode.ai", events: (async function* () {})(), close: async () => {} }
+      return {
+        origin: "https://pc.tunnel.bharatcode.ai",
+        events: (async function* () {})(),
+        close: async () => {},
+      }
     },
   })
   t.after(() => access.close())
@@ -311,7 +395,10 @@ test("Desktop status reflects a phone unpairing itself immediately", async (t) =
       body: JSON.stringify(body),
     })
   const claim = await (
-    await post("/mobile/v1/claim", { desktopID: link.searchParams.get("desktopID"), deviceName: "Phone" })
+    await post("/mobile/v1/claim", {
+      desktopID: link.searchParams.get("desktopID"),
+      deviceName: "Phone",
+    })
   ).json()
   await access.action({ type: "approve", id: claim.claimID })
   const paired = await (await post("/mobile/v1/claim/status", claim)).json()
@@ -334,10 +421,17 @@ test("self-hosted identities use a service-specific store, never the old upstrea
   let actual
   const access = await createMobileAccess({
     userDataPath: directory,
-    getConnection: () => ({ url: "http://127.0.0.1:4096", password: "private" }),
+    getConnection: () => ({
+      url: "http://127.0.0.1:4096",
+      password: "private",
+    }),
     tunnelFactory: async ({ storePath }) => {
       actual = storePath
-      return { origin: "https://pc.tunnel.bharatcode.ai", events: (async function* () {})(), close: async () => {} }
+      return {
+        origin: "https://pc.tunnel.bharatcode.ai",
+        events: (async function* () {})(),
+        close: async () => {},
+      }
     },
   })
   t.after(() => access.close())

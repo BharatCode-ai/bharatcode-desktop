@@ -185,7 +185,7 @@ export async function createMobileAccess(options) {
       pairingExpiresAt = invitation.expiresAt
       pairing =
         "bharatcode://pair?" + new URLSearchParams({ origin: invitation.origin, desktopID: invitation.desktopID })
-      qrImage = await QRCode.toDataURL(pairing, { width: 300, margin: 2, errorCorrectionLevel: "M" })
+      qrImage = await QRCode.toDataURL(pairing, { width: 300, margin: 4, errorCorrectionLevel: "M" })
     } else if (input.type === "disable") {
       await shutdown(true)
     } else if (input.type === "reset") {

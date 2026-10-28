@@ -6,7 +6,12 @@
   "engines": {
     "node": ">=22"
   },
-  "exports": { ".": { "types": "./src/index.d.ts", "import": "./src/index.mjs" } },
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "import": "./src/index.mjs"
+    }
+  },
   "scripts": {
     "test": "node --test",
     "check": "node --check src/gateway.mjs"
@@ -15,5 +20,8 @@
     "@opentunnel/client": "0.5.2",
     "effect": "^4.0.0",
     "qrcode": "1.5.4"
+  },
+  "devDependencies": {
+    "pngjs": "^5.0.0"
   }
 }
