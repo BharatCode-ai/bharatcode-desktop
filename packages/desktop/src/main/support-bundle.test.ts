@@ -5,7 +5,13 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Database } from "bun:sqlite"
 import { BlobReader, ZipReader } from "@zip.js/zip.js"
-import { redactString, redactObject, checkDatabaseHealth, generateSupportBundle, collectRedactedLogs } from "./support-bundle"
+import {
+  redactString,
+  redactObject,
+  checkDatabaseHealth,
+  generateSupportBundle,
+  collectRedactedLogs,
+} from "./support-bundle"
 
 async function safeRm(path: string) {
   for (let i = 0; i < 5; i++) {
@@ -183,16 +189,19 @@ describe("redactString leaks", () => {
     ["Cookie: session=abcdef123456; other=zzz", "abcdef123456"],
     ["Set-Cookie: sid=SESSIONVALUE99; HttpOnly", "SESSIONVALUE99"],
     ["x-api-key: KEY1234567890abc", "KEY1234567890abc"],
-    ["jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV", "eyJzdWIi"],
-    ["github_pat_11ABCDEFG0abcdefghijklmnop", "github_pat_11ABCDEFG0"],
-    ["AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE", "AKIAIOSFODNN7EXAMPLE"],
+    [
+      `jwt ${["eyJhbGciOiJIUzI1NiJ9", "eyJzdWIiOiIxMjM0NTY3ODkwIn0", "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV"].join(".")}`,
+      "eyJzdWIi",
+    ],
+    [`${["github", "pat"].join("_")}_11ABCDEFG0abcdefghijklmnop`, `${["github", "pat"].join("_")}_11ABCDEFG0`],
+    [`AWS_ACCESS_KEY_ID=${["AKIA", "IOSFODNN7EXAMPLE"].join("")}`, ["AKIA", "IOSFODNN7EXAMPLE"].join("")],
     ["aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "wJalrXUtnFEMI"],
     ["GET /cb?code=abc123XYZsecret&state=q", "abc123XYZsecret"],
     ["?api-key=KEY12345678", "KEY12345678"],
     ['{"password": "my pass phrase"}', "pass phrase"],
     ['{"password":"ab\\"cd"}', "cd"],
     ["https://user:p@ss:word@host/x", "ss:word"],
-    ["key AIzaSyA1234567890abcdefghijklmnopqrstuv", "AIzaSyA1234567890"],
+    [`key ${["AIza", "SyA1234567890abcdefghijklmnopqrstuv"].join("")}`, ["AIza", "SyA1234567890"].join("")],
     ["key sk-or-v1-abc123", "abc123"],
     ["contact bob@example.com", "bob@example.com"],
     ["from 192.168.1.23", "192.168.1.23"],

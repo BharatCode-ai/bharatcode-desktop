@@ -82,7 +82,8 @@ export function redactString(text: string, options?: RedactionOptions): string {
 
   for (const { pattern, replacement } of SECRET_PATTERNS) {
     // The branches look identical, but TS cannot pick a replace() overload for a string | function union.
-    result = typeof replacement === "string" ? result.replace(pattern, replacement) : result.replace(pattern, replacement)
+    result =
+      typeof replacement === "string" ? result.replace(pattern, replacement) : result.replace(pattern, replacement)
   }
 
   // Home directory and username scrubbing
@@ -116,7 +117,9 @@ export function redactObject<T>(obj: T, options?: RedactionOptions): T {
 
   const result: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(obj)) {
-    if (/(secret|password|passwd|credential|api[-_]?key|access[-_]?key|cookie|bearer|auth(?!or)|token(?!s))/i.test(key)) {
+    if (
+      /(secret|password|passwd|credential|api[-_]?key|access[-_]?key|cookie|bearer|auth(?!or)|token(?!s))/i.test(key)
+    ) {
       result[key] = "[REDACTED]"
     } else if (/^(prompt|content)$/i.test(key)) {
       result[key] = "[REDACTED_PROMPT]"
