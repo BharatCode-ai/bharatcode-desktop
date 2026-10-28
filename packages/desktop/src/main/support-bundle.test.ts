@@ -212,3 +212,30 @@ describe("redactString leaks", () => {
     expect(redactString(line, home)).toBe(line)
   })
 })
+
+describe("redactObject keys", () => {
+  test("hides camelCase, header, env and nested prompt values", () => {
+    const out = JSON.stringify(
+      redactObject({
+        apiToken: "abcTOK",
+        accessToken: "AT1",
+        clientSecret: "CS1",
+        refreshToken: "RT1",
+        headers: { cookie: "sid=SS1", "x-api-key": "KK1" },
+        env: { OPENAI_API_KEY: "envkey1", DB_PASSWORD: "pw1" },
+        messages: [{ content: { parts: ["nested prompt"] } }],
+      }),
+    )
+    for (const secret of ["abcTOK", "AT1", "CS1", "RT1", "SS1", "KK1", "envkey1", "pw1", "nested prompt"]) {
+      expect(out).not.toContain(secret)
+    }
+  })
+
+  test("keeps harmless counters and author fields", () => {
+    expect(redactObject({ max_tokens: 4096, tokens: 12, author: "ok" })).toEqual({
+      max_tokens: 4096,
+      tokens: 12,
+      author: "ok",
+    })
+  })
+})

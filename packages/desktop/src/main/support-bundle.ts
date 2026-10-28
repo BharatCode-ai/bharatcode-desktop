@@ -116,9 +116,9 @@ export function redactObject<T>(obj: T, options?: RedactionOptions): T {
 
   const result: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(obj)) {
-    if (/^(password|token|secret|credential|api_?key|auth.*)$/i.test(key)) {
+    if (/(secret|password|passwd|credential|api[-_]?key|access[-_]?key|cookie|bearer|auth(?!or)|token(?!s))/i.test(key)) {
       result[key] = "[REDACTED]"
-    } else if (/^(prompt|content)$/i.test(key) && typeof value === "string") {
+    } else if (/^(prompt|content)$/i.test(key)) {
       result[key] = "[REDACTED_PROMPT]"
     } else {
       result[key] = redactObject(value, options)
