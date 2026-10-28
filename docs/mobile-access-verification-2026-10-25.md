@@ -1,5 +1,7 @@
 # Self-hosted tunnel integration verification — 2026-10-25
 
+Later fixes and physical camera acceptance are recorded in [the October 28 follow-up](mobile-access-fixes-2026-10-28.md). The results below describe the earlier source and artifacts.
+
 The implementation uses the existing OpenTunnel SDK against `https://tunnel.bharatcode.ai` and retains explicit Desktop-approved pairing. Tunnel service reference: `fe7dfa73b35ebb035ba42a62482ec230a7e1a8bf`. Desktop base: `695c2d956e6bc6f27b881a1cdbe0a7acd0764bc3`; Mobile base: `5403d872dbb85d9b42856312a9c503edf7982cae`.
 
 ## October 27 correction
