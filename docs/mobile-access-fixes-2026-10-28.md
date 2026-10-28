@@ -14,6 +14,14 @@ Fresh October 28 checks passed: 52 connector tests; 168 Desktop tests; Desktop p
 
 The earlier app unit run had 748 passes and one Arabic translation-parity failure reproduced on the clean base, involving four existing `ui.message.outputLimit` keys. No unrelated translations were changed and no failure was suppressed. Earlier detailed results remain in [the October 25 report](mobile-access-verification-2026-10-25.md).
 
+## Settings renderer fixtures
+
+These screenshots render the production SettingsMobile component with the same isolated Playwright fixture (1440 × 1080, fake IPC response, and a held pending Pair request). The before image uses the original PR #60 head d9d6c3c; Reset is disabled during provisioning. The after image uses the reliability-fix renderer from 6331ba9; Reset remains available to cancel provisioning. Both are synthetic renderer evidence only: no Desktop profile, sidecar, tunnel, phone, camera, QR image, or pairing payload was used.
+
+![Before: SettingsMobile renderer fixture with Reset disabled during synthetic provisioning](assets/mobile-access/before-provisioning.png)
+
+![After: SettingsMobile renderer fixture with Reset enabled during the same synthetic provisioning state](assets/mobile-access/after-provisioning.png)
+
 ## Physical Android result
 
 On October 28, the user scanned the installed Desktop QR with a OnePlus CPH2691 running Android 17. The phone reached matching-code approval, the user approved on Desktop, and real Desktop conversations loaded. This was a physical camera scan and user-operated approval, rather than a pasted link or an automated IPC approval.
