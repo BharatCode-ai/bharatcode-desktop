@@ -1,11 +1,11 @@
 import { expect, describe, test } from "bun:test"
 import { mkdtemp, rm } from "node:fs/promises"
-import { existsSync, writeFileSync, mkdirSync } from "node:fs"
+import { existsSync, writeFileSync, mkdirSync, symlinkSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Database } from "bun:sqlite"
 import { BlobReader, ZipReader } from "@zip.js/zip.js"
-import { redactString, redactObject, checkDatabaseHealth, generateSupportBundle } from "./support-bundle"
+import { redactString, redactObject, checkDatabaseHealth, generateSupportBundle, collectRedactedLogs } from "./support-bundle"
 
 async function safeRm(path: string) {
   for (let i = 0; i < 5; i++) {
@@ -237,5 +237,23 @@ describe("redactObject keys", () => {
       tokens: 12,
       author: "ok",
     })
+  })
+})
+
+describe("collectRedactedLogs", () => {
+  test("does not follow symlinks out of the log directory", async () => {
+    const root = await mkdtemp(join(tmpdir(), "bundle-links-"))
+    try {
+      const logs = join(root, "logs")
+      mkdirSync(logs)
+      writeFileSync(join(root, "private.txt"), "PRIVATE-FILE-CONTENT")
+      writeFileSync(join(logs, "main.log"), "hello")
+      symlinkSync(join(root, "private.txt"), join(logs, "link.log"))
+
+      const names = collectRedactedLogs(logs, "logs").map((entry) => entry.name)
+      expect(names).toEqual(["logs/main.log"])
+    } finally {
+      await safeRm(root)
+    }
   })
 })

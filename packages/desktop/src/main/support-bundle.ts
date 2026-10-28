@@ -1,5 +1,5 @@
 import type { App, NetLog, Shell } from "electron"
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs"
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs"
 import { homedir, platform, arch, release, totalmem, freemem, cpus, uptime } from "node:os"
 import { join, dirname } from "node:path"
 import { ZipWriter, BlobWriter, BlobReader } from "@zip.js/zip.js"
@@ -256,7 +256,7 @@ function stamp(): string {
 
 type BundleEntry = { name: string; data: Buffer }
 
-function collectRedactedLogs(dir: string, prefix: string): BundleEntry[] {
+export function collectRedactedLogs(dir: string, prefix: string): BundleEntry[] {
   if (!existsSync(dir)) return []
   const result: BundleEntry[] = []
   const cutoff = Date.now() - 24 * 60 * 60 * 1000
@@ -265,7 +265,8 @@ function collectRedactedLogs(dir: string, prefix: string): BundleEntry[] {
     for (const entry of readdirSync(current)) {
       const file = join(current, entry)
       try {
-        const info = statSync(file)
+        const info = lstatSync(file)
+        if (info.isSymbolicLink()) continue
         if (info.isDirectory()) {
           walk(file)
           continue
@@ -374,7 +375,7 @@ export async function generateSupportBundle(options?: {
     }
     const zip = await writer.close()
     mkdirSync(dirname(outputPath), { recursive: true })
-    writeFileSync(outputPath, Buffer.from(await zip.arrayBuffer()))
+    writeFileSync(outputPath, Buffer.from(await zip.arrayBuffer()), { mode: 0o600 })
 
     return {
       outputPath,
