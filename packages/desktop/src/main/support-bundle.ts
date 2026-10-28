@@ -30,28 +30,44 @@ export interface RedactionOptions {
   usernames?: string[]
 }
 
-const SECRET_PATTERNS = [
-  // URL credentials
-  { pattern: /([a-zA-Z0-9+.-]+:\/\/)([^:\s@]+):([^@\s]+)@/gi, replacement: "$1$2:[REDACTED]@" },
-  // Private keys
+// A denylist cannot be complete; anything not matched here still ships in the logs.
+const SECRET_PATTERNS: { pattern: RegExp; replacement: string | ((...match: string[]) => string) }[] = [
+  // URL credentials; the password may itself contain "@" or ":"
+  { pattern: /([a-zA-Z0-9+.-]+:\/\/)([^:\s@/]+):([^\s/]+)@/gi, replacement: "$1$2:[REDACTED]@" },
+  // Private keys, including a truncated one with no END marker
   {
-    pattern: /-----BEGIN[ A-Z0-9_-]+PRIVATE KEY-----[\s\S]*?-----END[ A-Z0-9_-]+PRIVATE KEY-----/gi,
+    pattern: /-----BEGIN[ A-Z0-9_-]+PRIVATE KEY-----[\s\S]*?(?:-----END[ A-Z0-9_-]+PRIVATE KEY-----|$)/gi,
     replacement: "[REDACTED_PRIVATE_KEY]",
   },
-  // API Keys (Anthropic, OpenAI, GitHub, Slack)
+  // Whole header values, whatever the auth scheme
+  {
+    pattern: /\b((?:proxy-)?authorization|cookie|set-cookie|x-api-key|api-key)(\s*:\s*)[^\r\n]+/gi,
+    replacement: "$1$2[REDACTED]",
+  },
+  // API keys (Anthropic, OpenAI-style, GitHub, Slack, Google, AWS)
   { pattern: /sk-ant-[a-zA-Z0-9_-]{20,}/g, replacement: "[REDACTED_ANTHROPIC_KEY]" },
-  { pattern: /sk-[a-zA-Z0-9_-]{20,}/g, replacement: "[REDACTED_OPENAI_KEY]" },
-  { pattern: /gh[pousr][_-][a-zA-Z0-9]{20,}/g, replacement: "[REDACTED_GITHUB_TOKEN]" },
+  { pattern: /\bsk-[a-zA-Z0-9_-]{8,}/g, replacement: "[REDACTED_OPENAI_KEY]" },
+  { pattern: /gh[pousr]_[a-zA-Z0-9]{20,}|github_pat_[a-zA-Z0-9_]{20,}/g, replacement: "[REDACTED_GITHUB_TOKEN]" },
   { pattern: /xox[baprs]-[0-9a-zA-Z]{10,}/g, replacement: "[REDACTED_SLACK_TOKEN]" },
+  { pattern: /AIza[0-9A-Za-z_-]{20,}/g, replacement: "[REDACTED_GOOGLE_KEY]" },
+  { pattern: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g, replacement: "[REDACTED_AWS_KEY]" },
+  { pattern: /eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*/g, replacement: "[REDACTED_JWT]" },
   // Bearer and Basic authentication headers (require realistic token length to avoid matching labels)
   { pattern: /(Bearer\s+)[A-Za-z0-9\-._~+/]{10,}=*/gi, replacement: "$1[REDACTED]" },
   { pattern: /(Basic\s+)[A-Za-z0-9+/]{8,}={0,2}/gi, replacement: "$1[REDACTED]" },
-  // Generic key-value secrets in JSON, query params, or logs
+  // OAuth codes and keys in query strings
+  { pattern: /([?&](?:code|key|sig|signature)=)[^&\s#]+/gi, replacement: "$1[REDACTED]" },
+  // Generic key-value secrets in JSON, query params, or logs; quoted values may contain spaces and escapes
   {
     pattern:
-      /(["']?(?:access_token|refresh_token|password|client_secret|secret|api_?key|auth_?token|token)["']?\s*[:=]\s*["']?)(?!(?:\[REDACTED))([^"'\s,;{}]+)(["']?)/gi,
-    replacement: "$1[REDACTED]$3",
+      /((?:[\w-]*[-_])?(?:secret|password|passwd|api[-_]?key|access[-_]?key|token)["']?\s*[:=]\s*)("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|(?!\[REDACTED)[^\s,;&{}"']+)/gi,
+    replacement: (_match, head, value) =>
+      `${head}${value[0] === '"' || value[0] === "'" ? `${value[0]}[REDACTED]${value[0]}` : "[REDACTED]"}`,
   },
+  // Personal identifiers
+  { pattern: /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, replacement: "[REDACTED_EMAIL]" },
+  { pattern: /\b(?!127\.)(?:\d{1,3}\.){3}\d{1,3}\b/g, replacement: "[REDACTED_IP]" },
+  { pattern: /\b(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}\b/gi, replacement: "[REDACTED_MAC]" },
   // Sensitive prompt text or chat content in logs
   {
     pattern: /(["']?(?:prompt|user_message|chat_text|system_prompt)["']?\s*[:=]\s*["'])(?:(?=(\\?))\2[\s\S])*?(["'])/gi,
@@ -65,7 +81,8 @@ export function redactString(text: string, options?: RedactionOptions): string {
   let result = text
 
   for (const { pattern, replacement } of SECRET_PATTERNS) {
-    result = result.replace(pattern, replacement)
+    // The branches look identical, but TS cannot pick a replace() overload for a string | function union.
+    result = typeof replacement === "string" ? result.replace(pattern, replacement) : result.replace(pattern, replacement)
   }
 
   // Home directory and username scrubbing
@@ -83,6 +100,7 @@ export function redactString(text: string, options?: RedactionOptions): string {
   result = result.replace(/[A-Z]:\/Users\/[^\s\/\"',;]+/gi, "<USER_HOME>")
   result = result.replace(/\/home\/[a-zA-Z0-9_.-]+/g, "<USER_HOME>")
   result = result.replace(/\/Users\/[a-zA-Z0-9_.-]+/g, "<USER_HOME>")
+  result = result.replace(/\/root(?=\/|\s|$)/g, "<USER_HOME>")
 
   return result
 }

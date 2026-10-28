@@ -173,3 +173,42 @@ describe("support-bundle redaction and diagnostics", () => {
     }
   })
 })
+
+describe("redactString leaks", () => {
+  const home = { homeDir: "/home/zzz" }
+  // [input, the secret that must not survive]
+  const cases: [string, string][] = [
+    ["Authorization: Token abcdef1234567890SECRETVALUE", "abcdef1234567890SECRETVALUE"],
+    ["Authorization: Bearer abc123", "abc123"],
+    ["Cookie: session=abcdef123456; other=zzz", "abcdef123456"],
+    ["Set-Cookie: sid=SESSIONVALUE99; HttpOnly", "SESSIONVALUE99"],
+    ["x-api-key: KEY1234567890abc", "KEY1234567890abc"],
+    ["jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV", "eyJzdWIi"],
+    ["github_pat_11ABCDEFG0abcdefghijklmnop", "github_pat_11ABCDEFG0"],
+    ["AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE", "AKIAIOSFODNN7EXAMPLE"],
+    ["aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "wJalrXUtnFEMI"],
+    ["GET /cb?code=abc123XYZsecret&state=q", "abc123XYZsecret"],
+    ["?api-key=KEY12345678", "KEY12345678"],
+    ['{"password": "my pass phrase"}', "pass phrase"],
+    ['{"password":"ab\\"cd"}', "cd"],
+    ["https://user:p@ss:word@host/x", "ss:word"],
+    ["key AIzaSyA1234567890abcdefghijklmnopqrstuv", "AIzaSyA1234567890"],
+    ["key sk-or-v1-abc123", "abc123"],
+    ["contact bob@example.com", "bob@example.com"],
+    ["from 192.168.1.23", "192.168.1.23"],
+    ["mac aa:bb:cc:dd:ee:ff", "aa:bb:cc:dd:ee:ff"],
+    ["-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqh", "MIIEvQIBADANBgkqh"],
+    ["/root/.ssh/id_rsa", "/root"],
+  ]
+
+  for (const [input, secret] of cases) {
+    test(input.slice(0, 40), () => {
+      expect(redactString(input, home)).not.toContain(secret)
+    })
+  }
+
+  test("keeps ordinary diagnostics readable", () => {
+    const line = "max_tokens: 4096 version 1.15.35 task-runner started on 127.0.0.1"
+    expect(redactString(line, home)).toBe(line)
+  })
+})
