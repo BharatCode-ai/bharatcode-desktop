@@ -10,7 +10,7 @@ BharatCode Desktop supports three distinct release channels defined in `packages
 
 | Channel               | Target Audience                  | App Display Name  | Application ID               | Auto-Updater            | Tag Pattern          |
 | --------------------- | -------------------------------- | ----------------- | ---------------------------- | ----------------------- | -------------------- |
-| **`prod`** (`latest`) | General availability / end users | `BharatCode`      | `ai.bharatcode.desktop`      | Enabled (`latest` feed) | `desktop-vX.Y.Z`     |
+| **`prod`** (`latest`) | General availability / end users | `BharatCode`      | `ai.bharatcode.desktop`      | Enabled (`latest` feed) | No current production promotion path |
 | **`beta`**            | Public preview / early adopters  | `BharatCode Beta` | `ai.bharatcode.desktop.beta` | Enabled (`beta` feed)   | `desktop-beta-X.Y.Z` |
 | **`dev`**             | Local development & internal CI  | `BharatCode Dev`  | `ai.bharatcode.desktop.dev`  | Disabled                | N/A                  |
 
@@ -32,7 +32,7 @@ Each channel generates isolated user data directories and native application IDs
 
 The updater is managed by `createUpdaterController` (`packages/desktop/src/main/updater.ts` and `updater-controller.ts`):
 
-1. **Activation**: Enabled only when `app.isPackaged && CHANNEL !== "dev"` and test onboarding mode is inactive.
+1. **Activation**: Enabled when `app.isPackaged && CHANNEL !== "dev"`.
 2. **Download & Install Strategy**:
    - `autoDownload = false`: Updates are never downloaded silently in the background without user consent or notification.
    - `autoInstallOnAppQuit = false`: Updates are not forcefully applied on window close.
@@ -60,26 +60,28 @@ The desktop beta feed explicitly isolates desktop client artifacts from server/C
 
 Desktop release candidates are built and published through two coordinated workflows:
 
-1. **Candidate Build (`build-and-publish.yml`)**: Compiles, signs, and notarizes binaries for macOS (Universal/ARM64/x64), Windows (x64 NSIS/portable), and Linux (AppImage/deb). Generates `cohort.json` containing SHA-256 digests.
+1. **Candidate Build (`publish.yml`)**: Despite its filename, this is build-only. It builds macOS ARM64 and x64 ZIPs (signed and notarized), Windows x64 and Linux x64 candidates. Windows and Linux artifacts follow the current unsigned policy. Generates `cohort.json` containing SHA-256 digests. A Windows-only target is available for testing but cannot be promoted as a complete release cohort. `build-and-publish.yml` is the separate CLI workflow, not the Desktop candidate builder.
 2. **Promotion & Publication (`bharatcode-publish-tested-candidate.yml`)**:
    - Triggered manually via `workflow_dispatch`.
    - Requires explicit inputs: `source_sha`, `build_run_id`, `build_run_attempt`, `candidate_sha256`, and `acceptance_notes`.
    - Enforces a required boolean gate (`manual_acceptance_confirmed: true`).
    - Re-uses exact built artifacts without recompilation, preventing build drift.
 
+The current promotion implementation publishes the beta namespace `desktop-beta-X.Y.Z`; the `prod` branding mode does not by itself establish a production publication workflow. Merging into `dev` does not publish a release. Test and typecheck workflows are also manually dispatched; an empty PR check list is not evidence of a passing build.
+
 ---
 
 ## 6. Pre-Release Smoke Checklist
 
-Before promoting any Desktop release candidate to public `beta` or `prod`, testers must verify the following checklist on clean environments across macOS, Windows, and Linux:
+Before promoting a Desktop beta candidate, testers must verify the following checklist on clean environments across macOS, Windows, and Linux:
 
-- [ ] **Clean Install**: Application installs without unsigned binary warnings (notarized on macOS, signed on Windows).
+- [ ] **Clean Install**: Application installs successfully; macOS notarization passes, and Windows unsigned/SmartScreen behavior is explicitly recorded rather than claimed to be signed.
 - [ ] **First-Run Onboarding**: Fresh launch opens the BharatCode account gate without errors or flash of unstyled content.
 - [ ] **OAuth Authentication**: Completes sign-in via `bharatcode://` deep link and stores session credentials securely.
 - [ ] **Session & Timeline**: Sends a prompt, verifies streaming token responses, and confirms tool execution.
 - [ ] **Window State & Restart**: Resizing/moving windows, quitting, and relaunching restores window positions correctly.
 - [ ] **Updater Feed Check**: Manual "Check for Updates" connects to the correct channel feed (`latest` or `beta`).
-- [ ] **Diagnostics**: Generating a support bundle does not include unredacted tokens, prompts, or sensitive credentials.
+- [ ] **Diagnostics**: Inspect the actual diagnostic export for tokens, prompts, paths, and sensitive credentials. Proposed support-bundle PRs must not be treated as shipped functionality until integrated and verified.
 
 ---
 

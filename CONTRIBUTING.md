@@ -101,7 +101,7 @@ bharatcode-desktop/
 │   │   └── src/cli/        # CLI entrypoints and interactive TUI
 │   ├── app/                # Shared SolidJS web and desktop frontend application
 │   │   ├── src/i18n/       # Internationalization dictionaries and parity tests
-│   │   └── src/view/       # Chat timeline, prompts, settings, and diff viewers
+│   │   └── src/pages/      # Chat timeline, prompts, settings, and diff viewers
 │   ├── ui/                 # Reusable design system components and primitives
 │   ├── core/               # Shared business logic, session runner, and models
 │   ├── client/             # Typed HTTP client communicating with opencode server
