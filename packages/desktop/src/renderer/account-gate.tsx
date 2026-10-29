@@ -61,9 +61,23 @@ export function BharatCodeAuthGate(props: ParentProps<{ onReturnLocal?: () => vo
         <main class="min-h-screen w-full bg-background-base text-text-strong flex items-center justify-center px-6">
           <section class="w-full max-w-md flex flex-col gap-5" aria-busy={pending()}>
             <div class="flex flex-col gap-2">
-              <h1 class="text-28-bold">BharatCode</h1>
+              <h1 class="text-28-bold">{language.t("account.gate.title")}</h1>
               <p class="text-14-regular text-text-base">{language.t("account.gate.description")}</p>
             </div>
+            <ul class="text-13-regular text-text-base flex flex-col gap-1.5 list-none my-1 p-0">
+              <li class="flex items-center gap-2">
+                <span class="text-text-primary text-14-bold font-bold">✓</span>
+                <span>{language.t("account.gate.feature.account")}</span>
+              </li>
+              <li class="flex items-center gap-2">
+                <span class="text-text-primary text-14-bold font-bold">✓</span>
+                <span>{language.t("account.gate.feature.models")}</span>
+              </li>
+              <li class="flex items-center gap-2">
+                <span class="text-text-primary text-14-bold font-bold">✓</span>
+                <span>{language.t("account.gate.feature.noKeys")}</span>
+              </li>
+            </ul>
             <div class="flex flex-wrap gap-2">
               <Button
                 type="button"
@@ -97,7 +111,11 @@ export function BharatCodeAuthGate(props: ParentProps<{ onReturnLocal?: () => vo
             <Show when={store.failed || auth()?.state === "connection_issue" || auth()?.state === "needs_sign_in"}>
               <p role="alert" class="text-14-regular text-text-danger-base">
                 {language.t(
-                  auth()?.state === "connection_issue" ? "account.gate.unavailable" : "desktop.account.error.complete",
+                  auth()?.state === "connection_issue"
+                    ? "account.gate.unavailable"
+                    : auth()?.state === "needs_sign_in"
+                      ? "desktop.account.error.signInRequired"
+                      : "desktop.account.error.complete",
                 )}
               </p>
             </Show>
