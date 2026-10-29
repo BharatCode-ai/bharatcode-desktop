@@ -150,7 +150,11 @@ export function registerIpcHandlers(deps: Deps) {
   ipcMain.handle("updater-check", () => deps.updater.check())
   ipcMain.handle("updater-install", () => deps.updater.install())
   ipcMain.handle("set-background-color", (_event: IpcMainInvokeEvent, color: string) => deps.setBackgroundColor(color))
-  ipcMain.handle("export-debug-logs", () => deps.exportDebugLogs())
+  ipcMain.handle("export-debug-logs", (event: IpcMainInvokeEvent) => {
+    if (!isOwnedRenderer(event.sender.id) || event.senderFrame !== event.sender.mainFrame)
+      throw new Error("Invalid sender")
+    return deps.exportDebugLogs()
+  })
   ipcMain.handle("export-support-bundle", (event: IpcMainInvokeEvent) => {
     if (!isOwnedRenderer(event.sender.id) || event.senderFrame !== event.sender.mainFrame)
       throw new Error("Invalid sender")

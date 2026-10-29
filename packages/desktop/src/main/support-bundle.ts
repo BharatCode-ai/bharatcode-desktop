@@ -34,6 +34,16 @@ export interface RedactionOptions {
 const SECRET_PATTERNS: { pattern: RegExp; replacement: string | ((...match: string[]) => string) }[] = [
   // URL credentials; the password may itself contain "@" or ":"
   { pattern: /([a-zA-Z0-9+.-]+:\/\/)([^:\s@/]+):([^\s/]+)@/gi, replacement: "$1$2:[REDACTED]@" },
+  // Private repository URLs (Git/HTTPS/SSH) - must run BEFORE email and URL patterns
+  {
+    pattern: /(?:git\+ssh:\/\/|git@|ssh:\/\/git@)[a-zA-Z0-9._-]+[:/][a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+(?:\.git)?/gi,
+    replacement: "[REDACTED_REPO_URL]",
+  },
+  {
+    pattern:
+      /https?:\/\/(?:[^:\s@/]+:[^:\s@/]+@)?(?:github\.com|gitlab\.com|bitbucket\.org)\/[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+(?:\.git)?/gi,
+    replacement: "[REDACTED_REPO_URL]",
+  },
   // Private keys, including a truncated one with no END marker
   {
     pattern: /-----BEGIN[ A-Z0-9_-]+PRIVATE KEY-----[\s\S]*?(?:-----END[ A-Z0-9_-]+PRIVATE KEY-----|$)/gi,
@@ -44,23 +54,28 @@ const SECRET_PATTERNS: { pattern: RegExp; replacement: string | ((...match: stri
     pattern: /\b((?:proxy-)?authorization|cookie|set-cookie|x-api-key|api-key)(\s*:\s*)[^\r\n]+/gi,
     replacement: "$1$2[REDACTED]",
   },
+  // Bearer, Basic, and Token authentication headers
+  { pattern: /\b(Bearer|Basic|Token)\s+[A-Za-z0-9\-._~+/]{8,}=*/gi, replacement: "$1 [REDACTED]" },
+  // JSON authorization and auth token keys
+  {
+    pattern:
+      /(["'](?:(?:proxy[-_]?)?authorization|auth[-_]?token|auth[-_]?header)["']\s*:\s*)("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^\s,;&{}"']+)/gi,
+    replacement: '$1"[REDACTED]"',
+  },
   // API keys (Anthropic, OpenAI-style, GitHub, Slack, Google, AWS)
   { pattern: /sk-ant-[a-zA-Z0-9_-]{20,}/g, replacement: "[REDACTED_ANTHROPIC_KEY]" },
   { pattern: /\bsk-[a-zA-Z0-9_-]{8,}/g, replacement: "[REDACTED_OPENAI_KEY]" },
   { pattern: /gh[pousr]_[a-zA-Z0-9]{20,}|github_pat_[a-zA-Z0-9_]{20,}/g, replacement: "[REDACTED_GITHUB_TOKEN]" },
-  { pattern: /xox[baprs]-[0-9a-zA-Z]{10,}/g, replacement: "[REDACTED_SLACK_TOKEN]" },
+  { pattern: /xox[baprs](?:-[0-9a-zA-Z]+){2,}/g, replacement: "[REDACTED_SLACK_TOKEN]" },
   { pattern: /AIza[0-9A-Za-z_-]{20,}/g, replacement: "[REDACTED_GOOGLE_KEY]" },
   { pattern: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g, replacement: "[REDACTED_AWS_KEY]" },
   { pattern: /eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*/g, replacement: "[REDACTED_JWT]" },
-  // Bearer and Basic authentication headers (require realistic token length to avoid matching labels)
-  { pattern: /(Bearer\s+)[A-Za-z0-9\-._~+/]{10,}=*/gi, replacement: "$1[REDACTED]" },
-  { pattern: /(Basic\s+)[A-Za-z0-9+/]{8,}={0,2}/gi, replacement: "$1[REDACTED]" },
   // OAuth codes and keys in query strings
   { pattern: /([?&](?:code|key|sig|signature)=)[^&\s#]+/gi, replacement: "$1[REDACTED]" },
-  // Generic key-value secrets in JSON, query params, or logs; quoted values may contain spaces and escapes
+  // Generic key-value secrets in JSON, query params, or logs
   {
     pattern:
-      /((?:[\w-]*[-_])?(?:secret|password|passwd|api[-_]?key|access[-_]?key|token)["']?\s*[:=]\s*)("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|(?!\[REDACTED)[^\s,;&{}"']+)/gi,
+      /((?:[\w-]*[-_])?(?:secret|password|passwd|api[-_]?key|access[-_]?key|token|(?:proxy[-_]?)?authorization|auth[-_]?token|auth[-_]?key|credential|cookie)["']?\s*[:=]\s*)("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|(?!\[REDACTED)[^\s,;&{}"']+)/gi,
     replacement: (_match, head, value) =>
       `${head}${value[0] === '"' || value[0] === "'" ? `${value[0]}[REDACTED]${value[0]}` : "[REDACTED]"}`,
   },
@@ -70,7 +85,13 @@ const SECRET_PATTERNS: { pattern: RegExp; replacement: string | ((...match: stri
   { pattern: /\b(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}\b/gi, replacement: "[REDACTED_MAC]" },
   // Sensitive prompt text or chat content in logs
   {
-    pattern: /(["']?(?:prompt|user_message|chat_text|system_prompt)["']?\s*[:=]\s*["'])(?:(?=(\\?))\2[\s\S])*?(["'])/gi,
+    pattern:
+      /(["']?(?:prompt|content|user_message|chat_text|system_prompt)["']?\s*[:=]\s*)("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')/gi,
+    replacement: '$1"[REDACTED_PROMPT]"',
+  },
+  {
+    pattern:
+      /(["']?(?:prompt|content|user_message|chat_text|system_prompt)["']?\s*[:=]\s*["'])(?:(?=(\\?))\2[\s\S])*?(["'])/gi,
     replacement: "$1[REDACTED_PROMPT]$3",
   },
 ]
@@ -81,7 +102,6 @@ export function redactString(text: string, options?: RedactionOptions): string {
   let result = text
 
   for (const { pattern, replacement } of SECRET_PATTERNS) {
-    // The branches look identical, but TS cannot pick a replace() overload for a string | function union.
     result =
       typeof replacement === "string" ? result.replace(pattern, replacement) : result.replace(pattern, replacement)
   }
@@ -117,8 +137,11 @@ export function redactObject<T>(obj: T, options?: RedactionOptions): T {
 
   const result: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(obj)) {
+    const lowerKey = key.toLowerCase()
+    const isAuthor = lowerKey === "author" || lowerKey.startsWith("author_")
     if (
-      /(secret|password|passwd|credential|api[-_]?key|access[-_]?key|cookie|bearer|auth(?!or)|token(?!s))/i.test(key)
+      !isAuthor &&
+      /(secret|password|passwd|credential|api[-_]?key|access[-_]?key|cookie|bearer|auth|token(?!s))/i.test(key)
     ) {
       result[key] = "[REDACTED]"
     } else if (/^(prompt|content)$/i.test(key)) {
@@ -205,7 +228,7 @@ async function openSqliteAdapter(targetPath: string): Promise<SqliteAdapter> {
 }
 
 export async function checkDatabaseHealth(dbPath?: string): Promise<DatabaseHealthResult> {
-  const targetPath = dbPath ?? Global.Path.database
+  const targetPath = dbPath ?? process.env.OPENCODE_DB ?? Global.Path.database
   if (!existsSync(targetPath)) {
     return {
       path: redactString(targetPath),
@@ -360,10 +383,28 @@ export async function generateSupportBundle(options?: {
       }
     }
 
+    // Allowlisted metadata structure (following #59 design)
+    const supportBundleMetadata = {
+      manifest,
+      system: systemInfo.system,
+      database: {
+        path: dbHealth.path,
+        exists: dbHealth.exists,
+        integrityOk: dbHealth.integrityOk,
+        checks: dbHealth.checks,
+        tableCounts: dbHealth.tableCounts,
+      },
+      config: {
+        exists: existsSync(join(configPath, "config.json")),
+        sanitized: sanitizedConfig,
+      },
+    }
+
     const logsDir = app ? join(app.getPath("userData"), "logs") : Global.Path.log
     const serverLogsDir = Global.Path.log
 
     const entries: BundleEntry[] = [
+      { name: "support-bundle.json", data: Buffer.from(JSON.stringify(supportBundleMetadata, null, 2)) },
       { name: "manifest.json", data: Buffer.from(JSON.stringify(manifest, null, 2)) },
       { name: "system-info.json", data: Buffer.from(JSON.stringify(systemInfo, null, 2)) },
       { name: "database-health.json", data: Buffer.from(JSON.stringify(dbHealth, null, 2)) },

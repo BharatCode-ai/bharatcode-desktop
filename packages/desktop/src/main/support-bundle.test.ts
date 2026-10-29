@@ -128,7 +128,28 @@ describe("support-bundle redaction and diagnostics", () => {
     }
   })
 
-  test("generateSupportBundle creates a valid zip containing sanitized manifest, system info, and logs", async () => {
+  test("checkDatabaseHealth respects OPENCODE_DB environment variable", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "bc-opencode-db-"))
+    const envDbPath = join(dir, "env_custom.db")
+
+    try {
+      const db = new Database(envDbPath)
+      db.run("CREATE TABLE custom_item (id TEXT PRIMARY KEY)")
+      db.run("INSERT INTO custom_item VALUES ('ci_1')")
+      db.close()
+
+      process.env.OPENCODE_DB = envDbPath
+      const health = await checkDatabaseHealth()
+
+      expect(health.exists).toBe(true)
+      expect(health.tableCounts.custom_item).toBe(1)
+    } finally {
+      delete process.env.OPENCODE_DB
+      await safeRm(dir)
+    }
+  })
+
+  test("generateSupportBundle creates a valid zip containing allowlisted support-bundle.json and logs", async () => {
     const dir = await mkdtemp(join(tmpdir(), "bc-bundle-test-"))
     const dbPath = join(dir, "bundle.db")
     const logDir = join(dir, "logs")
@@ -152,7 +173,7 @@ describe("support-bundle redaction and diagnostics", () => {
 
       expect(existsSync(result.outputPath)).toBe(true)
       expect(result.outputPath.endsWith(".zip")).toBe(true)
-      expect(result.fileCount).toBeGreaterThanOrEqual(4)
+      expect(result.fileCount).toBeGreaterThanOrEqual(5)
       expect(result.databaseHealth.integrityOk).toBe(true)
 
       // Open the generated zip and inspect contents
@@ -161,17 +182,21 @@ describe("support-bundle redaction and diagnostics", () => {
       const entries = await reader.getEntries()
       const entryNames = entries.map((e) => e.filename)
 
+      expect(entryNames).toContain("support-bundle.json")
       expect(entryNames).toContain("manifest.json")
       expect(entryNames).toContain("system-info.json")
       expect(entryNames).toContain("database-health.json")
       expect(entryNames).toContain("config-sanitized.json")
 
-      // Extract and check manifest
-      const manifestEntry = entries.find((e) => e.filename === "manifest.json")
-      expect(manifestEntry).toBeDefined()
+      // Extract and check support-bundle.json allowlisted structure
+      const supportEntry = entries.find((e) => e.filename === "support-bundle.json")
+      expect(supportEntry).toBeDefined()
       const textWriter = new (await import("@zip.js/zip.js")).TextWriter()
-      const manifestText = await manifestEntry!.getData!(textWriter)
-      expect(manifestText).toContain("bharatcode-support-bundle")
+      const supportText = await supportEntry!.getData!(textWriter)
+      const supportJson = JSON.parse(supportText)
+      expect(supportJson.manifest.type).toBe("bharatcode-support-bundle")
+      expect(supportJson.system.platform).toBeDefined()
+      expect(supportJson.database.exists).toBe(true)
 
       await reader.close()
     } finally {
@@ -185,6 +210,14 @@ describe("redactString leaks", () => {
   // [input, the secret that must not survive]
   const cases: [string, string][] = [
     ["Authorization: Token abcdef1234567890SECRETVALUE", "abcdef1234567890SECRETVALUE"],
+    ['{"authorization": "Token abcdef1234567890SECRETVALUE"}', "abcdef1234567890SECRETVALUE"],
+    [
+      '{"role": "user", "content": "private user prompt text that must not leak"}',
+      "private user prompt text that must not leak",
+    ],
+    ["git clone https://github.com/my-org/private-repo.git", "private-repo"],
+    ["git remote add origin git@github.com:my-org/private-repo.git", "private-repo"],
+    ["origin https://token123@github.com/my-org/private-repo.git", "token123"],
     ["Authorization: Bearer abc123", "abc123"],
     ["Cookie: session=abcdef123456; other=zzz", "abcdef123456"],
     ["Set-Cookie: sid=SESSIONVALUE99; HttpOnly", "SESSIONVALUE99"],
@@ -230,21 +263,35 @@ describe("redactObject keys", () => {
         accessToken: "AT1",
         clientSecret: "CS1",
         refreshToken: "RT1",
-        headers: { cookie: "sid=SS1", "x-api-key": "KK1" },
+        authorization: "Token my-secret-token",
+        headers: { cookie: "sid=SS1", "x-api-key": "KK1", authorization: "Bearer secret_hdr" },
         env: { OPENAI_API_KEY: "envkey1", DB_PASSWORD: "pw1" },
         messages: [{ content: { parts: ["nested prompt"] } }],
       }),
     )
-    for (const secret of ["abcTOK", "AT1", "CS1", "RT1", "SS1", "KK1", "envkey1", "pw1", "nested prompt"]) {
+    for (const secret of [
+      "abcTOK",
+      "AT1",
+      "CS1",
+      "RT1",
+      "my-secret-token",
+      "SS1",
+      "KK1",
+      "secret_hdr",
+      "envkey1",
+      "pw1",
+      "nested prompt",
+    ]) {
       expect(out).not.toContain(secret)
     }
   })
 
   test("keeps harmless counters and author fields", () => {
-    expect(redactObject({ max_tokens: 4096, tokens: 12, author: "ok" })).toEqual({
+    expect(redactObject({ max_tokens: 4096, tokens: 12, author: "ok", author_name: "Shrey" })).toEqual({
       max_tokens: 4096,
       tokens: 12,
       author: "ok",
+      author_name: "Shrey",
     })
   })
 })
