@@ -384,3 +384,47 @@ test("concurrent machine resume and renderer refresh requests deduplicate", asyn
   expect(status.state).toBe("signed_in")
   expect(statusReads).toBe(1)
 })
+
+test("pending status read followed by completed logout and explicit refresh starts a fresh read", async () => {
+  let statusReads = 0
+  const firstReadGate = deferred<typeof signedIn>()
+  const session = createAccountSession({
+    client: {
+      getAccountStatus: async () => {
+        statusReads++
+        if (statusReads === 1) return firstReadGate.promise
+        return signedOut
+      },
+      beginSignIn: async () => {
+        throw new Error("unused")
+      },
+      completeSignIn: async () => {
+        throw new Error("unused")
+      },
+      logout: async () => signedOut,
+    },
+    openBrowser: async () => {},
+    changed: () => {},
+  })
+
+  // 1. Start a status read (read #1 is pending)
+  const pendingRead = session.getAccountStatus()
+  await tick()
+  expect(statusReads).toBe(1)
+
+  // 2. Completed logout runs and finishes while read #1 is still in flight
+  await session.logout()
+
+  // 3. Explicit refresh is requested: must NOT reuse the invalidated read #1
+  const freshRefresh = session.refreshAccountStatus()
+  await tick()
+  expect(statusReads).toBe(2)
+
+  // Settle the older in-flight read
+  firstReadGate.resolve(signedIn)
+  await pendingRead
+
+  // The fresh refresh resolves to signedOut and never overwrites with signedIn from read #1
+  const status = await freshRefresh
+  expect(status.state).toBe("signed_out")
+})
