@@ -22,12 +22,18 @@ The original tests failed before the recovery implementation. A fresh source rev
 | Real local HTTP pairing/recovery/prompt/reset/restart regression | Passed inside both connector suites |
 | Mobile Jest / security / TypeScript / lint | 76 / 15 passed; typecheck and lint passed |
 | Desktop source suite on recovery branch | 170 passed |
+| Recovery-branch server suite | 324 passed; 2 existing skips |
+| Actual Desktop HTTP routes/database + local test-model recovery | Passed; two intended prompts, two model calls, two upstream submissions; retries did not add submissions |
 | App unit suite on recovery branch | 748 passed; 1 baseline Arabic UI parity failure |
 | App browser-condition suite | 55 passed |
 | Mobile Settings Chromium cases | 5 passed |
 | Integration generator / host browser helper | 3 / 3 passed |
-| Desktop/app/e2e typechecks | Passed |
+| Desktop/app/e2e/server typechecks | Passed |
 
 The app unit failure is `i18n parity > non-English locales have every English key and required plural variants`: four missing `ui.message.outputLimit*` keys in Arabic. It was reproduced from the current dev dictionaries/test in an isolated temporary directory. This change does not alter the parity test or UI locale dictionaries.
 
 These checks establish source and local fixture behavior. They do not establish installed Electron, physical Android/iOS, native Windows/macOS, store signing, or release acceptance. No package, installation, deployment, push, PR, or review reply was made for this follow-up.
+
+## Additional actual-server verification
+
+The Desktop `packages/opencode/test/server/httpapi-session.test.ts` regression uses the actual HTTP routes and database with the mirrored connector and a local deterministic model server. It checks an original prompt/reply, corrupt journal rejection, explicit recovery, reconciliation of the original stored retry, 409 rejection of unknown old delivery, connector-generated session creation, the new conversation reply, and Reset/reopen retry. Both upstream submission counts and model-call counts remain exactly two for the two intended prompts. This complements the gateway pairing fixture; it does not substitute for an installed Electron/phone test. The complete recovery-branch server suite passed 324 tests with two existing skips.
