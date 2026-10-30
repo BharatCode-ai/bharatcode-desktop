@@ -4,6 +4,7 @@ import QRCode from "qrcode"
 import { createGateway } from "./gateway.mjs"
 import { connectTunnel, removeTunnel } from "./tunnel.mjs"
 import { openDevices, resetDevices } from "./devices.mjs"
+import { resetAdmissions } from "./admissions.mjs"
 
 export async function createMobileAccess(options) {
   const root = join(options.userDataPath, "mobile-access")
@@ -136,7 +137,7 @@ export async function createMobileAccess(options) {
     } catch (error) {
       if (token === epoch) {
         status = "error"
-        errorKey ??= "mobile.error.connection"
+        errorKey ??= error.mobileStorage ? "mobile.error.storage" : "mobile.error.connection"
       }
       throw error
     } finally {
@@ -190,7 +191,15 @@ export async function createMobileAccess(options) {
       await shutdown(true)
     } else if (input.type === "reset") {
       await shutdown(true)
-      devices = (await resetDevices(storePath)).list()
+      try {
+        await resetAdmissions(join(root, "admissions.json"))
+        devices = (await resetDevices(storePath)).list()
+      } catch (error) {
+        status = "error"
+        errorKey = "mobile.error.storage"
+        emit()
+        throw error
+      }
       await (options.removeTunnel ?? removeTunnel)({ storePath: join(root, "tunnel-bharatcode-ai") })
     } else if (input.type === "approve") {
       if (!gateway) throw new Error("Remote access disabled")

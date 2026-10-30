@@ -1,9 +1,63 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createDesktopAPI } from '../src/desktop-api.mjs'
+
+for (const created of [undefined, 999, 1000, Date.now() + 3_600_000]) {
+  test(`recovery fence blocks unknown old delivery across restart, created=${created}`, async t => {
+    const root=await mkdtemp(join(tmpdir(),'bc-recovery-fence-'));t.after(()=>rm(root,{recursive:true,force:true}))
+    const storePath=join(root,'admissions.json')
+    // Simulate a crash after quarantine but before the replacement journal was written.
+    await writeFile(storePath+'.recovery',JSON.stringify({before:1000}))
+    let submissions=0
+    const request=async path=>{
+      if(path==='/session/ses_one')return {data:{directory:'/work',time:{created}}}
+      if(path.includes('/prompt_async')){submissions++;return {data:undefined}}
+      throw Object.assign(new Error('not stored'),{status:404})
+    }
+    for(let i=0;i<2;i++){
+      const api=await createDesktopAPI({request,storePath})
+      await assert.rejects(api.handle('POST','/api/session/ses_one/prompt',{id:'msg_one',prompt:{text:'Do not duplicate'}}),/recovered.*new conversation/i)
+    }
+    assert.equal(submissions,0)
+  })
+}
+
+test('recovered history acknowledges stored messages and permits only connector-created conversations',async t=>{
+  const root=await mkdtemp(join(tmpdir(),'bc-recovery-proof-'));t.after(()=>rm(root,{recursive:true,force:true}))
+  const storePath=join(root,'admissions.json')
+  await writeFile(storePath+'.recovery',JSON.stringify({before:1000}))
+  let submissions=0, fresh
+  const request=async(path,method,body)=>{
+    if(path==='/api/session' && method==='POST'){fresh=body.id;return {data:{data:{id:fresh}}}}
+    if(path==='/session/ses_old')return {data:{directory:'/work',time:{created:900}}}
+    if(path==='/session/'+fresh)return {data:{directory:'/work',time:{created:0}}}
+    if(path.includes('/prompt_async')){submissions++;return {data:undefined}}
+    return {data:{info:{id:'msg_one',role:'user'},parts:[{type:'text',text:'Only once'}]}}
+  }
+  const api=await createDesktopAPI({request,storePath})
+  const prompt={id:'msg_one',prompt:{text:'Only once'}}
+  await api.handle('POST','/api/session/ses_old/prompt',prompt)
+  assert.equal(submissions,0)
+  await assert.rejects(api.handle('POST','/api/session/ses_old/prompt',{...prompt,prompt:{text:'Different'}}),/identity/)
+  await assert.rejects(api.handle('POST','/api/session',{id:'ses_old'}),/identity/i)
+  const created=await api.handle('POST','/api/session',{location:{directory:'/work'}})
+  assert.match(created.data.data.id,/^ses_[a-f0-9]{32}$/)
+  await api.handle('POST',`/api/session/${fresh}/prompt`,prompt)
+  assert.equal(submissions,1)
+  const reopened=await createDesktopAPI({request,storePath})
+  await reopened.handle('POST',`/api/session/${fresh}/prompt`,prompt)
+  assert.equal(submissions,1)
+})
+
+test('malformed recovery fence fails closed instead of forgetting prior quarantine',async t=>{
+  const root=await mkdtemp(join(tmpdir(),'bc-recovery-invalid-'));t.after(()=>rm(root,{recursive:true,force:true}))
+  const storePath=join(root,'admissions.json')
+  await writeFile(storePath+'.recovery','{"before":null}')
+  await assert.rejects(createDesktopAPI({request:()=>{throw new Error('must not contact sidecar')},storePath}),/recovery/i)
+})
 
 test('stored admission is acknowledged while the upstream async HTTP acknowledgement is still pending', async t => {
   const root = await mkdtemp(join(tmpdir(),'bc-admission-early-'))

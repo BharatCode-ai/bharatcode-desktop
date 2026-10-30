@@ -1,6 +1,7 @@
-import { readFile, writeFile, rename } from 'node:fs/promises'
-import { createHash } from 'node:crypto'
+import { writeFile, rename } from 'node:fs/promises'
+import { createHash, randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
+import { openAdmissions } from './admissions.mjs'
 
 const fail = (status, message) => Object.assign(new Error(message), { status })
 const normalizedPermission = item => ({ ...item, action: item.permission, resources: item.patterns ?? [] })
@@ -16,8 +17,7 @@ export function desktopMessage(item) {
 // Desktop's default runtime serves native session metadata but continues chats
 // through its compatibility engine. Keep that same engine and message tables.
 export async function createDesktopAPI({ request, storePath }) {
-  let state = { admissions: {}, selections: {} }
-  try { state = { ...state, ...JSON.parse(await readFile(storePath,'utf8')) } } catch (error) { if(error.code !== 'ENOENT') throw error }
+  const { state, recovered } = await openAdmissions(storePath)
   let writes = Promise.resolve()
   const save = () => {
     const json = JSON.stringify(state)
@@ -43,6 +43,20 @@ export async function createDesktopAPI({ request, storePath }) {
   }
   async function handle(method, raw, body, signal) {
     const url = new URL(raw,'http://localhost'), path = url.pathname
+    if (method === 'POST' && path === '/api/session' && recovered) {
+      // Session creation can adopt a caller-supplied identity. During recovery
+      // only our own fresh random identity proves that a session has no lost
+      // admissions. Wall-clock timestamps cannot prove this after clock changes.
+      if (!body || typeof body !== 'object' || Array.isArray(body) || body.id !== undefined)
+        throw fail(400,'A fresh conversation identity is required after mobile history recovery')
+      if ((state.recoverySessions?.length ?? 0) >= 10000) throw fail(507,'Mobile recovery conversation history is full')
+      const id = 'ses_' + randomUUID().replaceAll('-','')
+      const result = await request(raw,'POST',{...body,id},signal)
+      if (result.data?.data?.id !== id) throw fail(502,'Desktop did not create the requested conversation')
+      state.recoverySessions = [...(state.recoverySessions ?? []),id]
+      await save()
+      return result
+    }
     const match = /^\/api\/session\/([A-Za-z0-9_-]+)\/(message|prompt|interrupt|permission|question|model|agent)$/.exec(path)
     if (method==='GET' && path==='/api/session') {
       const result = await request(raw,'GET',undefined,signal)
@@ -115,6 +129,16 @@ export async function createDesktopAPI({ request, storePath }) {
           await save(); return {data:{data:{id:body.id}}}
         }
         throw fail(409,'Desktop delivery is unconfirmed. Check the conversation on your computer before continuing.')
+      }
+      if (recovered && !state.recoverySessions?.includes(id)) {
+        // With the old journal lost, absence in Desktop is not proof that an
+        // old request was never forwarded. Only our durably recorded fresh
+        // conversation identities can submit without that lost history.
+        if (await stored(id,body,info.directory,signal)) {
+          state.admissions[key]={hash,state:'admitted'}; await save()
+          return {data:{data:{id:body.id}}}
+        }
+        throw fail(409,'Mobile delivery history was recovered. Check this conversation on your computer; start a new conversation on your phone to send safely.')
       }
       if(Object.keys(state.admissions).length>=10000) throw fail(507,'Mobile admission history is full')
       const operation=(async()=>{

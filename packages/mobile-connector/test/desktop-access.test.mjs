@@ -1,11 +1,89 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { mkdtemp, rm, mkdir, writeFile, readFile, readdir } from "node:fs/promises"
+import { mkdtemp, rm, mkdir, writeFile, readFile, readdir, stat } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { createMobileAccess } from "../src/desktop-access.mjs"
 import QRCode from "qrcode"
 import { PNG } from "pngjs"
+
+for (const damaged of ['{"admissions":', '{"admissions":null,"selections":{}}', '{"admissions":{},"selections":[]}']) {
+  test(`explicit reset quarantines invalid admissions and allows pairing: ${damaged}`, async (t) => {
+    const directory = await mkdtemp(join(tmpdir(), "bc-admissions-reset-"))
+    t.after(() => rm(directory, { recursive: true, force: true }))
+    const root = join(directory, "mobile-access")
+    await mkdir(root)
+    await writeFile(join(root, "admissions.json"), damaged)
+    const options = {
+      userDataPath: directory,
+      getConnection: () => ({ url: "http://127.0.0.1:4096", password: "private" }),
+      removeTunnel: async () => {},
+      tunnelFactory: async () => ({ origin: "https://pc.tunnel.bharatcode.ai", events: (async function* () {})(), close: async () => {} }),
+    }
+    const access = await createMobileAccess(options)
+    t.after(() => access.close())
+    await assert.rejects(access.action({ type: "pair" }))
+    assert.equal(access.snapshot().errorKey, "mobile.error.storage")
+    assert.equal(await readFile(join(root, "admissions.json"), "utf8"), damaged)
+    await access.action({ type: "reset" })
+    const backups = (await readdir(root)).filter(name => name.startsWith("admissions.json.corrupt-"))
+    assert.equal(backups.length, 1)
+    assert.equal(await readFile(join(root, backups[0]), "utf8"), damaged)
+    if (process.platform !== "win32") assert.equal((await stat(join(root, backups[0]))).mode & 0o777, 0o600)
+    const fence = JSON.parse(await readFile(join(root, "admissions.json.recovery"), "utf8"))
+    assert.ok(Number.isSafeInteger(fence.before))
+    await access.action({ type: "pair" })
+    assert.equal(access.snapshot().status, "connected")
+    await access.action({ type: "reset" })
+    assert.deepEqual(JSON.parse(await readFile(join(root, "admissions.json.recovery"), "utf8")), fence)
+    await access.close()
+    const reopened = await createMobileAccess(options)
+    t.after(() => reopened.close())
+    await reopened.action({ type: "pair" })
+    assert.equal(reopened.snapshot().status, "connected")
+  })
+}
+
+test("reset preserves a healthy forwarding journal byte-for-byte", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "bc-admissions-healthy-"))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const root = join(directory, "mobile-access")
+  await mkdir(root)
+  const original = JSON.stringify({ admissions: { "ses_one.msg_one": { hash: "a".repeat(64), state: "forwarding" } }, selections: {} })
+  await writeFile(join(root, "admissions.json"), original)
+  const access = await createMobileAccess({ userDataPath: directory, getConnection: () => undefined, removeTunnel: async () => {} })
+  t.after(() => access.close())
+  await access.action({ type: "reset" })
+  assert.equal(await readFile(join(root, "admissions.json"), "utf8"), original)
+  assert.equal((await readdir(root)).some(name => name.includes(".corrupt-")), false)
+})
+
+test("reset reports storage failure instead of success when admissions cannot be read", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "bc-admissions-unreadable-"))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const root = join(directory, "mobile-access")
+  await mkdir(join(root, "admissions.json"), { recursive: true })
+  const access = await createMobileAccess({ userDataPath: directory, getConnection: () => undefined, removeTunnel: async () => {} })
+  t.after(() => access.close())
+  await assert.rejects(access.action({ type: "reset" }))
+  assert.equal(access.snapshot().status, "error")
+  assert.equal(access.snapshot().errorKey, "mobile.error.storage")
+  assert.equal((await readdir(root)).some(name => name.includes(".corrupt-")), false)
+})
+
+test("a second damaged journal advances the recovery fence to cover newer uncertain deliveries", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "bc-admissions-second-reset-"))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const root = join(directory, "mobile-access")
+  await mkdir(root)
+  await writeFile(join(root, "admissions.json.recovery"), '{"before":1000}')
+  await writeFile(join(root, "admissions.json"), '{"admissions":')
+  const access = await createMobileAccess({ userDataPath: directory, getConnection: () => undefined, removeTunnel: async () => {} })
+  t.after(() => access.close())
+  const started = Date.now()
+  await access.action({ type: "reset" })
+  assert.ok(JSON.parse(await readFile(join(root, "admissions.json.recovery"), "utf8")).before >= started)
+})
 
 test("pairing QR preserves a four-module clear border for physical scanners", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "bc-access-qr-margin-"))
