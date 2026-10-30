@@ -1,10 +1,11 @@
 import { expect, test } from "bun:test"
-import { mkdtemp, readFile, readdir, rm, stat, writeFile, mkdir } from "node:fs/promises"
+import { mkdtemp, readFile, readdir, rm, stat, writeFile, mkdir, symlink } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { ZipReader, Uint8ArrayReader, TextWriter } from "@zip.js/zip.js"
 import { createSupportExporter, supportExportAction } from "./support-export"
+import { supportPrivacyCases } from "./test-fixtures/support-privacy"
 
 async function contents(filename: string) {
   const reader = new ZipReader(new Uint8ArrayReader(new Uint8Array(await readFile(filename))))
@@ -18,6 +19,69 @@ async function contents(filename: string) {
     await reader.close()
   }
 }
+
+test("the actual archive excludes #67/#68 adversarial log/config values and symlink targets", async () => {
+  const root = await mkdtemp(join(tmpdir(), "bc-support-adversarial-"))
+  try {
+    const privateFile = join(root, "private.txt")
+    await writeFile(privateFile, "PRIVATE-FILE-CONTENT")
+    await mkdir(join(root, "logs"))
+    await symlink(privateFile, join(root, "logs", "link.log"))
+    await writeFile(join(root, "logs", "main.log"), supportPrivacyCases.map(([input]) => input).join("\n"))
+    await writeFile(
+      join(root, "config.json"),
+      JSON.stringify({
+        apiToken: "abcTOK",
+        accessToken: "AT1",
+        clientSecret: "CS1",
+        refreshToken: "RT1",
+        authorization: "Token my-secret-token",
+        headers: { cookie: "sid=SS1", "x-api-key": "KK1", authorization: "Bearer secret_hdr" },
+        env: { OPENAI_API_KEY: "envkey1", DB_PASSWORD: "pw1" },
+        messages: [{ content: { parts: ["nested prompt"] } }],
+      }),
+    )
+    for (const [input, secret] of supportPrivacyCases) {
+      const run = createSupportExporter({
+        directory: () => root,
+        input: () => ({
+          version: "1.2.3",
+          channel: "beta",
+          platform: "linux",
+          // Poison accepted scalar fields as well as fields that must be omitted.
+          release: input,
+          arch: input,
+          auth: { state: input, authenticated: true, authorization: input },
+          config: { directory: input, override: input, sanitized: input },
+          database: { schemaVersion: input, latestMigration: input, path: input, checks: [input] },
+          errors: { network: input },
+          rawLogs: input,
+          content: { parts: [input] },
+        }),
+        reveal: () => {},
+        failure: () => new Error("safe failure"),
+      })
+      const file = await run()
+      const text = await contents(file)
+      expect(text).not.toContain(secret)
+      expect(text).not.toContain("PRIVATE-FILE-CONTENT")
+      expect(text).not.toContain("my-secret-token")
+      expect(text).not.toContain("nested prompt")
+      expect(text).not.toContain(root)
+      expect(JSON.parse(text)).toMatchObject({
+        version: "1.2.3",
+        channel: "beta",
+        os: { platform: "linux" },
+        auth: { state: "unknown", authenticated: false },
+        database: { schemaVersion: null, latestMigration: null },
+        errors: { counts: { network: 0 } },
+      })
+      if (process.platform !== "win32") expect((await stat(file)).mode & 0o777).toBe(0o600)
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
 
 test("actual exported archive excludes private neighboring files and hostile metadata", async () => {
   const root = await mkdtemp(join(tmpdir(), "bc-support-export-"))
