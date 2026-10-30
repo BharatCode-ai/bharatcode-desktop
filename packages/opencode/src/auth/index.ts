@@ -139,12 +139,16 @@ export const layerWith = (options: LayerOptions = {}) =>
                 const value = nativeStore.read()
                 return value === undefined ? { found: false as const } : { found: true as const, value }
               },
-              catch: () =>
-                new AuthError({
+              catch: (error) => {
+                const busy = error instanceof Error && error.cause === "CREDENTIAL_STORE_BUSY"
+                return new AuthError({
                   operation: "read",
-                  reason: "permission",
-                  message: "Credential store permissions or access could not be verified.",
-                }),
+                  reason: busy ? "unavailable" : "permission",
+                  message: busy
+                    ? "Credential store is busy. Try again."
+                    : "Credential store permissions or access could not be verified.",
+                })
+              },
             })
           : Effect.gen(function* () {
               yield* verifyAccess("read")

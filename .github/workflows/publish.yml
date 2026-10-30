@@ -13,6 +13,12 @@ on:
         type: choice
         options: [beta, prod]
         default: beta
+      target:
+        description: Full release cohort or Windows-only test artifact (not publishable)
+        required: false
+        type: choice
+        options: [all, windows-x64]
+        default: all
 
 permissions:
   contents: read
@@ -35,6 +41,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.identity.outputs.version }}
+      matrix: ${{ steps.targets.outputs.matrix }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -45,6 +52,22 @@ jobs:
           install-flags: --frozen-lockfile
       - id: identity
         run: bun packages/desktop/scripts/candidate-cohort.ts admit
+      - id: targets
+        env:
+          CANDIDATE_TARGET: ${{ inputs.target }}
+        run: |
+          bun -e '
+            const targets = [
+              { target: "windows-x64", runner: "windows-2022", arch: "x64" },
+              { target: "darwin-arm64", runner: "macos-26", arch: "arm64" },
+              { target: "darwin-x64", runner: "macos-26-intel", arch: "x64" },
+              { target: "linux-x64", runner: "ubuntu-24.04", arch: "x64" },
+            ]
+            const target = process.env.CANDIDATE_TARGET || "all"
+            if (!["all", "windows-x64"].includes(target)) throw Error("Invalid candidate target")
+            const include = target === "all" ? targets : targets.filter((item) => item.target === target)
+            require("node:fs").appendFileSync(process.env.GITHUB_OUTPUT, `matrix=${JSON.stringify({ include })}\n`)
+          '
 
   wsl:
     needs: admit
@@ -74,20 +97,7 @@ jobs:
     needs: [admit, wsl]
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - target: windows-x64
-            runner: windows-2022
-            arch: x64
-          - target: darwin-arm64
-            runner: macos-26
-            arch: arm64
-          - target: darwin-x64
-            runner: macos-26-intel
-            arch: x64
-          - target: linux-x64
-            runner: ubuntu-24.04
-            arch: x64
+      matrix: ${{ fromJSON(needs.admit.outputs.matrix) }}
     runs-on: ${{ matrix.runner }}
     env:
       BHARATCODE_VERSION: ${{ needs.admit.outputs.version }}
@@ -191,6 +201,7 @@ jobs:
           retention-days: 14
 
   cohort:
+    if: inputs.target == 'all' || inputs.target == ''
     needs: [admit, package]
     runs-on: ubuntu-24.04
     steps:

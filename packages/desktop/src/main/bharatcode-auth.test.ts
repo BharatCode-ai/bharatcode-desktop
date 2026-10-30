@@ -92,7 +92,7 @@ describe("Desktop client of the shared BharatCode account runtime", () => {
         })
         if (input.toString().endsWith("/authorize"))
           return json({
-            url: "https://evgvlcaxfpwupaiwzqqm.supabase.co/auth/v1/oauth/authorize?state=state-1",
+            url: "https://auth.bharatcode.ai/auth/v1/oauth/authorize?state=state-1",
             expiresAt: 123_456,
           })
         if (input.toString().endsWith("/logout")) return json({ ok: true })
@@ -102,7 +102,7 @@ describe("Desktop client of the shared BharatCode account runtime", () => {
     })
 
     expect(await client.beginSignIn({ selectAccount: true })).toEqual({
-      url: "https://evgvlcaxfpwupaiwzqqm.supabase.co/auth/v1/oauth/authorize?state=state-1",
+      url: "https://auth.bharatcode.ai/auth/v1/oauth/authorize?state=state-1",
       expiresAt: 123_456,
     })
     expect((await client.completeSignIn("bharatcode://auth/callback?code=code&state=state-1")).state).toBe("signed_in")
@@ -133,6 +133,62 @@ describe("Desktop client of the shared BharatCode account runtime", () => {
       },
     })
     await expect(client.getAccountStatus()).rejects.toThrow("unsafe redirect")
+  })
+
+  test.each(["BHARATCODE_AUTH_URL", "OPENCODE_AUTH_URL"])(
+    "accepts only the explicit local %s endpoint",
+    async (key) => {
+      const url = "http://127.0.0.1:54321/auth/v1/oauth/authorize?state=local"
+      const client = createBharatCodeAccountClient({
+        env: { [key]: "http://127.0.0.1:54321" },
+        getConnection: async () => connection,
+        fetchImpl: async () => json({ url, expiresAt: 123_456 }),
+      })
+      expect((await client.beginSignIn()).url).toBe(url)
+    },
+  )
+
+  test.each([
+    "https://evgvlcaxfpwupaiwzqqm.supabase.co/auth/v1/oauth/authorize",
+    "http://127.0.0.1:54321/auth/v1/oauth/authorize",
+    "https://auth.bharatcode.ai.attacker.invalid/auth/v1/oauth/authorize",
+    "https://auth.bharatcode.ai/wrong",
+    "https://user:secret@auth.bharatcode.ai/auth/v1/oauth/authorize",
+    "https://auth.bharatcode.ai/auth/v1/oauth/authorize#fragment",
+  ])("rejects an unapproved authorization URL %s", async (url) => {
+    const client = createBharatCodeAccountClient({
+      env: {},
+      getConnection: async () => connection,
+      fetchImpl: async () => json({ url, expiresAt: 123_456 }),
+    })
+    await expect(client.beginSignIn()).rejects.toThrow("unsafe authorization URL")
+  })
+
+  test("rejects malformed configuration before contacting the sidecar", async () => {
+    let called = false
+    const client = createBharatCodeAccountClient({
+      env: { BHARATCODE_AUTH_URL: "https://auth.bharatcode.ai?private=value" },
+      getConnection: async () => {
+        called = true
+        return connection
+      },
+    })
+    await expect(client.beginSignIn()).rejects.toThrow("Invalid BharatCode auth endpoint")
+    expect(called).toBe(false)
+  })
+
+  test("an explicit hosted override is exclusive, not an additional allowed authority", async () => {
+    for (const key of ["BHARATCODE_AUTH_URL", "OPENCODE_AUTH_URL"]) {
+      const hosted = "https://evgvlcaxfpwupaiwzqqm.supabase.co"
+      const create = (origin: string) =>
+        createBharatCodeAccountClient({
+          env: { [key]: hosted },
+          getConnection: async () => connection,
+          fetchImpl: async () => json({ url: `${origin}/auth/v1/oauth/authorize`, expiresAt: 123_456 }),
+        })
+      expect((await create(hosted).beginSignIn()).url).toBe(`${hosted}/auth/v1/oauth/authorize`)
+      await expect(create("https://auth.bharatcode.ai").beginSignIn()).rejects.toThrow("unsafe authorization URL")
+    }
   })
 
   test("contains no Desktop credential or provider-config writer", async () => {

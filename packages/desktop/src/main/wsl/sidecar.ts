@@ -5,6 +5,7 @@ import { bundledWslRuntime } from "./bundle"
 import { connectWslChild } from "./transport"
 import { wslArgs } from "./args"
 import { nativeT } from "../native-translations"
+import { BharatCodeAuth } from "@opencode-ai/core/bharatcode-auth"
 
 export type WslSidecar = {
   listener: {
@@ -17,6 +18,7 @@ export type WslSidecar = {
 }
 
 export async function spawnWslSidecar(distro: string, opts: { healthTimeoutMs?: number } = {}): Promise<WslSidecar> {
+  const endpoints = BharatCodeAuth.sidecarEnvironment()
   const runtime = await bundledWslRuntime(distro, false)
   const port = await allocatePort()
   const password = randomUUID()
@@ -34,6 +36,7 @@ export async function spawnWslSidecar(distro: string, opts: { healthTimeoutMs?: 
         "TMPDIR=/tmp",
         "OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER=true",
         "OPENCODE_CLIENT=desktop",
+        ...Object.entries(endpoints).map(([key, value]) => `${key}=${value}`),
         runtime.installedPath,
         "serve",
         "--hostname",

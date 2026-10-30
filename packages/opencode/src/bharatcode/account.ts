@@ -1,14 +1,17 @@
 import { createHash, randomBytes } from "node:crypto"
-import { Context, Effect, Layer, Schema } from "effect"
+import { Context, Effect, Layer, Option, Schema } from "effect"
+import { BharatCodeAuth } from "@opencode-ai/core/bharatcode-auth"
 import { Auth } from "@/auth"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { serviceUse } from "@opencode-ai/core/effect/service-use"
 import { NonNegativeInt } from "@opencode-ai/core/schema"
 
 export const PROVIDER_ID = "bharatcode"
-export const API_BASE_URL = "https://bharatcode.ai"
+// Freeze the operator-selected authority at process startup for every native
+// API surface. Invalid explicit configuration must fail before any request.
+export const API_BASE_URL = BharatCodeAuth.apiOrigin()
 export const MODEL_API_BASE_URL = `${API_BASE_URL}/api/model/v1`
-export const OAUTH_ISSUER = "https://evgvlcaxfpwupaiwzqqm.supabase.co/auth/v1"
+export const OAUTH_ISSUER = BharatCodeAuth.DEFAULT_ISSUER
 export const OAUTH_CLIENT_ID = "4cad332a-232f-4ef2-9363-12fea4420635"
 export const OAUTH_SCOPE = "openid email profile"
 export const CLI_REDIRECT_URI = "http://127.0.0.1:27182/callback"
@@ -41,7 +44,7 @@ export class SignInRequired extends Schema.TaggedErrorClass<SignInRequired>()("B
 }) {}
 
 export class OAuthError extends Schema.TaggedErrorClass<OAuthError>()("BharatCodeOAuthError", {
-  reason: Schema.Literals(["redirect", "state", "expired", "callback", "response"]),
+  reason: Schema.Literals(["redirect", "state", "expired", "callback", "response", "configuration"]),
   message: Schema.String,
 }) {}
 
@@ -108,6 +111,7 @@ type FailureBody = {
 }
 
 export type LayerOptions = {
+  env?: BharatCodeAuth.Environment
   fetch?: Fetch
   now?: () => number
   tokenRequestTimeoutMs?: number
@@ -147,6 +151,10 @@ function stringField(value: unknown) {
   return typeof value === "string" && value.length ? value : undefined
 }
 
+function responseObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
+}
+
 function parseIdentity(value: unknown): Identity | undefined {
   if (!value || typeof value !== "object") return
   const input = value as Record<string, unknown>
@@ -178,11 +186,28 @@ function accountChanged(operation: string) {
   })
 }
 
+const decodeIssuer = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Struct({ iss: Schema.String })))
+
+// This is only a routing guard, not JWT verification. Identity still comes from
+// UserInfo. Never send a recognizable old-issuer session to a different issuer.
+function tokenIssuer(token: string) {
+  const parts = token.split(".")
+  if (parts.length !== 3) return
+  return Option.getOrUndefined(decodeIssuer(Buffer.from(parts[1], "base64url").toString("utf8")))?.iss
+}
+
 export const layerWith = (options: LayerOptions = {}) =>
   Layer.effect(
     Service,
     Effect.gen(function* () {
       const auth = yield* Auth.Service
+      const endpoint = yield* Effect.result(
+        Effect.try({
+          try: () => BharatCodeAuth.issuer(options.env),
+          catch: () => new OAuthError({ reason: "configuration", message: BharatCodeAuth.configurationMessage }),
+        }),
+      )
+      const issuer = Effect.fromResult(endpoint)
       const fetchImpl = options.fetch ?? globalThis.fetch
       const now = options.now ?? Date.now
       const tokenRequestTimeoutMs =
@@ -194,7 +219,7 @@ export const layerWith = (options: LayerOptions = {}) =>
       const pending = new Map<string, PendingAuthorization>()
       let lastTerminal: SignInRequired | undefined
 
-      const fetchToken = (params: Record<string, string>) => {
+      const fetchToken = (issuer: string, params: Record<string, string>) => {
         const controller = new AbortController()
         let rejectAbort!: (reason: unknown) => void
         const aborted = new Promise<never>((_resolve, reject) => {
@@ -209,19 +234,17 @@ export const layerWith = (options: LayerOptions = {}) =>
           controller.abort()
         }, tokenRequestTimeoutMs)
         const request = Promise.resolve().then(async () => {
-          response = await fetchImpl(`${OAUTH_ISSUER}/oauth/token`, {
+          response = await fetchImpl(`${issuer}/oauth/token`, {
             method: "POST",
+            redirect: "manual",
             headers: { "content-type": "application/x-www-form-urlencoded" },
             body: new URLSearchParams(params),
             signal: controller.signal,
           })
-          const value = await response.json().then(
-            (value) => value as Record<string, unknown>,
-            (error) => {
-              if (controller.signal.aborted) throw error
-              return {} as Record<string, unknown>
-            },
-          )
+          const value = await response.json().then(responseObject, (error) => {
+            if (controller.signal.aborted) throw error
+            return {} as Record<string, unknown>
+          })
           return { response, value }
         })
 
@@ -249,12 +272,7 @@ export const layerWith = (options: LayerOptions = {}) =>
       })
 
       const body = Effect.fn("BharatCodeAccount.responseBody")(function* (response: Response) {
-        return yield* Effect.promise(() =>
-          response.json().then(
-            (value) => value as Record<string, unknown>,
-            () => ({}) as Record<string, unknown>,
-          ),
-        )
+        return yield* Effect.promise(() => response.json().then(responseObject, () => ({}) as Record<string, unknown>))
       })
 
       const httpFailure = (operation: string, response: Response, value: FailureBody) => {
@@ -278,8 +296,9 @@ export const layerWith = (options: LayerOptions = {}) =>
       }
 
       const postToken = Effect.fn("BharatCodeAccount.postToken")(function* (params: Record<string, string>) {
+        const endpoint = yield* issuer
         const { response, value } = yield* Effect.tryPromise({
-          try: () => fetchToken(params),
+          try: () => fetchToken(endpoint, params),
           catch: () =>
             new TransportError({
               operation: "token request",
@@ -294,6 +313,16 @@ export const layerWith = (options: LayerOptions = {}) =>
             status: 502,
             retriable: false,
             message: "BharatCode token response was invalid.",
+          })
+        }
+        const declaredIssuer = tokenIssuer(access)
+        if (declaredIssuer && declaredIssuer !== endpoint) {
+          return yield* new ServiceError({
+            operation: "token request",
+            status: 502,
+            errorCode: "issuer_mismatch",
+            retriable: false,
+            message: "BharatCode returned a session from an unexpected auth issuer. Sign in again.",
           })
         }
         return {
@@ -315,7 +344,8 @@ export const layerWith = (options: LayerOptions = {}) =>
           protectAccountSwitch?: boolean
         } = {},
       ) {
-        const outcome = yield* auth.transaction<AccessOutcome, TransportError | ServiceError, never>(
+        const endpoint = yield* issuer
+        const outcome = yield* auth.transaction<AccessOutcome, TransportError | ServiceError | OAuthError, never>(
           PROVIDER_ID,
           (current) =>
             Effect.gen(function* () {
@@ -324,6 +354,19 @@ export const layerWith = (options: LayerOptions = {}) =>
                 return {
                   action: "keep",
                   result: { type: "failure", error },
+                } satisfies Auth.TransactionResult<AccessOutcome>
+              }
+              const declaredIssuer = tokenIssuer(current.access)
+              if (declaredIssuer && declaredIssuer !== endpoint) {
+                return {
+                  action: "keep",
+                  result: {
+                    type: "failure",
+                    error: new SignInRequired({
+                      errorCode: "issuer_mismatch",
+                      message: "Your BharatCode session belongs to a different auth issuer. Sign in again.",
+                    }),
+                  },
                 } satisfies Auth.TransactionResult<AccessOutcome>
               }
               if (
@@ -442,8 +485,10 @@ export const layerWith = (options: LayerOptions = {}) =>
       )
 
       const fetchIdentityWith = Effect.fn("BharatCodeAccount.fetchIdentityWith")(function* (token: string) {
-        const response = yield* execute("identity request", `${OAUTH_ISSUER}/oauth/userinfo`, {
+        const endpoint = yield* issuer
+        const response = yield* execute("identity request", `${endpoint}/oauth/userinfo`, {
           headers: { authorization: `Bearer ${token}` },
+          redirect: "manual",
         })
         const value = yield* body(response)
         if (!response.ok) {
@@ -509,6 +554,7 @@ export const layerWith = (options: LayerOptions = {}) =>
         redirectUri: string
         selectAccount?: boolean
       }) {
+        const endpoint = yield* issuer
         if (!APPROVED_REDIRECTS.has(input.redirectUri)) {
           return yield* new OAuthError({
             reason: "redirect",
@@ -520,7 +566,7 @@ export const layerWith = (options: LayerOptions = {}) =>
         const expiresAt = now() + AUTHORIZATION_TTL_MS
         pending.set(state, { verifier, redirectUri: input.redirectUri, expiresAt })
 
-        const url = new URL(`${OAUTH_ISSUER}/oauth/authorize`)
+        const url = new URL(`${endpoint}/oauth/authorize`)
         url.searchParams.set("client_id", OAUTH_CLIENT_ID)
         url.searchParams.set("response_type", "code")
         url.searchParams.set("redirect_uri", input.redirectUri)

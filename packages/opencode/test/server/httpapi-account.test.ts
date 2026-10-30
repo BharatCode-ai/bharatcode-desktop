@@ -124,7 +124,7 @@ describe("Desktop-safe BharatCode account HTTP contract", () => {
     expect(response.status).toBe(200)
     const body = (await response.json()) as { url: string; expiresAt: number }
     const url = new URL(body.url)
-    expect(url.origin).toBe("https://evgvlcaxfpwupaiwzqqm.supabase.co")
+    expect(url.origin).toBe("https://auth.bharatcode.ai")
     expect(url.searchParams.get("redirect_uri")).toBe(DESKTOP_REDIRECT_URI)
     expect(url.searchParams.get("prompt")).toBe("select_account")
     expect(url.searchParams.get("code_challenge_method")).toBe("S256")

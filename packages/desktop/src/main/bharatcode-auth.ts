@@ -1,9 +1,8 @@
 import { createSidecarAuthorizationPolicy } from "./sidecar-auth"
 import { nativeT } from "./native-translations"
+import { BharatCodeAuth } from "@opencode-ai/core/bharatcode-auth"
 
 const DESKTOP_REDIRECT_URI = "bharatcode://auth/callback"
-const AUTHORIZATION_ORIGIN = "https://evgvlcaxfpwupaiwzqqm.supabase.co"
-const AUTHORIZATION_PATH = "/auth/v1/oauth/authorize"
 
 export type BharatCodeSidecarConnection = {
   url: string
@@ -24,6 +23,7 @@ export type BharatCodeAccountStatus = {
 }
 
 type ClientOptions = {
+  env?: BharatCodeAuth.Environment
   getConnection: () => Promise<BharatCodeSidecarConnection>
   fetchImpl?: typeof fetch
   now?: () => Date
@@ -76,6 +76,7 @@ export function createBharatCodeAccountClient(options: ClientOptions) {
   const refreshAccountStatus = getAccountStatus
 
   const beginSignIn = async (input: { selectAccount?: boolean } = {}) => {
+    const endpoint = new URL(`${BharatCodeAuth.issuer(options.env)}/oauth/authorize`)
     const value = await request("/account/authorize", {
       method: "POST",
       body: JSON.stringify({ redirectUri: DESKTOP_REDIRECT_URI, selectAccount: input.selectAccount === true }),
@@ -84,7 +85,13 @@ export function createBharatCodeAccountClient(options: ClientOptions) {
       throw new Error("The BharatCode sidecar returned an invalid authorization response.")
     }
     const url = new URL(value.url)
-    if (url.origin !== AUTHORIZATION_ORIGIN || url.pathname !== AUTHORIZATION_PATH || url.protocol !== "https:") {
+    if (
+      url.origin !== endpoint.origin ||
+      url.pathname !== endpoint.pathname ||
+      url.username ||
+      url.password ||
+      url.hash
+    ) {
       throw new Error("The BharatCode sidecar returned an unsafe authorization URL.")
     }
     return { url: url.toString(), expiresAt: value.expiresAt }
