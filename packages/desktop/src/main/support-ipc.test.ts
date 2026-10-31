@@ -30,12 +30,13 @@ test("registered production export IPC rejects foreign/subframe calls and uses t
             builder.onResolve({ filter: /.*/ }, (args) => {
               if (
                 args.path === "fixture-state" ||
-                (args.importer.endsWith("/ipc.ts") &&
+                args.path === "@zip.js/zip.js" ||
+                (args.importer.replace(/\\/g, "/").endsWith("/ipc.ts") &&
                   !args.path.startsWith("node:") &&
                   args.path !== "./support-export")
               )
                 return { path: "boundaries", namespace: "fixture" }
-                return undefined
+              return undefined
             })
             builder.onLoad({ filter: /.*/, namespace: "fixture" }, () => ({
               loader: "js",
@@ -54,6 +55,7 @@ test("registered production export IPC rejects foreign/subframe calls and uses t
           export const getStore = () => {}, removeStoreFileIfEmpty = () => {};
           export const getPinchZoomEnabled = () => {}, getWindowID = () => {}, openExternalURL = () => {}, openLocalFileURL = () => {};
           export const setPinchZoomEnabled = () => {}, setTitlebar = () => {}, updateTitlebar = () => {}, getChatImportStatus = () => {};
+          export const ZipWriter = class {}, Uint8ArrayWriter = class {}, TextReader = class {};
         `,
             }))
           },

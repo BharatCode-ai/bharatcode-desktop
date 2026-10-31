@@ -60,7 +60,7 @@ test("real Node collector reads only metadata and handles missing, legacy, malfo
       import assert from 'node:assert/strict';
       import { DatabaseSync } from 'node:sqlite';
       import { mkdir, writeFile, readFile, readdir } from 'node:fs/promises';
-      import { join } from 'node:path';
+      import path, { join } from 'node:path';
       const { collectSupportMetadata, resolveSupportPaths } = await import(${JSON.stringify(pathToFileURL(join(root, "metadata.mjs")).href)});
       const home = ${JSON.stringify(root)};
       const input = { channel: 'beta', platform: 'linux', home, temp: home, env: { XDG_DATA_HOME: join(home, 'data'), XDG_CONFIG_HOME: join(home, 'config'), XDG_STATE_HOME: join(home, 'state') } };
@@ -136,7 +136,7 @@ test("real Node collector reads only metadata and handles missing, legacy, malfo
       await writeFile(paths.database, 'not sqlite sk-secret');
       assert.equal((await collectSupportMetadata(input)).database.availability, 'unavailable');
       assert.equal((await collectSupportMetadata({...input, env: {...input.env, OPENCODE_DB: ':memory:'}})).database.availability, 'memory');
-      assert.equal(resolveSupportPaths({...input, env: {...input.env, OPENCODE_DB: 'custom.db'}}).database, join(paths.data, 'custom.db'));
+      assert.equal(resolveSupportPaths({...input, env: {...input.env, OPENCODE_DB: 'custom.db'}}).database, (input.platform === 'win32' ? path.win32 : path.posix).join(paths.data, 'custom.db'));
       assert.equal(resolveSupportPaths({...input, env: {...input.env, OPENCODE_DB: join(home, 'absolute.db')}}).database, join(home, 'absolute.db'));
       console.log('metadata fixtures passed');
     `,

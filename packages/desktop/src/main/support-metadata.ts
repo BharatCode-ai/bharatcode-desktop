@@ -24,7 +24,7 @@ export function resolveSupportPaths(input: Input) {
       input.env.OPENCODE_DB === ":memory:"
         ? ":memory:"
         : input.env.OPENCODE_DB
-          ? api.isAbsolute(input.env.OPENCODE_DB)
+          ? api.isAbsolute(input.env.OPENCODE_DB) || path.win32.isAbsolute(input.env.OPENCODE_DB)
             ? input.env.OPENCODE_DB
             : api.join(paths.data, input.env.OPENCODE_DB)
           : paths.database,
