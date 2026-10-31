@@ -50,6 +50,7 @@ test("real initialized runtime exports active-WAL metadata without reading or ch
         `
       import assert from 'node:assert/strict';
       import {readFile,readdir} from 'node:fs/promises';
+      import {basename} from 'node:path';
       const {exportDebugLogs,supportRuntimeDatabase,captureSupportDatabase,Database,Effect,sql} = await import(${JSON.stringify(pathToFileURL(join(root, "live.mjs")).href)});
       const file = process.env.OPENCODE_DB;
       await Effect.runPromise(Effect.gen(function* () {
@@ -68,7 +69,7 @@ test("real initialized runtime exports active-WAL metadata without reading or ch
         const after = yield* Effect.promise(() => Promise.all(['','-wal','-shm'].map(suffix => readFile(file + suffix))));
         before.forEach((bytes,index) => assert.deepEqual(after[index],bytes));
         const added = (yield* Effect.promise(() => readdir(process.env.BC_SUPPORT_HOME))).filter(name => !directory.includes(name));
-        assert.deepEqual(added,[output.split('/').at(-1)]);
+        assert.deepEqual(added,[basename(output)]);
         console.log(JSON.stringify({output,captured}));
         owner.dispose(); assert.equal(supportRuntimeDatabase.read(),undefined);
       }).pipe(Effect.provide(Database.layerFromPath(file)),Effect.scoped));
