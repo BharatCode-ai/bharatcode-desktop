@@ -195,6 +195,13 @@ export const dict = {
   "ui.permission.allowAlways": "السماح دائمًا",
   "ui.permission.allowOnce": "السماح مرة واحدة",
 
+  "ui.message.outputLimit": "وصلت الاستجابة إلى حد الإخراج قبل اكتمالها. جرّب مهمة أصغر أو حد إخراج أعلى.",
+  "ui.message.outputLimit.reasoning":
+    "استهلك النموذج حد الإخراج في التفكير قبل الإجابة. جرّب مهمة أصغر أو أوقف ميزة التفكير للحصول على إجابة قصيرة.",
+  "ui.message.outputLimit.partial":
+    "وصلت الإجابة إلى حد الإخراج. تم الاحتفاظ بالإجابة الجزئية. اطلب منه المتابعة، أو جرّب مهمة أصغر.",
+  "ui.message.outputLimit.tool": "وصل استدعاء الأداة إلى حد الإخراج قبل اكتماله. راجع أي عمل مكتمل، ثم جرّب مهمة أصغر.",
+
   "ui.message.expand": "توسيع الرسالة",
   "ui.message.collapse": "طي الرسالة",
   "ui.message.copy": "نسخ",
