@@ -2,7 +2,8 @@ import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { afterEach, describe, expect } from "bun:test"
 import { NodeHttpServer, NodeServices } from "@effect/platform-node"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
-import { mkdir } from "node:fs/promises"
+import { mkdir, writeFile } from "node:fs/promises"
+import { pathToFileURL } from "node:url"
 import path from "node:path"
 import { Cause, Config, Effect, Exit, Layer } from "effect"
 import { HttpClient, HttpClientRequest, HttpClientResponse, HttpRouter, HttpServer } from "effect/unstable/http"
@@ -236,6 +237,102 @@ afterEach(async () => {
 })
 
 describe("session HttpApi", () => {
+  it.live("mobile admission recovery uses real Desktop sessions and never duplicates a stored prompt", () =>
+    Effect.gen(function* () {
+      const llm = yield* TestLLMServer
+      yield* llm.text("original response", { usage: { input: 1, output: 1 } })
+      yield* llm.text("recovered response", { usage: { input: 1, output: 1 } })
+      const directory = yield* tmpdirScoped({ git: true, config: testProviderConfig(llm.url) })
+      const server = yield* HttpServer.HttpServer
+      const origin = HttpServer.formatAddress(server.address)
+      // Load the exact mirrored connector modules without introducing a runtime
+      // dependency from opencode to the optional Desktop-only connector package.
+      const connectorPath = path.resolve(import.meta.dir, "../../../mobile-connector/src")
+      const { createDesktopAPI } = yield* Effect.promise(
+        () => import(pathToFileURL(path.join(connectorPath, "desktop-api.mjs")).href),
+      )
+      const { resetAdmissions } = yield* Effect.promise(
+        () => import(pathToFileURL(path.join(connectorPath, "admissions.mjs")).href),
+      )
+      const storePath = path.join(directory, "admissions.json")
+      let forwarded = 0
+      const upstream = async (route: string, method = "GET", body?: unknown, signal?: AbortSignal) => {
+        if (method === "POST" && new URL(route, origin).pathname.endsWith("/prompt_async")) forwarded++
+        const response = await fetch(origin + route, {
+          method,
+          signal,
+          headers: { "x-opencode-directory": directory, "content-type": "application/json" },
+          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        })
+        if (!response.ok) throw Object.assign(new Error(await response.text()), { status: response.status })
+        const text = await response.text()
+        return { data: text ? JSON.parse(text) : undefined, cursor: response.headers.get("x-next-cursor") ?? undefined }
+      }
+      const old = yield* createSession({ title: "before mobile recovery" }).pipe(provideInstanceEffect(directory))
+      type RecoveryAPI = {
+        handle(method: string, route: string, body?: unknown): Promise<{ data: { data?: { id?: string } | unknown[] } }>
+      }
+      const open = () => Effect.promise<RecoveryAPI>(() => createDesktopAPI({ request: upstream, storePath }))
+      let api = yield* open()
+      const prompt = { id: "msg_mobile_original", prompt: { text: "Answer once" } }
+      yield* Effect.promise(() =>
+        api.handle("POST", `/api/session/${old.id}/model`, { model: { id: "test-model", providerID: "test" } }),
+      )
+      yield* Effect.promise(() => api.handle("POST", `/api/session/${old.id}/prompt`, prompt))
+      const completed = (id: string, text: string) =>
+        pollWithTimeout(
+          Effect.promise(() => api.handle("GET", `/api/session/${id}/message`)).pipe(
+            Effect.map((result) => (JSON.stringify(result).includes(text) ? true : undefined)),
+          ),
+          "Desktop response not projected to Mobile",
+          "10 seconds",
+        )
+      yield* completed(old.id, "original response")
+      expect(yield* llm.calls).toBe(1)
+      expect(forwarded).toBe(1)
+      yield* Effect.promise(() => writeFile(storePath, '{"admissions":'))
+      const damaged = yield* open().pipe(Effect.exit)
+      expect(Exit.isFailure(damaged)).toBe(true)
+      yield* Effect.promise(() => resetAdmissions(storePath))
+      api = yield* open()
+      yield* Effect.promise(() => api.handle("POST", `/api/session/${old.id}/prompt`, prompt))
+      expect(yield* llm.calls).toBe(1)
+      expect(forwarded).toBe(1)
+      const unknown = yield* Effect.promise(() =>
+        api.handle("POST", `/api/session/${old.id}/prompt`, {
+          id: "msg_mobile_unknown",
+          prompt: { text: "Do not guess delivery" },
+        }),
+      ).pipe(Effect.exit)
+      expect(Exit.isFailure(unknown)).toBe(true)
+      if (Exit.isFailure(unknown)) expect(Cause.squash(unknown.cause)).toMatchObject({ status: 409 })
+      expect(forwarded).toBe(1)
+      const fresh = yield* Effect.promise(() => api.handle("POST", "/api/session", { location: { directory } }))
+      if (!fresh.data.data || Array.isArray(fresh.data.data) || typeof fresh.data.data.id !== "string")
+        throw new Error("Desktop did not return a fresh session identity")
+      const id = fresh.data.data.id
+      expect(id).toMatch(/^ses_[a-f0-9]{32}$/)
+      // Give the conversation an explicit title so automatic title generation
+      // cannot consume the model reply intended for the actual user prompt.
+      yield* Effect.promise(() =>
+        upstream(`/session/${id}?${new URLSearchParams({ directory })}`, "PATCH", { title: "after mobile recovery" }),
+      )
+      yield* Effect.promise(() =>
+        api.handle("POST", `/api/session/${id}/model`, { model: { id: "test-model", providerID: "test" } }),
+      )
+      const newPrompt = { id: "msg_mobile_recovered", prompt: { text: "Answer after recovery" } }
+      yield* Effect.promise(() => api.handle("POST", `/api/session/${id}/prompt`, newPrompt))
+      yield* completed(id, "recovered response")
+      expect(yield* llm.calls).toBe(2)
+      expect(forwarded).toBe(2)
+      yield* Effect.promise(() => resetAdmissions(storePath))
+      api = yield* open()
+      yield* Effect.promise(() => api.handle("POST", `/api/session/${id}/prompt`, newPrompt))
+      expect(yield* llm.calls).toBe(2)
+      expect(forwarded).toBe(2)
+    }).pipe(Effect.provide(TestLLMServer.layer), Effect.provide(AppNodeBuilder.build(CrossSpawnSpawner.node))),
+  )
+
   it.instance(
     "persists goal pause and clear and pauses active goals on abort",
     () =>

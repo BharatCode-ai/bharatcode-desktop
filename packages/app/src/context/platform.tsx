@@ -50,6 +50,7 @@ export type AccountPlatform = {
 }
 
 type PlatformBase = AccountPlatform & {
+  mobileAccess?(input: import("../mobile-types").MobileAction): Promise<import("../mobile-types").MobileState>
   getChatImportStatus?(): Promise<{ state: "pending" | "complete" | "failed"; imported: number; skipped: number }>
   /** Account operations for a specific owned runtime; never a remote URL fallback. */
   accountForServer?(key: ServerConnection.Key): AccountPlatform

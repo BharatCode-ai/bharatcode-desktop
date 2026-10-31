@@ -13,6 +13,8 @@ import { SettingsServers } from "./settings-servers"
 import { SettingsAccount } from "./settings-account"
 import { SettingsMarketplace } from "./settings-marketplace"
 
+import { SettingsMobile } from "./settings-mobile"
+
 export const DialogSettings: Component<{ defaultValue?: string }> = (props) => {
   const language = useLanguage()
   const platform = usePlatform()
@@ -47,6 +49,7 @@ export const DialogSettings: Component<{ defaultValue?: string }> = (props) => {
                         {language.t("settings.account.title")}
                       </Tabs.Trigger>
                     </Show>
+                    <Show when={platform.mobileAccess}><Tabs.Trigger value="mobile"><Icon name="server" />{language.t("mobile.title")}</Tabs.Trigger></Show>
                     <Tabs.Trigger value="general">
                       <Icon name="sliders" />
                       {language.t("settings.tab.general")}
@@ -89,6 +92,7 @@ export const DialogSettings: Component<{ defaultValue?: string }> = (props) => {
             </div>
           </div>
         </Tabs.List>
+        <Show when={platform.mobileAccess}><Tabs.Content value="mobile" class="no-scrollbar"><SettingsMobile /></Tabs.Content></Show>
         <Tabs.Content value="general" class="no-scrollbar">
           <SettingsGeneral />
         </Tabs.Content>

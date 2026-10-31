@@ -24,7 +24,10 @@ export const BHARATCODE_NATIVE_ENGLISH = {
   "desktop.account.error.signInRequired": "Sign in to BharatCode again to continue.",
 } as const
 
+import { MOBILE_ENGLISH } from "./mobile"
+
 export const BHARATCODE_ENGLISH = {
+  ...MOBILE_ENGLISH,
   ...BHARATCODE_NATIVE_ENGLISH,
   "settings.support.title": "Support bundle",
   "settings.support.export": "Export support bundle",

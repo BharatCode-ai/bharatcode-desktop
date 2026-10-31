@@ -72,12 +72,15 @@ import { guardConsolePipe } from "./stdio"
 guardConsolePipe(process.stdout)
 guardConsolePipe(process.stderr)
 
+import { createMobileAccess } from "@bharatcode/mobile-connector"
+
 const TEST_ONBOARDING = process.env.BHARATCODE_TEST_ONBOARDING === "1" || process.env.OPENCODE_TEST_ONBOARDING === "1"
 const SIDECAR_VERSION = process.env.OPENCODE_SIDECAR_V2 === "1" ? "v2" : "v1"
 const jsCallStackFeature = "DocumentPolicyIncludeJSCallStacksInCrashReports"
 
 let logger: ReturnType<typeof initLogging>
 let server: SidecarListener | null = null
+let mobileConnection: { url: string; username?: string | null; password: string } | undefined
 
 const pendingDeepLinks: string[] = []
 
@@ -173,7 +176,10 @@ const main = Effect.gen(function* () {
       },
     },
   )
+  const mobileAccess = yield* Effect.promise(() => createMobileAccess({ userDataPath: app.getPath("userData"), getConnection: () => mobileConnection }))
+  app.once("will-quit", () => void mobileAccess.close())
   const stopSidecars = async () => {
+    await mobileAccess.close()
     await killSidecar()
     await wslServers.stopAll()
   }
@@ -314,6 +320,7 @@ const main = Effect.gen(function* () {
   setSupportAuthReader(() => account.getSupportStatus())
   registerIpcHandlers({
     account,
+    mobileAccess,
     killSidecar: () => killSidecar(),
     relaunch,
     awaitInitialization: Effect.fnUntraced(
@@ -367,6 +374,7 @@ const main = Effect.gen(function* () {
     if (SIDECAR_VERSION === "v2") {
       logger.log("spawning v2 sidecar")
       const sidecar = yield* Effect.promise(() => startBackgroundCli(logger, shellEnv?.XDG_STATE_HOME))
+      mobileConnection = sidecar
       setSidecarAuthorization(sidecar)
       yield* initializeConnection(
         serverReady,
@@ -426,6 +434,7 @@ const main = Effect.gen(function* () {
       username: "opencode",
       password,
     }
+    mobileConnection = connection
     setSidecarAuthorization(connection)
     yield* initializeConnection(
       serverReady,
@@ -449,6 +458,7 @@ const main = Effect.gen(function* () {
     restoreMainWindows()
   })
 
+  void Effect.runPromise(Deferred.await(serverReady)).then(() => mobileAccess.restore()).catch(() => {})
   const windows = restoreMainWindows()
   if (windows.length) createMenu(menuDeps)
   // Render the upstream startup/error surface while the barrier is pending.
