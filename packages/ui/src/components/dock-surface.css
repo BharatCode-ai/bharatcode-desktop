@@ -35,3 +35,29 @@
   border-top-left-radius: 0;
   border-top-right-radius: 0;
 }
+
+/* Opt-in entry animation for trays that expand in normal flow, so opening one grows into place
+   instead of snapping the surrounding layout. `height: auto` is animatable here because
+   `interpolate-size: allow-keywords` is set globally in styles/utilities.css. */
+[data-dock-surface="tray"][data-dock-enter] {
+  animation: dockTrayEnter 160ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes dockTrayEnter {
+  from {
+    height: 0;
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+  to {
+    height: auto;
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-dock-surface="tray"][data-dock-enter] {
+    animation: none;
+  }
+}

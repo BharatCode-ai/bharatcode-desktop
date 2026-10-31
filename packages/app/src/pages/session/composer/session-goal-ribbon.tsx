@@ -40,7 +40,7 @@ export function SessionGoalRibbon(props: {
   }
 
   return (
-    <section class="mb-2" aria-label={language.t("session.goal.title")} aria-busy={controller.state.pending}>
+    <section class="mb-2 min-h-6" aria-label={language.t("session.goal.title")} aria-busy={controller.state.pending}>
       <Show
         when={goal() || controller.state.editing}
         fallback={
@@ -49,7 +49,7 @@ export function SessionGoalRibbon(props: {
           </Button>
         }
       >
-        <DockTray class="px-3 py-2">
+        <DockTray class="px-3 py-2" data-dock-enter>
           <div class="flex flex-wrap items-center gap-2 text-12-medium text-text-weak">
             <span class="text-text-strong">{language.t("session.goal.title")}</span>
             <Show when={goal()}>
@@ -126,8 +126,8 @@ export function SessionGoalRibbon(props: {
               disabled={disabled()}
               value={controller.state.draft}
               ref={(el) =>
-                queueMicrotask(() => {
-                  if (el.isConnected) el.focus()
+                requestAnimationFrame(() => {
+                  if (el.isConnected) el.focus({ preventScroll: true })
                 })
               }
               onInput={(event) => controller.setDraft(event.currentTarget.value)}
