@@ -11,12 +11,13 @@ export function usable(input: { cfg: ConfigV1.Info; model: Provider.Model; outpu
   const context = input.model.limit.context
   if (context === 0) return 0
 
+  // One margin, subtracted from whichever limit the model publishes. Reserving less than the
+  // output allowance would leave no room for the reply, and splitting the two cases previously
+  // made an input-capped model compact later than an identical model without an input cap.
   const reserved =
     input.cfg.compaction?.reserved ??
-    Math.min(COMPACTION_BUFFER, ProviderTransform.maxOutputTokens(input.model, input.outputTokenMax))
-  return input.model.limit.input
-    ? Math.max(0, input.model.limit.input - reserved)
-    : Math.max(0, context - ProviderTransform.maxOutputTokens(input.model, input.outputTokenMax))
+    Math.max(COMPACTION_BUFFER, ProviderTransform.maxOutputTokens(input.model, input.outputTokenMax))
+  return Math.max(0, (input.model.limit.input || context) - reserved)
 }
 
 export function isOverflow(input: {
