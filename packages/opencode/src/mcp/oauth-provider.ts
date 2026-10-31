@@ -53,16 +53,21 @@ export class McpOAuthProvider implements OAuthClientProvider {
   }
 
   async clientInformation(): Promise<OAuthClientInformation | undefined> {
+    const entry = await Effect.runPromise(this.auth.getForUrl(this.mcpName, this.serverUrl))
     if (this.config.clientId) {
       return {
         client_id: this.config.clientId,
         client_secret: this.config.clientSecret,
+        issuer:
+          entry?.clientInfo?.clientId === this.config.clientId &&
+          entry.clientInfo.clientSecret === this.config.clientSecret
+            ? entry.clientInfo.issuer
+            : undefined,
       }
     }
 
     // Check stored client info (from dynamic registration)
     // Use getForUrl to validate credentials are for the current server URL
-    const entry = await Effect.runPromise(this.auth.getForUrl(this.mcpName, this.serverUrl))
     if (entry?.clientInfo) {
       // Check if client secret has expired
       if (entry.clientInfo.clientSecretExpiresAt && entry.clientInfo.clientSecretExpiresAt < Date.now() / 1000) {
@@ -71,6 +76,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
       return {
         client_id: entry.clientInfo.clientId,
         client_secret: entry.clientInfo.clientSecret,
+        issuer: entry.clientInfo.issuer,
       }
     }
 
@@ -84,6 +90,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
         this.mcpName,
         {
           clientId: info.client_id,
+          issuer: info.issuer,
           clientSecret: info.client_secret,
           clientIdIssuedAt: info.client_id_issued_at,
           clientSecretExpiresAt: info.client_secret_expires_at,
@@ -100,6 +107,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
 
     return {
       access_token: entry.tokens.accessToken,
+      issuer: entry.tokens.issuer,
       token_type: "Bearer",
       refresh_token: entry.tokens.refreshToken,
       expires_in: entry.tokens.expiresAt
@@ -115,6 +123,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
         this.mcpName,
         {
           accessToken: tokens.access_token,
+          issuer: tokens.issuer,
           refreshToken: tokens.refresh_token,
           expiresAt: tokens.expires_in ? Date.now() / 1000 + tokens.expires_in : undefined,
           scope: tokens.scope,
@@ -186,10 +195,7 @@ export class McpOAuthPendingProvider extends McpOAuthProvider {
 
   override async clientInformation(): Promise<OAuthClientInformation | undefined> {
     if (!this.config.clientId) return this.pendingClientInfo
-    return {
-      client_id: this.config.clientId,
-      client_secret: this.config.clientSecret,
-    }
+    return this.pendingClientInfo ?? super.clientInformation()
   }
 
   override async saveClientInformation(info: OAuthClientInformationFull): Promise<void> {
@@ -217,19 +223,20 @@ export class McpOAuthPendingProvider extends McpOAuthProvider {
         {
           tokens: {
             accessToken: this.pendingTokens.access_token,
+            issuer: this.pendingTokens.issuer,
             refreshToken: this.pendingTokens.refresh_token,
             expiresAt: this.pendingTokens.expires_in ? Date.now() / 1000 + this.pendingTokens.expires_in : undefined,
             scope: this.pendingTokens.scope,
           },
-          clientInfo:
-            this.pendingClientInfo && !this.config.clientId
-              ? {
-                  clientId: this.pendingClientInfo.client_id,
-                  clientSecret: this.pendingClientInfo.client_secret,
-                  clientIdIssuedAt: this.pendingClientInfo.client_id_issued_at,
-                  clientSecretExpiresAt: this.pendingClientInfo.client_secret_expires_at,
-                }
-              : undefined,
+          clientInfo: this.pendingClientInfo
+            ? {
+                clientId: this.pendingClientInfo.client_id,
+                issuer: this.pendingClientInfo.issuer,
+                clientSecret: this.pendingClientInfo.client_secret,
+                clientIdIssuedAt: this.pendingClientInfo.client_id_issued_at,
+                clientSecretExpiresAt: this.pendingClientInfo.client_secret_expires_at,
+              }
+            : undefined,
         },
         this.serverUrl,
       ),
