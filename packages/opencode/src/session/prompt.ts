@@ -58,6 +58,7 @@ import { SessionTools } from "./tools"
 import { GoalAssessment } from "./goal-assessment"
 import { GoalState } from "./goal-state"
 import { LLMEvent } from "@opencode-ai/llm"
+import { PerformanceTrace } from "@opencode-ai/core/performance-trace"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -1227,6 +1228,7 @@ const layer = Layer.effect(
     const prompt: (input: PromptInput) => Effect.Effect<SessionV1.WithParts, Image.Error> = Effect.fn(
       "SessionPrompt.prompt",
     )(function* (input: PromptInput) {
+      PerformanceTrace.start(input.sessionID)
       const session = yield* sessions.get(input.sessionID).pipe(Effect.orDie)
       yield* revert.cleanup(session)
       const message = yield* createUserMessage(input)
@@ -1466,6 +1468,7 @@ const layer = Layer.effect(
             ]
             const format = lastUser.format ?? { type: "text" as const }
             if (format.type === "json_schema") system.push(STRUCTURED_OUTPUT_SYSTEM_PROMPT)
+            PerformanceTrace.mark(sessionID, "request_construction")
             const result = yield* handle.process({
               user: lastUser,
               agent,
