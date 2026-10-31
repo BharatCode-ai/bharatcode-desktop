@@ -1,3 +1,4 @@
+import { captureSupportDatabase, type SupportDatabaseMetadata } from "../../../support-database"
 import { Config as EffectConfig, Context, Effect, Layer } from "effect"
 import { HttpApiBuilder, OpenApi } from "effect/unstable/httpapi"
 import { HttpClient, HttpMiddleware, HttpRouter, HttpServer, HttpServerResponse } from "effect/unstable/http"
@@ -283,10 +284,19 @@ const app = LayerNode.group([
 
 export function createRoutes(
   corsOptions?: CorsOptions,
+  onSupportDatabase?: (metadata: SupportDatabaseMetadata) => void,
 ): Layer.Layer<never, EffectConfig.ConfigError, RouteRequirements> {
   const locationServiceMapV2 = buildLocationServiceMap(BharatCodeRuntime.replacements())
 
   return Layer.mergeAll(
+    Layer.effectDiscard(
+      onSupportDatabase
+        ? captureSupportDatabase().pipe(
+            Effect.flatMap((metadata) => Effect.sync(() => onSupportDatabase(metadata))),
+            Effect.catchCause(() => Effect.void),
+          )
+        : Effect.void,
+    ),
     rootApiRoutes,
     eventApiRoutes,
     ptyConnectApiRoutes,

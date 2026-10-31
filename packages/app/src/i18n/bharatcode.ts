@@ -1,6 +1,7 @@
 // Product-specific copy uses English fallback until translations are reviewed.
 // Kept separate from upstream's positional native-menu translation arrays.
 export const BHARATCODE_NATIVE_ENGLISH = {
+  "desktop.support.error.export": "Could not save the support bundle. Please try again.",
   "desktop.chatImport.interrupted": "Interrupted before chat import",
   "desktop.chatImport.previousError": "Previous request failed",
   "desktop.dictation.microphone": "BharatCode uses your microphone when you choose to dictate a prompt.",
@@ -25,6 +26,12 @@ export const BHARATCODE_NATIVE_ENGLISH = {
 
 export const BHARATCODE_ENGLISH = {
   ...BHARATCODE_NATIVE_ENGLISH,
+  "settings.support.title": "Support bundle",
+  "settings.support.export": "Export support bundle",
+  "settings.support.description":
+    "Save diagnostic metadata to Downloads. Credentials, chat content, and raw logs are excluded. Nothing is uploaded.",
+  "settings.support.saving": "Saving support bundle…",
+  "settings.support.saved": "Support bundle saved to Downloads.",
   "chatImport.pending": "Restoring previous chats in the background…",
   "chatImport.complete": "Restored {{count}} previous chats. Refresh this view to see them.",
   "chatImport.failed":

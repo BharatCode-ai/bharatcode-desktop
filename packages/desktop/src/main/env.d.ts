@@ -10,7 +10,11 @@ interface ImportMeta {
 declare module "virtual:opencode-server" {
   export const Database: typeof import("../../../opencode/dist/types/src/node").Database
   export namespace Server {
-    export const listen: typeof import("../../../opencode/dist/types/src/node").Server.listen
+    export const listen: (
+      options: Parameters<typeof import("../../../opencode/dist/types/src/node").Server.listen>[0] & {
+        onSupportDatabase?: (metadata: unknown) => void
+      },
+    ) => ReturnType<typeof import("../../../opencode/dist/types/src/node").Server.listen>
     export type Listener = import("../../../opencode/dist/types/src/node").Server.Listener
   }
   export namespace Config {

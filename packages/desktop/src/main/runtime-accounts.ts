@@ -1,9 +1,10 @@
 import { createAccountSession } from "./account-session"
 import type { BharatCodeAccountStatus } from "../preload/types"
 import { nativeT } from "./native-translations"
+import { createSupportBundle } from "./support-bundle"
 
 type Client = Parameters<typeof createAccountSession>[0]["client"]
-type Entry = { session: ReturnType<typeof createAccountSession>; latest: BharatCodeAccountStatus }
+type Entry = { checked: boolean; session: ReturnType<typeof createAccountSession>; latest: BharatCodeAccountStatus }
 
 // Each entry captures one runtime connection. Replacing a runtime disposes its
 // pending OAuth transaction; it never transfers that transaction or credential
@@ -40,6 +41,10 @@ export function createRuntimeAccounts(options: {
     return current.entry.latest
   }
   return {
+    getSupportStatus() {
+      const latest = entries.get("sidecar")?.latest
+      return createSupportBundle({ auth: entries.get("sidecar")?.checked ? latest : undefined }).auth
+    },
     bind(id: string, client?: Client) {
       if (id !== "sidecar" && !id.startsWith("wsl:")) throw unavailable()
       entries.get(id)?.session.dispose()
@@ -52,12 +57,16 @@ export function createRuntimeAccounts(options: {
       if (!client) return
       const entry: Entry = {
         latest,
+        checked: false,
         session: createAccountSession({
           client,
           openBrowser: options.openBrowser,
           powerMonitor: options.powerMonitor,
           changed: (status) => {
-            if (entries.get(id) === entry) entry.latest = notify(id, status)
+            if (entries.get(id) === entry) {
+              entry.checked = true
+              entry.latest = notify(id, status)
+            }
           },
         }),
       }

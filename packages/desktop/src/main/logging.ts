@@ -1,15 +1,19 @@
+import { supportRuntimeDatabase } from "./support-runtime-database"
+import { supportErrors } from "./support-errors"
 import { MainLogger } from "electron-log"
 import log from "electron-log/main.js"
 import { app, crashReporter, netLog, shell } from "electron"
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs"
-import { ZipWriter, BlobWriter, BlobReader } from "@zip.js/zip.js"
+import { mkdirSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs"
 import { dirname, join } from "node:path"
-import { homedir } from "node:os"
+import { homedir, tmpdir, release } from "node:os"
+import { CHANNEL } from "./constants"
+import { createSupportExporter } from "./support-export"
+import { collectSupportMetadata } from "./support-metadata"
+import { createSupportBundle, type SupportAuthSummary } from "./support-bundle"
+import { nativeT } from "./native-translations"
 
 const MAX_LOG_AGE_DAYS = 7
 const TAIL_LINES = 1000
-const EXPORT_WINDOW = 24 * 60 * 60 * 1000
-const MAX_EXPORT_FILE_SIZE = 50 * 1024 * 1024
 const NET_LOG_SIZE = 20 * 1024 * 1024
 
 let root = ""
@@ -48,29 +52,39 @@ export async function startNetLog() {
   write("network", "net log started", { path: netLogPath })
 }
 
-export async function exportDebugLogs() {
-  const restartNetLog = netLog.currentlyLogging
-  if (restartNetLog) {
-    await netLog.stopLogging().catch((error) => write("network", "failed to stop net log", { error }))
-  }
-
-  const output = join(app.getPath("downloads"), `opencode-debug-${stamp()}.zip`)
-  try {
-    write("main", "exporting debug logs", { output })
-    await writeZip(output, [
-      { name: "manifest.json", data: Buffer.from(JSON.stringify(manifest(), null, 2)) },
-      ...collect(root, "desktop"),
-      ...serverLogRoots().flatMap((dir, i) => collect(dir, `server-${i + 1}`)),
-      ...collect(app.getPath("crashDumps"), "crashpad"),
-    ])
-    shell.showItemInFolder(output)
-    return output
-  } finally {
-    if (restartNetLog) {
-      await startNetLog().catch((error) => write("network", "failed to restart net log", { error }))
-    }
-  }
+// Recovery actions can run before account/runtime initialization.
+let supportAuth = () => createSupportBundle({}).auth
+export function setSupportAuthReader(read: () => SupportAuthSummary) {
+  supportAuth = read
 }
+
+export const exportDebugLogs = createSupportExporter({
+  directory: () => app.getPath("downloads"),
+  input: async () => {
+    const metadata = await collectSupportMetadata(
+      {
+        channel: CHANNEL,
+        platform: process.platform,
+        home: homedir(),
+        temp: tmpdir(),
+        env: process.env,
+      },
+      supportRuntimeDatabase.read(),
+    ).catch(() => ({}))
+    return {
+      ...metadata,
+      version: app.getVersion(),
+      platform: process.platform,
+      release: release(),
+      arch: process.arch,
+      channel: CHANNEL,
+      auth: supportAuth(),
+      errors: supportErrors.summary(),
+    }
+  },
+  reveal: (filename) => shell.showItemInFolder(filename),
+  failure: () => new Error(nativeT("desktop.support.error.export")),
+})
 
 export function write(
   name: string,
@@ -78,6 +92,10 @@ export function write(
   extra?: Record<string, unknown>,
   level: "info" | "warn" | "error" = "info",
 ) {
+  if (level === "error") {
+    if (name === "renderer" || name === "window") supportErrors.record("renderer")
+    if (name === "utility") supportErrors.record("sidecar")
+  }
   if (!run) return
   const scoped = log.scope(safeLogName(name))
   if (extra !== undefined) {
@@ -128,64 +146,6 @@ function cleanup() {
       continue
     }
   }
-}
-
-function manifest() {
-  return {
-    generated: new Date().toISOString(),
-    version: app.getVersion(),
-    name: app.getName(),
-    packaged: app.isPackaged,
-    platform: process.platform,
-    arch: process.arch,
-    versions: process.versions,
-    uptime: process.uptime(),
-    userData: app.getPath("userData"),
-    logs: root,
-    currentRun: run,
-    crashDumps: app.getPath("crashDumps"),
-    serverLogs: serverLogRoots(),
-    netLog: netLogPath,
-  }
-}
-
-function serverLogRoots() {
-  const xdgData = process.env.XDG_DATA_HOME || join(homedir(), ".local", "share")
-  return [...new Set([join(xdgData, "opencode", "log"), join(app.getPath("userData"), "opencode", "log")])]
-}
-
-type Entry = { name: string; path?: string; data?: Buffer }
-
-function collect(dir: string, prefix: string): Entry[] {
-  if (!existsSync(dir)) return []
-  const cutoff = Date.now() - EXPORT_WINDOW
-  const result: Entry[] = []
-  const walk = (current: string) => {
-    for (const entry of readdirSync(current)) {
-      const file = join(current, entry)
-      const info = statSync(file)
-      if (info.isDirectory()) {
-        walk(file)
-        continue
-      }
-      if (info.mtimeMs < cutoff) continue
-      if (info.size > MAX_EXPORT_FILE_SIZE) continue
-      if (file.endsWith(".heapsnapshot")) continue
-      result.push({ name: join(prefix, file.slice(dir.length + 1)).replace(/\\/g, "/"), path: file })
-    }
-  }
-  walk(dir)
-  return result
-}
-
-async function writeZip(output: string, entries: Entry[]) {
-  const writer = new ZipWriter(new BlobWriter("application/zip"))
-  for (const entry of entries) {
-    const data = entry.data ?? readFileSync(entry.path!)
-    await writer.add(entry.name, new BlobReader(new Blob([new Uint8Array(data)])))
-  }
-  const zip = await writer.close()
-  writeFileSync(output, Buffer.from(await zip.arrayBuffer()))
 }
 
 function initConsoleTransport() {

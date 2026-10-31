@@ -1,3 +1,4 @@
+import { SettingsSupport } from "../settings-support"
 import { Component, Show, createMemo, createResource } from "solid-js"
 import { createMediaQuery } from "@solid-primitives/media"
 import { ButtonV2 } from "@opencode-ai/ui/v2/button-v2"
@@ -561,6 +562,8 @@ export const SettingsGeneralV2: Component<{
         <Show when={desktop()}>
           <UpdatesSection />
         </Show>
+
+        <SettingsSupport v2 />
 
         <DisplaySection />
 

@@ -1,7 +1,9 @@
+import { supportRuntimeDatabase } from "./support-runtime-database"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { app, utilityProcess } from "electron"
 import type { Details } from "electron"
+import { supportErrors } from "./support-errors"
 import { getLogger } from "./logging"
 import { getUserShell, loadShellEnv } from "./shell-env"
 import { getStore } from "./store"
@@ -11,7 +13,7 @@ import { setChatImportStatus } from "./chat-import-status"
 export type HealthCheck = { wait: Promise<void> }
 
 type SidecarMessage =
-  | { type: "ready" }
+  | { type: "ready"; databaseMetadata?: unknown }
   | { type: "stopped" }
   | { type: "error"; error: { message: string; stack?: string } }
 
@@ -69,6 +71,7 @@ export async function spawnLocalServer(
     serviceName: SIDECAR_SERVICE_NAME,
     stdio: "pipe",
   })
+  const supportOwner = supportRuntimeDatabase.attach()
   let exited = false
   let importer: ReturnType<typeof utilityProcess.fork> | undefined
   const exit = defer<number>()
@@ -81,6 +84,7 @@ export async function spawnLocalServer(
   app.on("child-process-gone", onProcessGone)
   child.once("exit", (code) => {
     exited = true
+    supportOwner.dispose()
     importer?.kill()
     app.off("child-process-gone", onProcessGone)
     options.onExit?.(code)
@@ -99,6 +103,7 @@ export async function spawnLocalServer(
       if (done) return
       done = true
       cleanup()
+      supportErrors.record("sidecar")
       reject(error)
     }
 
@@ -112,6 +117,7 @@ export async function spawnLocalServer(
     const onMessage = (message: SidecarMessage) => {
       if (message.type === "ready") {
         if (done) return
+        supportOwner.publish(message.databaseMetadata)
         done = true
         cleanup()
         resolve()
@@ -141,6 +147,7 @@ export async function spawnLocalServer(
       userDataPath: options.userDataPath,
     })
   }).catch((error) => {
+    supportOwner.dispose()
     if (!exited) child.kill()
     throw error
   })
@@ -183,6 +190,7 @@ export async function spawnLocalServer(
         if (settled) return
         settled = true
         clearTimeout(timeout)
+        supportErrors.record("database")
         setChatImportStatus({ state: "failed", imported: 0, skipped: 0 })
         getLogger()?.warn("Previous chat import was not confirmed")
       }
@@ -206,6 +214,7 @@ export async function spawnLocalServer(
       importer.once("error", fail)
       importer.once("exit", fail)
     } catch {
+      supportErrors.record("database")
       setChatImportStatus({ state: "failed", imported: 0, skipped: 0 })
     }
   })()
