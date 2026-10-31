@@ -23,14 +23,20 @@ export function createAccountSession(options: {
   openBrowser: (url: string) => Promise<unknown>
   changed: (status: BharatCodeAccountStatus) => void
   schedule?: (fn: () => void, milliseconds: number) => () => void
+  powerMonitor?: {
+    on: (event: any, listener: () => void) => unknown
+    removeListener?: (event: any, listener: () => void) => unknown
+  }
 }) {
   let revision = 0
   let generation = 0
+  let accountGeneration = 0
   let reads = 0
   let disposed = false
   let removing = 0
   let pending: Attempt | undefined
   let tail = Promise.resolve()
+  let inFlightRefresh: { promise: Promise<BharatCodeAccountStatus>; generation: number } | undefined
   let latest: BharatCodeAccountStatus = {
     state: "signed_out",
     authenticated: false,
@@ -74,6 +80,7 @@ export function createAccountSession(options: {
   }
   const cancel = () => {
     generation++
+    accountGeneration++
     const attempt = pending
     pending = undefined
     attempt?.clear()
@@ -82,6 +89,7 @@ export function createAccountSession(options: {
   const fail = (attempt: Attempt, message: string) => {
     if (pending !== attempt) return
     generation++
+    accountGeneration++
     pending = undefined
     attempt.clear()
     supportErrors.record("authentication")
@@ -98,16 +106,39 @@ export function createAccountSession(options: {
 
   const getAccountStatus = async () => {
     if (pending || removing || disposed) return latest
-    const epoch = generation
+    if (inFlightRefresh && inFlightRefresh.generation === accountGeneration) {
+      return inFlightRefresh.promise
+    }
+    const thisGeneration = accountGeneration
     const read = ++reads
-    const next = await options.client.getAccountStatus().catch(() => {
-      if (epoch !== generation || read !== reads || disposed) return latest
-      supportErrors.record("authentication")
-      throw new Error(nativeT("desktop.account.error.status"))
-    })
-    if (epoch !== generation || read !== reads || disposed) return latest
-    return publish(next)
+    const promise = (async () => {
+      try {
+        const next = await options.client.getAccountStatus()
+        if (thisGeneration !== accountGeneration || read !== reads || disposed) return latest
+        return publish(next)
+      } catch {
+        if (thisGeneration !== accountGeneration || read !== reads || disposed) return latest
+        supportErrors.record("authentication")
+        throw new Error(nativeT("desktop.account.error.status"))
+      } finally {
+        if (inFlightRefresh?.generation === thisGeneration) {
+          inFlightRefresh = undefined
+        }
+      }
+    })()
+    inFlightRefresh = { promise, generation: thisGeneration }
+    return promise
   }
+
+  const onResume = () => {
+    if (disposed || pending || removing) return
+    if (latest.authenticated || latest.state === "needs_sign_in" || latest.state === "connection_issue") {
+      void getAccountStatus().catch(() => {})
+    }
+  }
+
+  options.powerMonitor?.on("resume", onResume)
+  options.powerMonitor?.on("unlock-screen", onResume)
 
   const beginSignIn = (input: { selectAccount?: boolean } = {}) => {
     if (disposed) return Promise.reject(new Error(nativeT("desktop.account.error.unavailable")))
@@ -161,6 +192,7 @@ export function createAccountSession(options: {
         if (pending !== attempt || disposed) throw new Error("BharatCode sign-in was cancelled.")
         if (next.state !== "signed_in" || !next.authenticated) throw new Error("Sign-in is not confirmed")
         generation++
+        accountGeneration++
         pending = undefined
         const status = publish(next)
         completed = true
@@ -185,6 +217,7 @@ export function createAccountSession(options: {
     state("refreshing")
     return serial(async () => {
       const next = await options.client.logout()
+      accountGeneration++
       if (epoch !== generation || disposed) return latest
       return publish(next)
     })
@@ -198,6 +231,7 @@ export function createAccountSession(options: {
         // the store while a later removal is still running.
         removing--
         reads++
+        accountGeneration++
       })
   }
 
@@ -210,6 +244,9 @@ export function createAccountSession(options: {
     refreshAccountStatus: getAccountStatus,
     dispose: () => {
       disposed = true
+      accountGeneration++
+      options.powerMonitor?.removeListener?.("resume", onResume)
+      options.powerMonitor?.removeListener?.("unlock-screen", onResume)
       cancel()
     },
     cancelSignIn: () => {

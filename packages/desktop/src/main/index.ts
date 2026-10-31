@@ -6,7 +6,7 @@ import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import { getCACertificates, setDefaultCACertificates } from "node:tls"
 import type { Event } from "electron"
-import { app, BrowserWindow, shell } from "electron"
+import { app, BrowserWindow, powerMonitor, shell } from "electron"
 
 import { Deferred, Effect, Fiber } from "effect"
 import contextMenu from "electron-context-menu"
@@ -220,6 +220,7 @@ const main = Effect.gen(function* () {
         if (isOwnedRenderer(win.webContents.id)) win.webContents.send("account-status-changed", { runtimeId, status })
       }
     },
+    powerMonitor,
   })
   account.bind(
     "sidecar",

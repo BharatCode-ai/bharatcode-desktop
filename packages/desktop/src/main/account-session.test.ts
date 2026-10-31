@@ -255,3 +255,176 @@ test("failed first logout cannot drop the read barrier for a second queued logou
   expect(events.at(-1)?.state).toBe("signed_out")
   expect(events.some((event) => event.state === "signed_in")).toBe(false)
 })
+
+test("concurrent calls to getAccountStatus and refreshAccountStatus deduplicate into a single in-flight read", async () => {
+  let sidecarCalls = 0
+  const gate = deferred<typeof signedIn>()
+  const session = createAccountSession({
+    client: {
+      getAccountStatus: async () => {
+        sidecarCalls++
+        return gate.promise
+      },
+      beginSignIn: async () => {
+        throw new Error("unused")
+      },
+      completeSignIn: async () => {
+        throw new Error("unused")
+      },
+      logout: async () => signedOut,
+    },
+    openBrowser: async () => {},
+    changed: () => {},
+  })
+
+  const req1 = session.getAccountStatus()
+  const req2 = session.refreshAccountStatus()
+  const req3 = session.getAccountStatus()
+  await tick()
+  expect(sidecarCalls).toBe(1)
+  gate.resolve(signedIn)
+  const [res1, res2, res3] = await Promise.all([req1, req2, req3])
+  expect(res1.state).toBe("signed_in")
+  expect(res2.state).toBe("signed_in")
+  expect(res3.state).toBe("signed_in")
+  expect(sidecarCalls).toBe(1)
+})
+
+test("powerMonitor resume and unlock-screen events trigger proactive refresh and clean up on dispose", async () => {
+  const listeners = new Map<string, () => void>()
+  let statusReads = 0
+  const session = createAccountSession({
+    client: {
+      getAccountStatus: async () => {
+        statusReads++
+        return signedIn
+      },
+      beginSignIn: async () => {
+        throw new Error("unused")
+      },
+      completeSignIn: async () => {
+        throw new Error("unused")
+      },
+      logout: async () => signedOut,
+    },
+    openBrowser: async () => {},
+    changed: () => {},
+    powerMonitor: {
+      on: (event, listener) => {
+        listeners.set(event, listener)
+      },
+      removeListener: (event) => {
+        listeners.delete(event)
+      },
+    },
+  })
+
+  // Establish signed-in status
+  await session.getAccountStatus()
+  expect(statusReads).toBe(1)
+
+  // Trigger wake/resume
+  expect(listeners.has("resume")).toBe(true)
+  listeners.get("resume")!()
+  await tick()
+  expect(statusReads).toBe(2)
+
+  // Trigger unlock-screen
+  expect(listeners.has("unlock-screen")).toBe(true)
+  listeners.get("unlock-screen")!()
+  await tick()
+  expect(statusReads).toBe(3)
+
+  // Dispose unregisters all listeners
+  session.dispose()
+  expect(listeners.size).toBe(0)
+})
+
+test("concurrent machine resume and renderer refresh requests deduplicate", async () => {
+  const listeners = new Map<string, () => void>()
+  let statusReads = 0
+  const gate = deferred<typeof signedIn>()
+  const session = createAccountSession({
+    client: {
+      getAccountStatus: async () => {
+        statusReads++
+        return gate.promise
+      },
+      beginSignIn: async () => {
+        throw new Error("unused")
+      },
+      completeSignIn: async () => {
+        throw new Error("unused")
+      },
+      logout: async () => signedOut,
+    },
+    openBrowser: async () => {},
+    changed: () => {},
+    powerMonitor: {
+      on: (event, listener) => {
+        listeners.set(event, listener)
+      },
+      removeListener: (event) => {
+        listeners.delete(event)
+      },
+    },
+  })
+
+  // Set initial signed-in state so onResume triggers
+  await session.completeSignIn("bharatcode://auth/callback?state=unused&code=c").catch(() => {})
+
+  // Fire wake event and concurrent renderer request
+  listeners.get("resume")?.()
+  const rendererReq = session.refreshAccountStatus()
+  await tick()
+  expect(statusReads).toBe(1)
+
+  gate.resolve(signedIn)
+  const status = await rendererReq
+  expect(status.state).toBe("signed_in")
+  expect(statusReads).toBe(1)
+})
+
+test("pending status read followed by completed logout and explicit refresh starts a fresh read", async () => {
+  let statusReads = 0
+  const firstReadGate = deferred<typeof signedIn>()
+  const session = createAccountSession({
+    client: {
+      getAccountStatus: async () => {
+        statusReads++
+        if (statusReads === 1) return firstReadGate.promise
+        return signedOut
+      },
+      beginSignIn: async () => {
+        throw new Error("unused")
+      },
+      completeSignIn: async () => {
+        throw new Error("unused")
+      },
+      logout: async () => signedOut,
+    },
+    openBrowser: async () => {},
+    changed: () => {},
+  })
+
+  // 1. Start a status read (read #1 is pending)
+  const pendingRead = session.getAccountStatus()
+  await tick()
+  expect(statusReads).toBe(1)
+
+  // 2. Completed logout runs and finishes while read #1 is still in flight
+  await session.logout()
+
+  // 3. Explicit refresh is requested: must NOT reuse the invalidated read #1
+  const freshRefresh = session.refreshAccountStatus()
+  await tick()
+  expect(statusReads).toBe(2)
+
+  // Settle the older in-flight read
+  firstReadGate.resolve(signedIn)
+  await pendingRead
+
+  // The fresh refresh resolves to signedOut and never overwrites with signedIn from read #1
+  const status = await freshRefresh
+  expect(status.state).toBe("signed_out")
+})
