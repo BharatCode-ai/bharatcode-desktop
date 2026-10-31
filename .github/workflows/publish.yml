@@ -64,7 +64,10 @@ jobs:
               { target: "linux-x64", runner: "ubuntu-24.04", arch: "x64" },
             ]
             const target = process.env.CANDIDATE_TARGET || "all"
-            if (!["all", "windows-x64"].includes(target)) throw Error("Invalid candidate target")
+            if (!["all", "windows-x64"].includes(target)) {
+              console.error("Invalid candidate target")
+              process.exit(1)
+            }
             const include = target === "all" ? targets : targets.filter((item) => item.target === target)
             require("node:fs").appendFileSync(process.env.GITHUB_OUTPUT, `matrix=${JSON.stringify({ include })}\n`)
           '

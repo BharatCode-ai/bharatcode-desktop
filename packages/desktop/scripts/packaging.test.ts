@@ -2,6 +2,26 @@ import { expect, test } from "bun:test"
 import config, { assertPackagingPolicy } from "../electron-builder.config"
 import { bundledCliFilename } from "./utils"
 
+test("Windows installer cannot silently replace the pinned build runtime", async () => {
+  const action = Bun.YAML.parse(
+    await Bun.file(new URL("../../../.github/actions/setup-bun/action.yml", import.meta.url)).text(),
+  ) as {
+    runs: { steps: { name: string; if?: string; run?: string; with?: Record<string, string> }[] }
+  }
+  const steps = action.runs.steps
+  const installer = steps.findIndex((step) => step.name === "Setup Windows dependency installer")
+  const install = steps.findIndex((step) => step.name === "Install dependencies")
+  const restore = steps.findIndex((step) => step.name === "Restore pinned Bun runtime after Windows install")
+  expect(installer).toBeGreaterThan(-1)
+  expect(install).toBeGreaterThan(installer)
+  expect(restore).toBeGreaterThan(install)
+  expect(steps[installer].if).toBe("runner.os == 'Windows'")
+  expect(steps[installer].with?.["bun-version"]).toBe("1.4.2")
+  expect(steps[restore].with?.["bun-download-url"]).toBe("${{ steps.bun-url.outputs.url }}")
+  expect(steps.at(-1)?.run).toContain("packageManager.split")
+  expect(steps.at(-1)?.run).toContain("bun --version")
+})
+
 test("packaging cannot substitute an upstream product, protocol, CLI or update destination", () => {
   expect(config.appId).toStartWith("ai.bharatcode.desktop")
   expect(config.productName).toStartWith("BharatCode")
