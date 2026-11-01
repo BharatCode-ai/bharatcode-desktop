@@ -107,6 +107,34 @@ describe("current session timeline rows", () => {
     }
   })
 
+  test("the thinking row knows when the request in flight has produced nothing yet", () => {
+    const user = { id: "user", role: "user", sessionID: "session", time: { created: 1 } } as UserMessage
+    const assistant = { id: "assistant", role: "assistant", parentID: user.id, time: { created: 2 } } as AssistantMessage
+    const thinking = (parts: Part[], message = assistant) =>
+      Timeline.constructMessageRows(
+        user,
+        (id) => (id === message.id ? parts : []),
+        [message],
+        0,
+        false,
+        "busy",
+        true,
+        false,
+      ).find((row) => row._tag === "Thinking")
+
+    expect(thinking([])).toMatchObject({ waitingSince: 2 })
+    // A step-start part alone is not a response.
+    expect(
+      thinking([{ id: "step", messageID: assistant.id, sessionID: "session", type: "step-start" } as Part]),
+    ).toMatchObject({ waitingSince: 2 })
+    for (const type of ["reasoning", "text"] as const)
+      expect(
+        thinking([{ id: "part", messageID: assistant.id, sessionID: "session", type, text: "x" } as Part])
+          ?.waitingSince,
+      ).toBeUndefined()
+    expect(thinking([], { ...assistant, time: { created: 2, completed: 3 } })?.waitingSince).toBeUndefined()
+  })
+
   test("derives turns and tagged rows from chronological current messages", () => {
     const source = [
       { id: "msg_1", type: "user", text: "first", time: { created: 1 } },

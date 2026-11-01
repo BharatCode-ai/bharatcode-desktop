@@ -27,7 +27,7 @@ export type TimelineRowMap = {
     group: PartGroup
     previousAssistantPart: boolean
   }
-  Thinking: { userMessageID: string; reasoningHeading?: string }
+  Thinking: { userMessageID: string; reasoningHeading?: string; waitingSince?: number }
   Retry: { userMessageID: string }
   DiffSummary: { userMessageID: string; diffs: SummaryDiff[] }
   Error: { userMessageID: string; text: string; outputLimit?: NonNullable<ReturnType<typeof outputLimitKey>> }
@@ -197,11 +197,20 @@ export namespace Timeline {
         .flatMap((message) => getMessageParts(message.id))
         .map((part) => (part.type === "reasoning" && part.text ? reasoningHeading(part.text) : undefined))
         .find((value): value is string => !!value)
+      // The request in flight has produced nothing yet: no reasoning, text or tool call.
+      const current = visibleAssistants.at(-1)
+      const waiting =
+        current &&
+        !current.time.completed &&
+        !getMessageParts(current.id).some(
+          (part) => part.type === "reasoning" || part.type === "text" || part.type === "tool",
+        )
 
       rows.push(
         new TimelineRow.Thinking({
           userMessageID: userMessage.id,
           reasoningHeading: heading,
+          waitingSince: waiting ? current.time.created : undefined,
         }),
       )
     }
