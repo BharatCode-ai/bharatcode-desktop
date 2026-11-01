@@ -2060,3 +2060,52 @@ describe("SessionNs.getUsage", () => {
     expect(result.tokens.cache.write).toBe(300)
   })
 })
+
+describe("followsCompaction", () => {
+  // followsCompaction reads only role, id, time, summary/finish/error and part types.
+  const user = (id: string, created: number, compaction = false) =>
+    ({
+      info: { id, role: "user", time: { created } },
+      parts: compaction ? [{ type: "compaction" }] : [],
+    }) as unknown as SessionV1.WithParts
+  const summary = (created: number, error?: unknown) =>
+    ({
+      info: { id: `summary-${created}`, role: "assistant", summary: true, finish: "stop", error, time: { created } },
+      parts: [],
+    }) as unknown as SessionV1.WithParts
+  const info = (message: SessionV1.WithParts) => message.info as SessionV1.User
+
+  test("is true for the first prompt after a finished summary", () => {
+    const prompt = user("u2", 4)
+    const messages = [user("u1", 1), user("c1", 2, true), summary(3), prompt]
+    expect(SessionCompaction.followsCompaction(messages, info(prompt))).toBe(true)
+  })
+
+  test("is false once another prompt came after the summary", () => {
+    const prompt = user("u3", 5)
+    const messages = [user("u1", 1), user("c1", 2, true), summary(3), user("u2", 4), prompt]
+    expect(SessionCompaction.followsCompaction(messages, info(prompt))).toBe(false)
+  })
+
+  test("ignores compaction markers between the summary and the prompt", () => {
+    const prompt = user("u2", 5)
+    const messages = [user("u1", 1), user("c1", 2, true), summary(3), user("c2", 4, true), prompt]
+    expect(SessionCompaction.followsCompaction(messages, info(prompt))).toBe(true)
+  })
+
+  test("is false when the summary failed", () => {
+    const prompt = user("u2", 4)
+    const messages = [user("u1", 1), user("c1", 2, true), summary(3, { name: "ContextOverflowError" }), prompt]
+    expect(SessionCompaction.followsCompaction(messages, info(prompt))).toBe(false)
+  })
+
+  test("is false with no summary at all", () => {
+    const prompt = user("u2", 2)
+    expect(SessionCompaction.followsCompaction([user("u1", 1), prompt], info(prompt))).toBe(false)
+  })
+
+  test("is false for a prompt older than the summary", () => {
+    const prompt = user("u1", 1)
+    expect(SessionCompaction.followsCompaction([prompt, user("c1", 2, true), summary(3)], info(prompt))).toBe(false)
+  })
+})

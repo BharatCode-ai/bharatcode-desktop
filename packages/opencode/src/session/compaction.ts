@@ -112,6 +112,24 @@ function completedCompactions(messages: SessionV1.WithParts[]) {
   })
 }
 
+// True for the first prompt after the latest finished compaction summary. If that prompt overflows
+// on its first request, the history is already just the summary and a short tail, so compacting
+// again cannot make room for it.
+export function followsCompaction(messages: SessionV1.WithParts[], user: SessionV1.User) {
+  const summary = messages
+    .filter((msg) => msg.info.role === "assistant" && msg.info.summary && msg.info.finish && !msg.info.error)
+    .sort((a, b) => b.info.time.created - a.info.time.created)[0]
+  if (!summary || summary.info.time.created > user.time.created) return false
+  return !messages.some(
+    (msg) =>
+      msg.info.role === "user" &&
+      msg.info.id !== user.id &&
+      msg.info.time.created > summary.info.time.created &&
+      msg.info.time.created < user.time.created &&
+      !msg.parts.some((part) => part.type === "compaction"),
+  )
+}
+
 function preserveRecentBudget(input: { cfg: ConfigV1.Info; model: Provider.Model }) {
   return (
     input.cfg.compaction?.preserve_recent_tokens ??
