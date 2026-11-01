@@ -1528,12 +1528,29 @@ const layer = Layer.effect(
 
             if (result === "stop") return "break" as const
             if (result === "compact") {
+              const overflow = !handle.message.finish
+              // The conversation was compacted just before this prompt and its first request still
+              // overflowed, so the prompt itself does not fit. Compacting again would only replay it.
+              if (
+                overflow &&
+                !msgs.some((msg) => msg.info.role === "assistant" && msg.info.parentID === lastUser.id) &&
+                SessionCompaction.followsCompaction(msgs, lastUser)
+              ) {
+                handle.message.error = new SessionV1.ContextOverflowError({
+                  message: `This message is too large for ${model.name}, even after compacting the conversation. Shorten it and try again.`,
+                }).toObject()
+                handle.message.finish = "error"
+                handle.message.time.completed ??= Date.now()
+                yield* sessions.updateMessage(handle.message)
+                yield* events.publish(Session.Event.Error, { sessionID, error: handle.message.error })
+                return "break" as const
+              }
               yield* compaction.create({
                 sessionID,
                 agent: lastUser.agent,
                 model: lastUser.model,
                 auto: true,
-                overflow: !handle.message.finish,
+                overflow,
               })
             }
             return "continue" as const

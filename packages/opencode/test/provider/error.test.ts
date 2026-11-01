@@ -3,6 +3,7 @@ import { APICallError } from "ai"
 import { ProviderError } from "@/provider/error"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { BharatCodeModel } from "@/bharatcode/model"
+import { MessageV2 } from "@/session/message-v2"
 
 const STUDENT_REFUSAL =
   "DeepSeek is included with BharatCode Pro. Students get a special discount on Pro: message us on WhatsApp at +91 94083 20098 or email contact@bharatcode.ai. Meanwhile, Qwen 3.8 27B (qwen-3.8-27b) is free for students. Select it in your model picker."
@@ -73,5 +74,47 @@ describe("provider stream errors", () => {
         isRetryable: true,
         responseBody: JSON.stringify({ type: "error", error: { message } }),
       })
+  })
+
+  // Exactly what the BharatCode API streamed back for a Qwen 3.8 27B prompt over the window. The AI SDK
+  // hands this object to the processor as-is; only its onError log wraps it as `{ error }`.
+  const BHARATCODE_OVERFLOW = {
+    message:
+      "The model rejected this request: This model's maximum context length is 262144 tokens. However, you requested 32000 output tokens and your prompt contains at least 230145 input tokens, for a total of at least 262145 tokens. Please reduce the length of the input prompt or the number of requested output tokens. (parameter=input_tokens)",
+    type: "invalid_request_error",
+    code: "context_length_exceeded",
+  }
+
+  test("recognises a bare in-stream context overflow", () => {
+    expect(ProviderError.parseStreamError(BHARATCODE_OVERFLOW)).toEqual({
+      type: "context_overflow",
+      message: BHARATCODE_OVERFLOW.message,
+      responseBody: JSON.stringify(BHARATCODE_OVERFLOW),
+    })
+  })
+
+  test("recognises the same overflow still wrapped in the raw chunk's error field", () => {
+    expect(ProviderError.parseStreamError({ error: BHARATCODE_OVERFLOW })?.type).toBe("context_overflow")
+  })
+
+  test("recognises a bare in-stream overflow by its wording when there is no code", () => {
+    const error = { message: "This model's maximum context length is 262144 tokens." }
+    expect(ProviderError.parseStreamError(error)?.type).toBe("context_overflow")
+  })
+
+  test("leaves other bare in-stream errors unclassified", () => {
+    expect(
+      ProviderError.parseStreamError({
+        message: "Invalid tool schema",
+        type: "invalid_request_error",
+        code: "invalid_request",
+      }),
+    ).toBeUndefined()
+  })
+
+  test("turns a bare in-stream overflow into a session context overflow", () => {
+    expect(MessageV2.fromError(BHARATCODE_OVERFLOW, { providerID: ProviderV2.ID.make("bharatcode") }).name).toBe(
+      "ContextOverflowError",
+    )
   })
 })

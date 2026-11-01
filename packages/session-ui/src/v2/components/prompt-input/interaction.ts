@@ -1,7 +1,7 @@
 import { createEffect, on, type Accessor } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
 import { useFilteredList } from "@opencode-ai/ui/hooks"
-import { createPromptInputV2Attachments, type PromptInputV2AttachmentConfig } from "./attachments"
+import { createPromptInputV2Attachments, largePaste, type PromptInputV2AttachmentConfig } from "./attachments"
 import { createPromptInputV2Store, type PromptInputV2StoreInput } from "./store"
 import type {
   PromptInputV2Attachment,
@@ -375,7 +375,9 @@ export function createPromptInputV2Controller(input: {
       const clipboard = event.clipboardData
       if (
         attachments &&
-        (Array.from(clipboard?.items ?? []).some((item) => item.kind === "file") || !clipboard?.getData("text/plain"))
+        (Array.from(clipboard?.items ?? []).some((item) => item.kind === "file") ||
+          !clipboard?.getData("text/plain") ||
+          largePaste(clipboard?.getData("text/plain") ?? ""))
       ) {
         void attachments.handlePaste(event)
         return

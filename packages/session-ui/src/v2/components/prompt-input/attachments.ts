@@ -168,7 +168,14 @@ export function createPromptInputV2Attachments(
       input.focusEditor()
       return input.addPart({ type: "text", content: text, start: 0, end: 0 })
     }
-    if (text.includes("\n") || largePaste(text)) {
+    // Inserted into the editor, a huge paste is re-read and re-saved on every keystroke and runs the
+    // renderer out of memory. Attach it as a text file instead: the server hands text/plain
+    // attachments to the model as plain text.
+    if (largePaste(text)) {
+      await add(new File([text], "pasted-text.txt", { type: "text/plain" }), true, target, true)
+      return
+    }
+    if (text.includes("\n")) {
       put()
       return
     }
@@ -272,7 +279,7 @@ function cursorPosition(editor: HTMLElement) {
   return before.toString().replace(/\u200B/g, "").length
 }
 
-function largePaste(text: string) {
+export function largePaste(text: string) {
   if (text.length >= 8000) return true
   return text.split("\n").length - 1 >= 120
 }

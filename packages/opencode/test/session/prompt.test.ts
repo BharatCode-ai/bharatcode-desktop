@@ -742,6 +742,126 @@ it.instance("loop stops provider overflow instead of auto-compacting when disabl
   }),
 )
 
+it.instance("loop stops when a replayed prompt still overflows after compaction", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig(providerCfg)
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const chat = yield* sessions.create({ title: "Pinned" })
+
+    // One prompt too large to ever fit: every normal request overflows, while every summary
+    // request (much smaller, with no system prompt or tools) succeeds.
+    const overflow = { error: { message: "request entity too large" } }
+    yield* llm.error(413, overflow)
+    yield* llm.text("summary one")
+    yield* llm.error(413, overflow)
+    yield* llm.text("summary two")
+    yield* llm.error(413, overflow)
+    yield* llm.text("summary three")
+    yield* prompt.prompt({
+      sessionID: chat.id,
+      agent: "build",
+      noReply: true,
+      parts: [{ type: "text", text: "a very large paste" }],
+    })
+
+    const result = yield* prompt.loop({ sessionID: chat.id })
+    const messages = yield* sessions.messages({ sessionID: chat.id })
+
+    // overflow, summary, overflow of the replayed prompt, then stop
+    expect(yield* llm.calls).toBe(3)
+    expect(yield* llm.pending).toBe(3)
+    expect(messages.flatMap((message) => message.parts).filter((part) => part.type === "compaction")).toHaveLength(1)
+    expect(result.info.role).toBe("assistant")
+    if (result.info.role === "assistant") {
+      expect(result.info.error?.name).toBe("ContextOverflowError")
+      expect(JSON.stringify(result.info.error)).toContain("even after compacting the conversation")
+      expect(result.info.finish).toBe("error")
+    }
+  }),
+)
+
+it.instance("loop still compacts when a replayed prompt overflows after its turn grows", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig(providerCfg)
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const chat = yield* sessions.create({
+      title: "Pinned",
+      permission: [{ permission: "*", pattern: "*", action: "allow" }],
+    })
+
+    // The replayed prompt fits, runs a tool, and only then overflows. That growth is what
+    // compaction is for, so it must not be treated as a prompt that can never fit.
+    const overflow = { error: { message: "request entity too large" } }
+    yield* llm.error(413, overflow)
+    yield* llm.text("summary one")
+    yield* llm.push(reply().tool("first", { value: "first" }).stop())
+    yield* llm.error(413, overflow)
+    yield* llm.text("summary two")
+    yield* llm.text("done")
+    yield* prompt.prompt({
+      sessionID: chat.id,
+      agent: "build",
+      noReply: true,
+      parts: [{ type: "text", text: "read the big files" }],
+    })
+
+    const result = yield* prompt.loop({ sessionID: chat.id })
+    const messages = yield* sessions.messages({ sessionID: chat.id })
+
+    expect(yield* llm.calls).toBe(6)
+    expect(messages.flatMap((message) => message.parts).filter((part) => part.type === "compaction")).toHaveLength(2)
+    expect(result.info.role).toBe("assistant")
+    if (result.info.role === "assistant") {
+      expect(result.info.error).toBeUndefined()
+      expect(result.parts.some((part) => part.type === "text" && part.text === "done")).toBe(true)
+    }
+  }),
+)
+
+it.instance("loop recovers on the next prompt after stopping an oversized one", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig(providerCfg)
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const chat = yield* sessions.create({ title: "Pinned" })
+
+    const overflow = { error: { message: "request entity too large" } }
+    yield* llm.error(413, overflow)
+    yield* llm.text("summary one")
+    yield* llm.error(413, overflow)
+    yield* prompt.prompt({
+      sessionID: chat.id,
+      agent: "build",
+      noReply: true,
+      parts: [{ type: "text", text: "a very large paste" }],
+    })
+    const stopped = yield* prompt.loop({ sessionID: chat.id })
+    expect(stopped.info.role === "assistant" && stopped.info.error?.name).toBe("ContextOverflowError")
+
+    // The oversized prompt is still in the history, but the next prompt is not straight after a
+    // compaction, so the normal path compacts it away and answers.
+    yield* llm.error(413, overflow)
+    yield* llm.text("summary two")
+    yield* llm.text("answer")
+    yield* prompt.prompt({
+      sessionID: chat.id,
+      agent: "build",
+      noReply: true,
+      parts: [{ type: "text", text: "a short follow-up" }],
+    })
+    const result = yield* prompt.loop({ sessionID: chat.id })
+
+    expect(yield* llm.pending).toBe(0)
+    expect(result.info.role).toBe("assistant")
+    if (result.info.role === "assistant") {
+      expect(result.info.error).toBeUndefined()
+      expect(result.parts.some((part) => part.type === "text" && part.text === "answer")).toBe(true)
+    }
+  }),
+)
+
 noLLMServer.instance.skip(
   "prompt emits v2 prompted and synthetic events (v2 projector disabled)",
   () =>

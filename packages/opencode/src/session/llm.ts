@@ -45,6 +45,9 @@ export type StreamInput = {
   tools: Record<string, Tool>
   retries?: number
   toolChoice?: "auto" | "required" | "none"
+  // Upper bound on the reply, below the model's own limit. The provider reserves this much of the
+  // context window for the reply, so a short reply that asks for less leaves more room for input.
+  maxOutputTokens?: number
 }
 
 export type StreamRequest = StreamInput & {

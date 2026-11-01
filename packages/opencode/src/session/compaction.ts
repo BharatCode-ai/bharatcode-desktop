@@ -28,6 +28,11 @@ export const Event = SessionCompactionEvent
 export const PRUNE_MINIMUM = 20_000
 export const PRUNE_PROTECT = 40_000
 const TOOL_OUTPUT_MAX_CHARS = 2_000
+// The summary template asks for terse bullets, a few thousand tokens at most. Asking for the
+// model's full output allowance makes the provider reserve that much of the window, leaving less
+// room for the history being summarised. Reasoning models count their thinking as output, so this
+// keeps headroom for that on top of the summary itself.
+const SUMMARY_OUTPUT_TOKENS = 8_000
 const PRUNE_PROTECTED_TOOLS = ["skill"]
 const MIN_PRESERVE_RECENT_TOKENS = 2_000
 const MAX_PRESERVE_RECENT_TOKENS = 15_000
@@ -110,6 +115,24 @@ function completedCompactions(messages: SessionV1.WithParts[]) {
     if (userIndex === undefined) return []
     return [{ userIndex, assistantIndex, summary: summaryText(msg) }]
   })
+}
+
+// True for the first prompt after the latest finished compaction summary. If that prompt overflows
+// on its first request, the history is already just the summary and a short tail, so compacting
+// again cannot make room for it.
+export function followsCompaction(messages: SessionV1.WithParts[], user: SessionV1.User) {
+  const summary = messages
+    .filter((msg) => msg.info.role === "assistant" && msg.info.summary && msg.info.finish && !msg.info.error)
+    .sort((a, b) => b.info.time.created - a.info.time.created)[0]
+  if (!summary || summary.info.time.created > user.time.created) return false
+  return !messages.some(
+    (msg) =>
+      msg.info.role === "user" &&
+      msg.info.id !== user.id &&
+      msg.info.time.created > summary.info.time.created &&
+      msg.info.time.created < user.time.created &&
+      !msg.parts.some((part) => part.type === "compaction"),
+  )
 }
 
 function preserveRecentBudget(input: { cfg: ConfigV1.Info; model: Provider.Model }) {
@@ -431,6 +454,7 @@ const layer = Layer.effect(
         sessionID: input.sessionID,
         tools: {},
         system: [],
+        maxOutputTokens: SUMMARY_OUTPUT_TOKENS,
         messages: [
           {
             role: "user",

@@ -106,7 +106,20 @@ export function parseStreamError(input: unknown): ParsedStreamError | undefined 
   if (!body) return
 
   const responseBody = JSON.stringify(body)
-  if (body.type !== "error") return
+  // OpenAI-compatible servers, BharatCode included, send in-stream errors without a `type: "error"`
+  // envelope. The AI SDK passes on the provider's `{ message, type, code }` itself; the raw chunk
+  // still wraps it as `{ error: {...} }`. Only the overflow case is recognised, so that it can be
+  // compacted; any other bare error stays unclassified.
+  if (body.type !== "error") {
+    const error = body.error && typeof body.error === "object" ? body.error : body
+    const message = typeof error.message === "string" ? error.message : undefined
+    if (error.code !== "context_length_exceeded" && !(message && isContextOverflow(message))) return
+    return {
+      type: "context_overflow",
+      message: message ?? "Input exceeds context window of this model",
+      responseBody,
+    }
+  }
 
   switch (body?.error?.code) {
     case "context_length_exceeded":
