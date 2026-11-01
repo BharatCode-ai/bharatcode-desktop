@@ -28,6 +28,11 @@ export const Event = SessionCompactionEvent
 export const PRUNE_MINIMUM = 20_000
 export const PRUNE_PROTECT = 40_000
 const TOOL_OUTPUT_MAX_CHARS = 2_000
+// The summary template asks for terse bullets, a few thousand tokens at most. Asking for the
+// model's full output allowance makes the provider reserve that much of the window, leaving less
+// room for the history being summarised. Reasoning models count their thinking as output, so this
+// keeps headroom for that on top of the summary itself.
+const SUMMARY_OUTPUT_TOKENS = 8_000
 const PRUNE_PROTECTED_TOOLS = ["skill"]
 const MIN_PRESERVE_RECENT_TOKENS = 2_000
 const MAX_PRESERVE_RECENT_TOKENS = 15_000
@@ -449,6 +454,7 @@ const layer = Layer.effect(
         sessionID: input.sessionID,
         tools: {},
         system: [],
+        maxOutputTokens: SUMMARY_OUTPUT_TOKENS,
         messages: [
           {
             role: "user",

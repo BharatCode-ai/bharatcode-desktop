@@ -1075,6 +1075,28 @@ describe("session.compaction.process", () => {
   )
 
   itCompaction.instance(
+    "asks for a short reply when generating the summary",
+    () => {
+      const stub = llm()
+      let requested: number | undefined
+      stub.push(reply("summary", (input) => (requested = input.maxOutputTokens)))
+      return Effect.gen(function* () {
+        const ssn = yield* SessionNs.Service
+        const session = yield* ssn.create({})
+        yield* createUserMessage(session.id, "first")
+        yield* createSummaryCompaction(session.id)
+
+        const msgs = yield* ssn.messages({ sessionID: session.id })
+        const parent = msgs.at(-1)?.info.id
+        expect(parent).toBeTruthy()
+        yield* SessionCompaction.use.process({ parentID: parent!, messages: msgs, sessionID: session.id, auto: false })
+
+        expect(requested).toBe(8_000)
+      }).pipe(withCompaction({ llm: stub.llmLayer, config: cfg({}) }))
+    },
+  )
+
+  itCompaction.instance(
     "falls back to full summary when even one recent turn exceeds preserve token budget",
     () => {
       const stub = llm()
