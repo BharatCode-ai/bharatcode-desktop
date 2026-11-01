@@ -130,12 +130,39 @@ const markBoundaryGesture = (input: {
   }
 }
 
-function TimelineThinkingRow(props: { reasoningHeading?: string; showReasoningSummaries: boolean }) {
+// Most requests start replying within a few seconds; only say "waiting" past this, or the label would
+// flicker on every tool step.
+const WAITING_LABEL_DELAY_MS = 5_000
+
+function TimelineThinkingRow(props: {
+  reasoningHeading?: string
+  showReasoningSummaries: boolean
+  waitingSince?: number
+}) {
   const language = useLanguage()
+  const [now, setNow] = createSignal(Date.now())
+  createEffect(() => {
+    if (props.waitingSince === undefined) return
+    setNow(Date.now())
+    const timer = setInterval(() => setNow(Date.now()), 1_000)
+    onCleanup(() => clearInterval(timer))
+  })
+  // The start time comes from the server's clock; clamp so a small skew never shows a negative wait.
+  const waited = () => (props.waitingSince === undefined ? 0 : Math.max(0, now() - props.waitingSince))
+  const waiting = () => waited() >= WAITING_LABEL_DELAY_MS
+  const elapsed = () => {
+    const seconds = Math.floor(waited() / 1_000)
+    return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`
+  }
 
   return (
     <div data-slot="session-turn-thinking">
-      <TextShimmer text={language.t("ui.sessionTurn.status.thinking")} />
+      <TextShimmer
+        text={language.t(waiting() ? "ui.sessionTurn.status.waiting" : "ui.sessionTurn.status.thinking")}
+      />
+      <Show when={waiting()}>
+        <span class="tabular-nums">{elapsed()}</span>
+      </Show>
       <Show when={!props.showReasoningSummaries}>
         <TextReveal text={props.reasoningHeading} class="session-turn-thinking-heading" travel={25} duration={700} />
       </Show>
@@ -1187,6 +1214,7 @@ export function MessageTimeline(props: {
               <TimelineThinkingRow
                 reasoningHeading={thinkingRow().reasoningHeading}
                 showReasoningSummaries={settings.general.showReasoningSummaries()}
+                waitingSince={thinkingRow().waitingSince}
               />
             </div>
           </TimelineRowFrame>
