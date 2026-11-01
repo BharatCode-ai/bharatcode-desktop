@@ -6,6 +6,9 @@ import { ProviderTransform } from "@/provider/transform"
 import type { MessageV2 } from "./message-v2"
 
 const COMPACTION_BUFFER = 20_000
+// Room for one truncation-capped tool result (tool_output.max_bytes, 51200 bytes ~ 13k tokens)
+// plus framing, so a large file read on the next step cannot push the request past the window.
+const COMPACTION_HEADROOM = 16_000
 
 export function usable(input: { cfg: ConfigV1.Info; model: Provider.Model; outputTokenMax?: number }) {
   const context = input.model.limit.context
@@ -20,6 +23,16 @@ export function usable(input: { cfg: ConfigV1.Info; model: Provider.Model; outpu
   return Math.max(0, (input.model.limit.input || context) - reserved)
 }
 
+export function threshold(input: { cfg: ConfigV1.Info; model: Provider.Model; outputTokenMax?: number }) {
+  const limit = usable(input)
+  // An explicit reserve is the caller's own call on how much to hold back; don't quietly add to it.
+  if (input.cfg.compaction?.reserved !== undefined) return limit
+  // A budget this small has nothing to spare, and driving the threshold to zero would make every
+  // turn look overflowing and compact in a loop.
+  if (limit <= COMPACTION_HEADROOM * 2) return limit
+  return limit - COMPACTION_HEADROOM
+}
+
 export function isOverflow(input: {
   cfg: ConfigV1.Info
   tokens: SessionV1.Assistant["tokens"]
@@ -31,5 +44,5 @@ export function isOverflow(input: {
 
   const count =
     input.tokens.total || input.tokens.input + input.tokens.output + input.tokens.cache.read + input.tokens.cache.write
-  return count >= usable(input)
+  return count >= threshold(input)
 }

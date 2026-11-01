@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import type { ConfigV1 } from "@opencode-ai/core/v1/config/config"
 import type { SessionV1 } from "@opencode-ai/core/v1/session"
 import type { Provider } from "@/provider/provider"
-import { isOverflow, usable } from "@/session/overflow"
+import { isOverflow, threshold, usable } from "@/session/overflow"
 
 // usable and isOverflow read only `limit`, and maxOutputTokens reads only `limit.output`, so the
 // rest of the model record is irrelevant here.
@@ -50,6 +50,41 @@ describe("usable", () => {
   })
 })
 
+describe("threshold", () => {
+  // The two models BharatCode serves. Both publish a 32_000 max output and no input cap.
+  const qwen = model({ context: 262_144, output: 32_000 })
+  const deepseek = model({ context: 1_000_000, output: 32_000 })
+
+  test("leaves headroom below what fits", () => {
+    expect(usable({ cfg: config(), model: qwen })).toBe(230_144)
+    expect(threshold({ cfg: config(), model: qwen })).toBe(214_144)
+  })
+
+  test("costs a large window almost nothing", () => {
+    expect(usable({ cfg: config(), model: deepseek })).toBe(968_000)
+    expect(threshold({ cfg: config(), model: deepseek })).toBe(952_000)
+  })
+
+  test("takes the same headroom regardless of window size", () => {
+    expect(usable({ cfg: config(), model: qwen }) - threshold({ cfg: config(), model: qwen })).toBe(
+      usable({ cfg: config(), model: deepseek }) - threshold({ cfg: config(), model: deepseek }),
+    )
+  })
+
+  test("honours a configured reserve exactly, with nothing added on top", () => {
+    const cfg = config({ reserved: 50_000 })
+    expect(threshold({ cfg, model: qwen })).toBe(usable({ cfg, model: qwen }))
+  })
+
+  test("leaves a budget with nothing to spare alone", () => {
+    // usable is 28_000 here; subtracting the headroom would compact on every turn forever.
+    const cfg = config()
+    const tiny = model({ context: 48_000, output: 8_000 })
+    expect(usable({ cfg, model: tiny })).toBe(28_000)
+    expect(threshold({ cfg, model: tiny })).toBe(28_000)
+  })
+})
+
 describe("isOverflow", () => {
   const qwen = model({ context: 128_000, output: 8_000 })
 
@@ -82,6 +117,14 @@ describe("isOverflow", () => {
 
   test("honours auto: false", () => {
     expect(isOverflow({ cfg: config({ auto: false }), tokens: tokens(120_000), model: qwen })).toBe(false)
+  })
+
+  test("compacts in the headroom band, before the budget is spent", () => {
+    const real = model({ context: 262_144, output: 32_000 })
+    // Past the 214_144 threshold but still under the 230_144 that would actually fit — this band is
+    // the behaviour change, and is where a large tool result used to tip the request over.
+    expect(isOverflow({ cfg: config(), tokens: tokens(220_000), model: real })).toBe(true)
+    expect(isOverflow({ cfg: config(), tokens: tokens(200_000), model: real })).toBe(false)
   })
 
   test("never fires when the context limit is unknown", () => {
