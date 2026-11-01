@@ -20,6 +20,7 @@ export namespace GoalAssessment {
       "Meaningful progress means new verified state: a code/doc/config change, a new test or command result, a new inspected artifact, a new concrete decision, or a validated completion report.",
       "If the next step repeats prior reasoning, diagnosis, wording, or the same tool/action signature, either choose a materially different concrete action now or call mcp_goal_blocker.",
       "Repeated same tool/action signatures, repeated same assistant-response fingerprints, tool-loop guards, and user-aborted command context are blocker signals unless there is a clearly different next path.",
+      "Work only inside the session's working directory and any paths the user named. Do not list or search other folders, drives, or the user's home directory to find something to work on. If the goal cannot be done with what is in the working directory, call mcp_goal_blocker and say what is missing.",
     ]
   }
 

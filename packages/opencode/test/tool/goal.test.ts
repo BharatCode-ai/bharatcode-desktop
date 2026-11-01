@@ -20,6 +20,8 @@ import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { disposeAllInstances } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
+import { modelMessageSchema } from "ai"
+import { fromBharatCodeCatalogModel } from "@/provider/provider"
 
 afterEach(async () => {
   await disposeAllInstances()
@@ -169,6 +171,22 @@ describe("tool.goal", () => {
     }),
   )
 
+  it.instance("goal set tells the model to stay in the working directory or report blocked", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const chat = yield* sessions.create({})
+      const setTool = yield* GoalSetTool
+      const setDef = yield* setTool.init()
+
+      // A goal set through /goal starts working straight from this result, so the scope rule must be in it.
+      const result = yield* setDef.execute({ goal: "Make the app support offline mode" }, ctx(chat.id))
+
+      expect(result.title).toBe("Goal set")
+      expect(result.output).toContain("Work only inside the session's working directory")
+      expect(result.output).toContain("call mcp_goal_blocker")
+    }),
+  )
+
   it.instance("goal set allows replacing an active goal after a newer user message", () =>
     Effect.gen(function* () {
       const sessions = yield* Session.Service
@@ -224,14 +242,32 @@ describe("tool.goal", () => {
       const messages = yield* sessions.messages({ sessionID: chat.id })
       const updatedAssistant = messages.find((message) => message.info.id === assistant.id)
       const text = updatedAssistant?.parts.find(
-        (part): part is SessionV1.TextPart => part.type === "text" && part.metadata?.kind === "goal-complete",
+        (part): part is SessionV1.TextPart => part.type === "text" && part.synthetic === true,
       )
 
-      expect(text?.synthetic).toBe(true)
       expect(text?.text).toContain("Goal Mode marked complete.")
       expect(text?.text).toContain("Goal: Ship Goal Mode with visible completion")
       expect(text?.text).toContain("Validated with focused tests.")
       expect(text?.text).toContain("Goal Mode metrics:")
+
+      // The note becomes part of the assistant's reply in every later request, so it must stay a
+      // valid model message; an invalid one forces a prompt repair on each turn. Text-part metadata
+      // is only forwarded to the model that wrote the reply, so convert for that same model.
+      const catalogModel = fromBharatCodeCatalogModel({
+        id: "qwen-3.8-27b",
+        ownedBy: "bharatcode",
+        modality: "vision_chat",
+        endpoint: "/v1/chat/completions",
+        protocol: "openai_chat_completions",
+        status: "live",
+        displayName: "Qwen 3.8 27B",
+        metadata: { input: ["text", "image"], output: ["text"], toolCalling: true, reasoning: true },
+        contextWindow: 262_144,
+        maxOutputTokens: 32_000,
+      })!
+      const sameModel = { ...catalogModel, id: assistant.modelID, providerID: assistant.providerID }
+      const modelMessages = yield* Effect.promise(() => MessageV2.toModelMessages([updatedAssistant!], sameModel))
+      expect(modelMessages.every((message) => modelMessageSchema.safeParse(message).success)).toBe(true)
     }),
   )
 
