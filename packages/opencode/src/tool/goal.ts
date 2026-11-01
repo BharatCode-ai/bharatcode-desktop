@@ -1,4 +1,5 @@
 import { Effect, Schema } from "effect"
+import { GoalAssessment } from "@/session/goal-assessment"
 import { GoalState } from "@/session/goal-state"
 import { Session } from "@/session/session"
 import { PartID } from "@/session/schema"
@@ -60,12 +61,10 @@ function alreadyActiveResult(goal: Session.Goal) {
   }
 }
 
-function publishFinalText(
-  sessions: Session.Interface,
-  ctx: Tool.Context<GoalMetadata>,
-  output: string,
-  kind: "goal-complete" | "goal-blocked",
-) {
+// This text joins the assistant's reply, whose text-part metadata is sent to the model as provider
+// options. A plain marker such as `{ kind }` is not a valid provider-options shape, so it would make
+// the message fail the AI SDK schema on every later turn; the note carries no metadata.
+function publishFinalText(sessions: Session.Interface, ctx: Tool.Context<GoalMetadata>, output: string) {
   return sessions
     .updatePart({
       id: PartID.ascending(),
@@ -74,7 +73,6 @@ function publishFinalText(
       type: "text",
       text: output,
       synthetic: true,
-      metadata: { kind },
     })
     .pipe(Effect.catchCause(() => Effect.void))
 }
@@ -115,7 +113,13 @@ export const GoalSetTool = Tool.define<typeof GoalSetParameters, GoalMetadata, S
           yield* sessions.setGoal({ sessionID: ctx.sessionID, goal })
           return {
             title: "Goal set",
-            output: `Goal Mode is now active. Current goal:\n${goal.text}`,
+            // A goal set through /goal goes straight to work without a Goal Mode turn, so this result is
+            // where the model first sees the working rules.
+            output: [
+              `Goal Mode is now active. Current goal:\n${goal.text}`,
+              "",
+              ...GoalAssessment.progressPolicy(),
+            ].join("\n"),
             metadata: { status: "active", goal: goal.text, elapsed: goal.accumulated } satisfies GoalMetadata,
           }
         }),
@@ -145,7 +149,7 @@ export const GoalCompleteTool = Tool.define<typeof GoalCompleteParameters, GoalM
           yield* sessions.setGoal({ sessionID: ctx.sessionID, goal })
           const metrics = GoalState.formatMetrics(goal, session.tokens ?? EMPTY_TOKENS)
           const output = terminalOutput("Goal Mode marked complete.", goal, metrics)
-          yield* publishFinalText(sessions, ctx, output, "goal-complete")
+          yield* publishFinalText(sessions, ctx, output)
           return {
             title: "Goal complete",
             output,
@@ -178,7 +182,7 @@ export const GoalBlockerTool = Tool.define<typeof GoalBlockerParameters, GoalMet
           yield* sessions.setGoal({ sessionID: ctx.sessionID, goal })
           const metrics = GoalState.formatMetrics(goal, session.tokens ?? EMPTY_TOKENS)
           const output = terminalOutput("Goal Mode marked blocked.", goal, metrics)
-          yield* publishFinalText(sessions, ctx, output, "goal-blocked")
+          yield* publishFinalText(sessions, ctx, output)
           return {
             title: "Goal blocked",
             output,
