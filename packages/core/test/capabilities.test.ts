@@ -339,6 +339,113 @@ test(
   timeout,
 )
 
+// Speaks newline-delimited JSON-RPC to the bundled server exactly as the MCP client does.
+async function memoryServer(config: { command: string[]; environment?: Record<string, string> }, cwd: string) {
+  const child = Bun.spawn(config.command, { cwd, env: { ...process.env, ...config.environment }, stdin: "pipe" })
+  const lines = child.stdout.pipeThrough(new TextDecoderStream()).getReader()
+  const state = { buffer: "" }
+  const send = (id: number, method: string, params: object) =>
+    child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n")
+  const request = async (id: number, method: string, params: object) => {
+    send(id, method, params)
+    return response(id)
+  }
+  const response = async (id: number) => {
+    while (true) {
+      const line = state.buffer.split("\n").find((entry) => entry.includes(`"id":${id}`))
+      if (line) return JSON.parse(line).result
+      const chunk = await lines.read()
+      if (chunk.done) throw new Error("memory server exited")
+      state.buffer += chunk.value
+    }
+  }
+  const initialized = await request(1, "initialize", {
+    protocolVersion: "2025-06-18",
+    capabilities: {},
+    clientInfo: { name: "test", version: "1" },
+  })
+  child.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n")
+  return {
+    instructions: initialized.instructions as string,
+    send,
+    request,
+    response,
+    notified: (method: string) => state.buffer.includes(`"method":"${method}"`),
+    close: () => child.kill(),
+  }
+}
+
+test(
+  "project memory is off until installed, then runs the bundled server and remembers facts across connections",
+  async () => {
+    const data = await privateTemp()
+    try {
+      const store = Capabilities.store({ data, desktop: true })
+      expect((await store.read()).installed["project-memory"]).toBeUndefined()
+      expect((await store.overlay()).mcp?.memory).toBeUndefined()
+      // One click: installing a defaultEnabled capability turns it on.
+      await store.change("project-memory", "install")
+      const overlay = await store.overlay()
+      const memory = overlay.mcp?.memory
+      if (!memory || !("type" in memory) || memory.type !== "local")
+        throw new Error("project memory is not a local MCP server")
+      expect(memory.command[0]).toBe(process.execPath)
+      expect(memory.command[1].startsWith(data + path.sep)).toBe(true)
+      expect(memory.environment?.BHARATCODE_MEMORY_DIR).toBe(path.join(data, "memory"))
+      expect(await store.overlay()).toEqual(overlay)
+      expect(Capabilities.configuration(await store.read(), overlay, data)["project-memory"]).toEqual({
+        enabled: true,
+        custom: false,
+      })
+
+      const project = path.join(data, "project")
+      await fs.mkdir(project)
+      const first = await memoryServer(memory, project)
+      try {
+        expect(first.instructions).toContain("save_memory tool description")
+        const before = await first.request(2, "tools/list", {})
+        expect(before.tools[0].description).toContain("No facts saved yet.")
+        const saved = await first.request(3, "tools/call", {
+          name: "save_memory",
+          arguments: { fact: "This project uses Bun, not npm." },
+        })
+        expect(saved.isError).toBe(false)
+        // The same open connection learns about the fact, so the next chat sees it
+        // without reconnecting the server.
+        expect(first.notified("notifications/tools/list_changed")).toBe(true)
+        const after = await first.request(4, "tools/list", {})
+        expect(after.tools[0].description).toContain("[1] This project uses Bun, not npm.")
+      } finally {
+        first.close()
+      }
+      const second = await memoryServer(memory, project)
+      try {
+        const listed = await second.request(2, "tools/list", {})
+        expect(listed.tools[0].description).toContain("[1] This project uses Bun, not npm.")
+        // Parallel tool calls arrive together; none of the facts may be lost.
+        for (const [id, fact] of [
+          [3, "Tests run with bun test."],
+          [4, "Docs live in docs/."],
+          [5, "Releases use the beta channel first."],
+        ] as const)
+          second.send(id, "tools/call", { name: "save_memory", arguments: { fact } })
+        for (const id of [3, 4, 5]) expect((await second.response(id)).isError).toBe(false)
+        const after = await second.request(6, "tools/list", {})
+        expect(after.tools[0].description).toContain("[4] Releases use the beta channel first.")
+      } finally {
+        second.close()
+      }
+
+      await store.change("project-memory", "disable")
+      expect((await Capabilities.store({ data, desktop: true }).overlay()).mcp?.memory).toBeUndefined()
+      expect((await Capabilities.store({ data, desktop: false }).overlay()).mcp?.memory).toBeUndefined()
+    } finally {
+      await fs.rm(data, { recursive: true, force: true })
+    }
+  },
+  timeout,
+)
+
 test(
   "malformed state fails closed and does not get overwritten",
   async () => {

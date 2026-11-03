@@ -9,13 +9,16 @@ import type { ConfigV1 } from "./v1/config/config"
 import type { ConfigMCPV1 } from "./v1/config/mcp"
 import catalogData from "./capabilities/catalog.json"
 import superpowers from "./capabilities/superpowers.json"
+import memoryServer from "./capabilities/memory-server.json"
 
 export const catalog = catalogData
 export type Action = "install" | "enable" | "disable" | "uninstall"
 export type State = { version: 1; installed: Record<string, { enabled: boolean }> }
 type Stored = State & { legacy?: string[] }
 const known = new Map(catalog.map((item) => [item.id, item]))
-const bundleID = createHash("sha256").update(JSON.stringify(superpowers)).digest("hex").slice(0, 16)
+const bundles: Record<string, Record<string, string>> = { superpowers, "memory-server": memoryServer }
+const bundleID = (name: string) => createHash("sha256").update(JSON.stringify(bundles[name])).digest("hex").slice(0, 16)
+const bundleDirectory = (data: string, name: string) => path.join(data, "capabilities", `${name}-${bundleID(name)}`)
 const unavailable = () => new Error("Capability state is unavailable. Re-read state before retrying.")
 const missing = (error: unknown) =>
   typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT"
@@ -90,14 +93,14 @@ export function configuration(state: State, config: typeof ConfigV1.Info.Type, d
     catalog.map((item) => {
       const desired = state.installed[item.id]?.enabled === true
       const modules = item.modules.map((module) => {
-        if (module.type === "mcp" && "name" in module && "config" in module) {
+        if (module.type === "mcp" && "name" in module) {
           const actual = config.mcp?.[module.name]
           const enabled = !!actual && "type" in actual && actual.enabled !== false
           const matching =
-            !!actual && isDeepStrictEqual({ ...actual, enabled: true }, { ...module.config, enabled: true })
+            !!actual && isDeepStrictEqual({ ...actual, enabled: true }, { ...mcpConfig(module, data), enabled: true })
           return { enabled, custom: actual ? !desired || !enabled || !matching : desired }
         }
-        const directory = path.join(data, "capabilities", `superpowers-${bundleID}`, "skills")
+        const directory = path.join(bundleDirectory(data, "superpowers"), "skills")
         const enabled = config.skills?.paths?.includes(directory) === true
         return { enabled, custom: enabled !== desired }
       })
@@ -115,13 +118,27 @@ async function ensureDirectory(directory: string) {
   if (!stat.isDirectory() || stat.isSymbolicLink()) throw unavailable()
 }
 
-async function materialize(data: string) {
+type CatalogModule = (typeof catalog)[number]["modules"][number]
+
+function mcpConfig(module: CatalogModule, data: string): ConfigMCPV1.Info | undefined {
+  if ("config" in module) return module.config as ConfigMCPV1.Info
+  if (!("bundle" in module)) return
+  // Bundled servers run on the runtime's own executable, so users need no separate
+  // Node.js install: Electron runs it as Node, a compiled CLI runs it as Bun.
+  return {
+    type: "local",
+    command: [process.execPath, path.join(bundleDirectory(data, module.bundle), `${module.bundle}.mjs`)],
+    environment: { ELECTRON_RUN_AS_NODE: "1", BUN_BE_BUN: "1", BHARATCODE_MEMORY_DIR: path.join(data, "memory") },
+  }
+}
+
+async function materialize(data: string, name: string) {
   await ensureDirectory(data)
   const root = path.join(data, "capabilities")
   await ensureDirectory(root)
-  const bundle = path.join(root, `superpowers-${bundleID}`)
+  const bundle = bundleDirectory(data, name)
   await ensureDirectory(bundle)
-  for (const [relative, text] of Object.entries(superpowers)) {
+  for (const [relative, text] of Object.entries(bundles[name])) {
     const segments = relative.split("/")
     if (segments.some((part) => !part || part === "." || part === ".." || part.includes("\\") || part.includes(":")))
       throw unavailable()
@@ -153,7 +170,7 @@ async function materialize(data: string) {
       await fs.rm(temporary, { force: true })
     }
   }
-  return path.join(bundle, "skills")
+  return bundle
 }
 
 export function store(options: { data: string; desktop: boolean }) {
@@ -302,15 +319,16 @@ export function store(options: { data: string; desktop: boolean }) {
       if (!entry.enabled) continue
       const item = known.get(id)!
       for (const module of item.modules) {
-        if (module.type === "mcp" && "name" in module && "config" in module)
-          result.mcp![module.name] = { ...module.config, enabled: true } as ConfigMCPV1.Info
-        if (module.type === "skill")
-          result.skills!.paths!.push(
-            await Flock.withLock("superpowers", () => materialize(options.data), {
+        const bundle = "bundle" in module ? module.bundle : module.type === "skill" ? "superpowers" : undefined
+        const directory = bundle
+          ? await Flock.withLock(bundle, () => materialize(options.data, bundle), {
               dir: lockDirectory,
               timeoutMs: 10_000,
-            }),
-          )
+            })
+          : undefined
+        const mcp = module.type === "mcp" && "name" in module ? mcpConfig(module, options.data) : undefined
+        if (mcp && "name" in module) result.mcp![module.name] = { ...mcp, enabled: true }
+        if (module.type === "skill" && directory) result.skills!.paths!.push(path.join(directory, "skills"))
       }
     }
     return result
