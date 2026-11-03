@@ -44,7 +44,7 @@ test("marketplace read and writes require sidecar authorization", async () => {
   const response = await request("/capabilities", { headers: auth })
   expect(response.status).toBe(200)
   const body = await response.json()
-  expect(body.catalog).toHaveLength(9)
+  expect(body.catalog).toHaveLength(10)
   expect(body.state).toEqual({ version: 1, installed: {} })
   expect(body.configuration.scope).toBe("runtime-defaults")
   expect(body.configuration.entries.github).toEqual({ enabled: false, custom: false })

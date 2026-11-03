@@ -115,6 +115,7 @@ test(
       await Capabilities.migrateDesktop({ data, userData })
       expect((await Capabilities.store({ data, desktop: true }).read()).installed).toEqual({
         "superpowers-obra": { enabled: false },
+        "project-memory": { enabled: true },
         github: { enabled: true },
       })
       expect(await fs.readFile(file, "utf8")).toBe(text)
@@ -180,6 +181,7 @@ test(
       await store.migrate(legacy)
       expect((await store.read()).installed).toEqual({
         "superpowers-obra": { enabled: false },
+        "project-memory": { enabled: true },
         github: { enabled: true },
       })
       expect(JSON.stringify(await store.read())).not.toMatch(/legacy|private-old-detail/)
@@ -332,6 +334,79 @@ test(
       expect(await store.overlay()).toEqual(overlay)
       await store.change("superpowers-obra", "disable")
       expect((await Capabilities.store({ data, desktop: true }).overlay()).skills?.paths).toEqual([])
+    } finally {
+      await fs.rm(data, { recursive: true, force: true })
+    }
+  },
+  timeout,
+)
+
+// Speaks newline-delimited JSON-RPC to the bundled server exactly as the MCP client does.
+async function memoryServer(config: { command: string[]; environment?: Record<string, string> }, cwd: string) {
+  const child = Bun.spawn(config.command, { cwd, env: { ...process.env, ...config.environment }, stdin: "pipe" })
+  const lines = child.stdout.pipeThrough(new TextDecoderStream()).getReader()
+  const state = { buffer: "" }
+  const request = async (id: number, method: string, params: object) => {
+    child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n")
+    while (true) {
+      const line = state.buffer.split("\n").find((entry) => entry.includes(`"id":${id}`))
+      if (line) return JSON.parse(line).result
+      const chunk = await lines.read()
+      if (chunk.done) throw new Error("memory server exited")
+      state.buffer += chunk.value
+    }
+  }
+  const initialized = await request(1, "initialize", {
+    protocolVersion: "2025-06-18",
+    capabilities: {},
+    clientInfo: { name: "test", version: "1" },
+  })
+  child.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n")
+  return { instructions: initialized.instructions as string, request, close: () => child.kill() }
+}
+
+test(
+  "Desktop project memory runs the bundled server on the runtime and remembers facts across connections",
+  async () => {
+    const data = await privateTemp()
+    try {
+      const store = Capabilities.store({ data, desktop: true })
+      const overlay = await store.overlay()
+      const memory = overlay.mcp?.memory
+      if (!memory || !("type" in memory) || memory.type !== "local")
+        throw new Error("project memory is not a local MCP server")
+      expect(memory.command[0]).toBe(process.execPath)
+      expect(memory.command[1].startsWith(data + path.sep)).toBe(true)
+      expect(memory.environment?.BHARATCODE_MEMORY_DIR).toBe(path.join(data, "memory"))
+      expect(await store.overlay()).toEqual(overlay)
+      expect(Capabilities.configuration(await store.read(), overlay, data)["project-memory"]).toEqual({
+        enabled: true,
+        custom: false,
+      })
+
+      const project = path.join(data, "project")
+      await fs.mkdir(project)
+      const first = await memoryServer(memory, project)
+      try {
+        expect(first.instructions).toContain("No facts saved yet.")
+        const saved = await first.request(2, "tools/call", {
+          name: "save_memory",
+          arguments: { fact: "This project uses Bun, not npm." },
+        })
+        expect(saved.content[0].text).toBe("Saved.")
+      } finally {
+        first.close()
+      }
+      const second = await memoryServer(memory, project)
+      try {
+        expect(second.instructions).toContain("- This project uses Bun, not npm.")
+      } finally {
+        second.close()
+      }
+
+      await store.change("project-memory", "disable")
+      expect((await Capabilities.store({ data, desktop: true }).overlay()).mcp?.memory).toBeUndefined()
+      expect((await Capabilities.store({ data, desktop: false }).overlay()).mcp?.memory).toBeUndefined()
     } finally {
       await fs.rm(data, { recursive: true, force: true })
     }

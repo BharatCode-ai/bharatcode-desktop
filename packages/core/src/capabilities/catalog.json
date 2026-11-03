@@ -19,6 +19,25 @@
     ]
   },
   {
+    "id": "project-memory",
+    "name": "Project memory",
+    "description": "Remember project facts across chats, such as how to build and test, and team conventions. Saved privately on this device, one file per project.",
+    "publisher": "BharatCode",
+    "version": "1.0.0",
+    "category": "workflow",
+    "trust": "bundled",
+    "defaultEnabled": true,
+    "requirements": [],
+    "permissions": ["workspace_files", "local_process"],
+    "modules": [
+      {
+        "type": "mcp",
+        "name": "memory",
+        "bundle": "memory-server"
+      }
+    ]
+  },
+  {
     "id": "github",
     "name": "GitHub",
     "description": "Let BharatCode inspect pull requests, issues, Actions, releases, and repository metadata.",
