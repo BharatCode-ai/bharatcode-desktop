@@ -178,7 +178,7 @@ export function store(options: { data: string; desktop: boolean }) {
   const lockDirectory = path.join(options.data, "capabilities-locks")
   const defaults = (): State => ({
     version: 1,
-    installed: options.desktop ? { "superpowers-obra": { enabled: true }, "project-memory": { enabled: true } } : {},
+    installed: options.desktop ? { "superpowers-obra": { enabled: true } } : {},
   })
   const loaded = (text: string): Stored => {
     const parsed = parse(text)
