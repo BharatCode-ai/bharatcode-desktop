@@ -2221,6 +2221,7 @@ export type Model = {
     context: number
     input?: number
     output: number
+    compaction?: number
   }
   status: "alpha" | "beta" | "deprecated" | "active"
   options: {
