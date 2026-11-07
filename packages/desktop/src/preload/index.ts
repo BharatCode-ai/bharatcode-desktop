@@ -12,6 +12,7 @@ const updaterHandler = (_: unknown, state: UpdaterState) => {
 
 const api: ElectronAPI = {
   mobileAccess: (input) => ipcRenderer.invoke("mobile-access", input),
+  browseSetup: (action) => ipcRenderer.invoke("browse-setup", action),
   getChatImportStatus: () => ipcRenderer.invoke("chat-import-status"),
   getAccountStatus: (id) => ipcRenderer.invoke("account-status", id),
   refreshAccountStatus: (id) => ipcRenderer.invoke("account-refresh", id),

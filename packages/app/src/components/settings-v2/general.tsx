@@ -1,3 +1,4 @@
+import { SettingsBrowse } from "@/components/settings-browse"
 import { SettingsSupport } from "../settings-support"
 import { Component, Show, createMemo, createResource } from "solid-js"
 import { createMediaQuery } from "@solid-primitives/media"
@@ -562,6 +563,8 @@ export const SettingsGeneralV2: Component<{
         <Show when={desktop()}>
           <UpdatesSection />
         </Show>
+
+        <SettingsBrowse v2 />
 
         <SettingsSupport v2 />
 

@@ -16,6 +16,7 @@ import { checkAppExists, resolveAppPath } from "./apps"
 import { CHANNEL } from "./constants"
 import { registerIpcHandlers, sendDeepLinks, sendMenuCommand } from "./ipc"
 import { forwardInitializationFailure, initializeConnection } from "./initialization"
+import { upgradeBundledBrowse } from "./browse"
 import { BRANDING, appIdForChannel, productNameForChannel, shouldRegisterProtocol } from "./branding"
 import { createBharatCodeAccountClient, type BharatCodeSidecarConnection } from "./bharatcode-auth"
 import { supportErrors } from "./support-errors"
@@ -459,6 +460,11 @@ const main = Effect.gen(function* () {
   })
 
   void Effect.runPromise(Deferred.await(serverReady)).then(() => mobileAccess.restore()).catch(() => {})
+  if (app.isPackaged) {
+    void Effect.runPromise(Deferred.await(serverReady))
+      .then((connection) => upgradeBundledBrowse(process.resourcesPath, app.getPath("userData"), connection))
+      .catch(() => logger.warn("Browse upgrade deferred"))
+  }
   const windows = restoreMainWindows()
   if (windows.length) createMenu(menuDeps)
   // Render the upstream startup/error surface while the barrier is pending.

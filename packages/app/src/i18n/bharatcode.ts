@@ -29,6 +29,21 @@ import { MOBILE_ENGLISH } from "./mobile"
 export const BHARATCODE_ENGLISH = {
   ...MOBILE_ENGLISH,
   ...BHARATCODE_NATIVE_ENGLISH,
+  "settings.browse.title": "Connect browser",
+  "settings.browse.description": "Let your BharatCode agent work in tabs you open for it or explicitly share.",
+  "settings.browse.instructions":
+    "Open your Chromium browser’s extensions page, enable Developer mode, and choose Load unpacked. Select the extension folder below, then enter the pairing code in BharatCode Browse. The code expires in 10 minutes.",
+  "settings.browse.folder": "Extension folder",
+  "settings.browse.code": "Pairing code",
+  "settings.browse.reveal": "Show extension folder",
+  "settings.browse.check": "Check connection",
+  "settings.browse.newCode": "Generate a new code",
+  "settings.browse.working": "Checking browser connection…",
+  "settings.browse.connected": "Browser connected. Your local BharatCode agents can now use BharatCode Browse.",
+  "settings.browse.unavailable": "This Desktop build does not include the BharatCode Browse extension and relay.",
+  "settings.browse.waiting": "The browser has not connected yet. Enter the code in the extension, then check again.",
+  "settings.browse.failed": "Browser setup failed. Try connecting again.",
+  "settings.browse.conflict": "The bharatcode-browse MCP name is already in use. Review that entry before connecting.",
   "settings.support.title": "Support bundle",
   "settings.support.export": "Export support bundle",
   "settings.support.description":
