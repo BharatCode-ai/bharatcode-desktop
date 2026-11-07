@@ -34,8 +34,17 @@ const config: Configuration = {
   artifactName: "bharatcode-desktop-${os}-${arch}.${ext}",
   directories: { output: "dist", buildResources: "resources" },
   extraMetadata: { desktopName: `${appId}.desktop` },
-  files: ["out/**/*", "resources/**/*", "!resources/bharatcode-cli*", "!resources/wsl-runtime/**/*"],
-  extraResources: [{ from: "resources/", to: "", filter: ["bharatcode-cli*"] }],
+  files: [
+    "out/**/*",
+    "resources/**/*",
+    "!resources/bharatcode-cli*",
+    "!resources/wsl-runtime/**/*",
+    "!resources/bharatcode-browse/**/*",
+  ],
+  extraResources: [
+    { from: "resources/", to: "", filter: ["bharatcode-cli*"] },
+    { from: "resources/", to: "", filter: ["bharatcode-browse/**/*"] },
+  ],
   beforePack: async (context) => {
     assertPackagingPolicy(context.electronPlatformName)
     if (context.electronPlatformName !== "win32") return

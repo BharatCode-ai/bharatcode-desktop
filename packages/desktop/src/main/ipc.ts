@@ -28,6 +28,7 @@ import type { createRuntimeAccounts } from "./runtime-accounts"
 import { isOwnedRenderer } from "./windows"
 import { supportExportAction } from "./support-export"
 import { getChatImportStatus } from "./chat-import-status"
+import { createBrowseSetup } from "./browse"
 
 const pickerFilters = (ext?: string[]) => {
   if (!ext || ext.length === 0) return undefined
@@ -61,6 +62,14 @@ type Deps = {
 }
 
 export function registerIpcHandlers(deps: Deps) {
+  const browse = createBrowseSetup(
+    () => (app.isPackaged ? process.resourcesPath : join(app.getAppPath(), "resources")),
+    () => app.getPath("userData"),
+  )
+  ipcMain.handle("browse-setup", (event, action: unknown) => {
+    if (!isOwnedRenderer(event.sender.id) || event.senderFrame !== event.sender.mainFrame) return { state: "failed" }
+    return browse(action)
+  })
   ipcMain.handle("chat-import-status", (event) => {
     if (!isOwnedRenderer(event.sender.id) || event.senderFrame !== event.sender.mainFrame)
       throw new Error("Invalid sender")

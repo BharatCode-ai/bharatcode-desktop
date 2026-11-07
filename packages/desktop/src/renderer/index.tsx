@@ -218,6 +218,7 @@ const createPlatform = (windowState: DesktopWindowState): Platform => {
     },
 
     exportDebugLogs: () => window.api.exportDebugLogs(),
+    browseSetup: window.api.browseSetup,
     getChatImportStatus: () => window.api.getChatImportStatus(),
     mobileAccess: (input) => window.api.mobileAccess(input),
 

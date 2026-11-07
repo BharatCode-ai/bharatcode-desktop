@@ -147,6 +147,38 @@ jobs:
         run: |
           bun scripts/prebuild.ts
           bun x electron-vite build
+      - name: Read pinned Browse commit
+        id: browse
+        run: |
+          sha=$(cat packages/desktop/browse-source.sha)
+          if [[ ! "$sha" =~ ^[a-f0-9]{40}$ ]]; then echo "Invalid Browse source pin"; exit 1; fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: Check out Browse
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: BharatCode-ai/browse
+          ref: ${{ steps.browse.outputs.sha }}
+          path: .browse-source
+          persist-credentials: false
+      - name: Build and stage bundled Browse
+        env:
+          BROWSE_TARGET: ${{ matrix.target }}
+          OPENCODE_BROWSER_STORE_ID: ${{ vars.BROWSE_CHROME_STORE_ID }}
+        run: |
+          root="$PWD"
+          cd .browse-source
+          export OPENCODE_BROWSER_BUILD="$(node -p 'new Date(process.argv[1]).toISOString()' "$(git show -s --format=%cI HEAD)")"
+          npx --yes bun@1.4.4 install --frozen-lockfile
+          npx --yes bun@1.4.4 run build
+          cd cli
+          npx --yes bun@1.4.4 install --frozen-lockfile
+          case "$BROWSE_TARGET" in
+            linux-x64|windows-x64|darwin-x64) BROWSE_TARGET="$BROWSE_TARGET-baseline" ;;
+          esac
+          npx --yes bun@1.4.4 script/compile.ts "$BROWSE_TARGET"
+          binary="dist-bin/browse-$BROWSE_TARGET/bin/browse"
+          if [[ "$RUNNER_OS" == Windows ]]; then binary="$binary.exe"; fi
+          bun "$root/packages/desktop/scripts/stage-browse.ts" "$binary" ../dist ../LICENSE
       - name: Package Windows (unsigned beta policy)
         if: runner.os == 'Windows'
         working-directory: packages/desktop
