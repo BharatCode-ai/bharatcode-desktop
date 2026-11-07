@@ -1076,6 +1076,8 @@ const ProviderLimit = Schema.Struct({
   context: Schema.Finite,
   input: optional(Schema.Finite),
   output: Schema.Finite,
+  // Token count at which automatic compaction starts. Absent when compaction is disabled.
+  compaction: optional(Schema.Finite),
 })
 
 export const Model = Schema.Struct({

@@ -10,6 +10,7 @@ type Model = {
   name?: string
   limit: {
     context: number
+    compaction?: number
   }
 }
 
@@ -44,7 +45,8 @@ const build = (messages: Message[] = [], providers: Provider[] = []): Context | 
 
   const provider = providers.find((item) => item.id === message.providerID)
   const model = provider?.models[message.modelID]
-  const limit = model?.limit.context
+  // 100% means compaction starts now; fall back to the full window when compaction is off.
+  const limit = model?.limit.compaction || model?.limit.context
   const total = tokenTotal(message)
 
   return {
