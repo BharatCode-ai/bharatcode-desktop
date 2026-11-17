@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
-import { APICallError } from "ai"
+import { APICallError, generateText } from "ai"
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible"
 import { MessageV2 } from "../../src/session/message-v2"
 import { ProviderTransform } from "@/provider/transform"
 import type { Provider } from "@/provider/provider"
@@ -112,6 +113,78 @@ function basePart(messageID: string, id: string) {
 }
 
 describe("session.message-v2.toModelMessage", () => {
+  test("BharatCode can continue the same session with the newest eight images on the wire", async () => {
+    const url = (i: number) => "data:image/png;base64," + Buffer.from("fixture-" + i).toString("base64")
+    const history: SessionV1.WithParts[] = [
+      {
+        info: userInfo("start"),
+        parts: [{ ...basePart("start", "image"), type: "file", mime: "image/png", filename: "first.png", url: url(0) }],
+      },
+      ...Array.from({ length: 9 }, (_, n) => ({
+        info: assistantInfo("read" + n, "start"),
+        parts: [
+          {
+            ...basePart("read" + n, "tool"),
+            type: "tool" as const,
+            tool: "read",
+            callID: "read-" + n,
+            state: {
+              status: "completed" as const,
+              input: { filePath: "/project/ref-" + n + ".png" },
+              output: "read",
+              title: "Read",
+              metadata: {},
+              time: { start: 1, end: 2 },
+              attachments: [
+                { ...basePart("read" + n, "file"), type: "file" as const, mime: "image/png", url: url(n + 1) },
+              ],
+            },
+          },
+        ],
+      })),
+      { info: userInfo("again"), parts: [{ ...basePart("again", "text"), type: "text", text: "continue" }] },
+    ]
+    const original = JSON.stringify(history)
+    const sdk = createOpenAICompatible({
+      name: "bharatcode",
+      baseURL: "https://unused.invalid/v1",
+      fetch: Object.assign(
+        async (_url: RequestInfo | URL, init?: RequestInit) => {
+          const { messages } = JSON.parse(String(init?.body))
+          const wire = JSON.stringify(messages)
+          const images = messages.flatMap((m: { content: unknown }) =>
+            Array.isArray(m.content) ? m.content.filter((p) => p.type === "image_url").map((p) => p.image_url.url) : [],
+          )
+          expect(images).toEqual(Array.from({ length: 8 }, (_, n) => url(n + 2)))
+          expect(wire).toContain("[Earlier image: first.png]")
+          expect(wire).toContain("[Earlier image: ref-0.png]")
+          expect(wire).not.toContain(url(0))
+          expect(wire).not.toContain(url(1))
+          expect(JSON.stringify(messages.at(-1))).toContain("continue")
+          return Response.json({
+            choices: [{ message: { role: "assistant", content: "continued" }, finish_reason: "stop" }],
+          })
+        },
+        { preconnect: () => undefined },
+      ),
+    })
+    for (const id of ["glm-5.3-flash", "qwen-3.8-27b"]) {
+      const m = {
+        ...model,
+        id: ModelV2.ID.make(id),
+        providerID: ProviderV2.ID.make("bharatcode"),
+        api: { ...model.api, id, npm: "@ai-sdk/openai-compatible" },
+      }
+      const result = await generateText({
+        model: sdk.chatModel(id),
+        messages: await MessageV2.toModelMessages(history, m),
+        maxRetries: 0,
+      })
+      expect(result.text).toBe("continued")
+    }
+    expect(JSON.stringify(history)).toBe(original)
+  })
+
   test("filters out messages with no parts", async () => {
     const input: SessionV1.WithParts[] = [
       {
