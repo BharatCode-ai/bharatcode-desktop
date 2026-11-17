@@ -9,7 +9,7 @@ import { useProviders } from "@/hooks/use-providers"
 import { resolveDefaultModel } from "@/hooks/provider-catalog"
 import { Persist, persisted } from "@/utils/persist"
 import { hasCustomAgent, resolveAgent } from "./local-agent"
-import { cycleModelVariant, getConfiguredAgentVariant, resolveModelVariant } from "./model-variant"
+import { cycleModelVariant, defaultPickerEffort, getConfiguredAgentVariant, resolveModelVariant } from "./model-variant"
 import { useSDK } from "./sdk"
 import { useSync } from "./sync"
 import { useServerSDK } from "./server-sdk"
@@ -335,6 +335,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           if (!model) return
           const saved = models.variant.get({ providerID: model.provider.id, modelID: model.id })
           if (saved && this.list().includes(saved)) return saved
+          return defaultPickerEffort(model, this.list())
         },
         list() {
           const item = current()
@@ -361,6 +362,10 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         cycle() {
           const items = this.list()
           if (items.length === 0) return
+          if (defaultPickerEffort(current(), items)) {
+            const index = items.indexOf(this.current() ?? "low")
+            return this.set(items[(index + 1) % items.length])
+          }
           this.set(
             cycleModelVariant({
               variants: items,

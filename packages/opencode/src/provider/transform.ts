@@ -1,4 +1,5 @@
 import type { ModelMessage, ToolResultPart } from "ai"
+import { bharatCodeGlmEfforts, isBharatCodeGlm } from "@opencode-ai/core/util/bharatcode-effort"
 import { mergeDeep, unique } from "remeda"
 import type { JSONSchema7 } from "@ai-sdk/provider"
 import type * as Provider from "./provider"
@@ -776,6 +777,8 @@ function googleThinkingVariants(model: Provider.Model): Record<string, Record<st
 
 export function variants(model: Provider.Model): Record<string, Record<string, any>> {
   if (!model.capabilities.reasoning) return {}
+  if (isBharatCodeGlm(model.providerID, model.id))
+    return Object.fromEntries(bharatCodeGlmEfforts.map((effort) => [effort, { reasoningEffort: effort }]))
 
   const id = model.id.toLowerCase()
   const glm52 = ["glm-5.2", "glm-5-2", "glm-5p2"].some(
