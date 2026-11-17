@@ -69,7 +69,9 @@ runs:
         # e.g. ./patches/ for standard-openapi
         # https://github.com/oven-sh/bun/issues/28147
         if [ "$RUNNER_OS" = "Windows" ]; then
+          bun .github/actions/setup-bun/windows-effect-cache.mjs prepare
           bun install --linker hoisted ${{ inputs.install-flags }}
+          bun .github/actions/setup-bun/windows-effect-cache.mjs verify
         else
           bun install ${{ inputs.install-flags }}
         fi

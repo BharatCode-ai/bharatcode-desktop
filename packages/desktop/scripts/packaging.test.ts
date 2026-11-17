@@ -17,6 +17,10 @@ test("Windows installer cannot silently replace the pinned build runtime", async
   expect(restore).toBeGreaterThan(install)
   expect(steps[installer].if).toBe("runner.os == 'Windows'")
   expect(steps[installer].with?.["bun-version"]).toBe("1.4.2")
+  const commands = steps[install].run!
+  expect(commands).toMatch(
+    /windows-effect-cache\.mjs prepare\s+bun install --linker hoisted[^\n]+\s+bun .*windows-effect-cache\.mjs verify/,
+  )
   expect(steps[restore].with?.["bun-download-url"]).toBe("${{ steps.bun-url.outputs.url }}")
   expect(steps.at(-1)?.run).toContain("packageManager.split")
   expect(steps.at(-1)?.run).toContain("bun --version")
