@@ -64,5 +64,9 @@ if (process.argv[2] === "prepare") {
   if (integrity(join(dir, "bun.lock")) !== integrity("bun.lock")) throw new Error("Effect tarball integrity mismatch")
   verify(join(dir, "node_modules/effect"))
 } else if (process.argv[2] === "verify") {
-  verify(dirname(createRequire(resolve(root, "packages/opencode/package.json")).resolve("effect/package.json")))
+  const cli = createRequire(resolve(root, "packages/opencode/package.json"))
+  verify(dirname(cli.resolve("effect/package.json")))
+  const platform = createRequire(cli.resolve("@effect/platform-node/package.json"))
+  verify(dirname(platform.resolve("effect/package.json")))
+  platform.resolve("effect/unstable/http/Cookies")
 } else throw new Error("Expected prepare or verify")

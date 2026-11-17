@@ -65,12 +65,11 @@ runs:
 
     - name: Install dependencies
       run: |
-        # Workaround for patched peer variants
-        # e.g. ./patches/ for standard-openapi
-        # https://github.com/oven-sh/bun/issues/28147
         if [ "$RUNNER_OS" = "Windows" ]; then
           bun .github/actions/setup-bun/windows-effect-cache.mjs prepare
-          bun install --linker hoisted ${{ inputs.install-flags }}
+          # Keep peer versions isolated just as on macOS/Linux; hoisting can
+          # give @effect/platform-node the stable Effect instead of its beta.
+          bun install --linker isolated ${{ inputs.install-flags }}
           bun .github/actions/setup-bun/windows-effect-cache.mjs verify
         else
           bun install ${{ inputs.install-flags }}
