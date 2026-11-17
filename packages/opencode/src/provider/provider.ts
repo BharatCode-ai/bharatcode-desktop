@@ -33,6 +33,7 @@ import { RuntimeFlags } from "@/effect/runtime-flags"
 import { ProductPolicy } from "@/product/policy"
 import { BharatCodeAccount } from "@/bharatcode/account"
 import { BharatCodeCatalog } from "@/bharatcode/catalog"
+import { isBharatCodeGlm } from "@opencode-ai/core/util/bharatcode-effort"
 import { ProviderError } from "./error"
 
 const OPENAI_HEADER_TIMEOUT_DEFAULT = 300_000
@@ -1368,7 +1369,7 @@ export function fromBharatCodeCatalogModel(model: BharatCodeCatalog.Model): Mode
     },
     status: "active",
     headers: {},
-    options: {},
+    options: eligibility.reasoning && isBharatCodeGlm("bharatcode", model.id) ? { reasoningEffort: "low" } : {},
     cost: { input: 0, output: 0, cache: { read: 0, write: 0 } },
     limit: { context: model.contextWindow!, output: model.maxOutputTokens! },
     capabilities: {

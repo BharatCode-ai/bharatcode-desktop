@@ -1,4 +1,5 @@
 import { useFilteredList } from "@opencode-ai/ui/hooks"
+import { pickerOptions } from "@/context/model-variant"
 import { useSpring } from "@opencode-ai/ui/motion-spring"
 import {
   createEffect,
@@ -1191,7 +1192,9 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     />
   )
 
-  const variants = createMemo(() => ["default", ...props.controls.model.selection.variant.list()])
+  const variants = createMemo(() =>
+    pickerOptions(props.controls.model.selection.current(), props.controls.model.selection.variant.list()),
+  )
   // Check provider variants directly: `variants` also includes the UI-only default option.
   const showVariantControl = createMemo(() => props.controls.model.selection.variant.list().length > 0)
   const accepting = createMemo(() => {

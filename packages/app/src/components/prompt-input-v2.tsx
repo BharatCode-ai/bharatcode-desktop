@@ -1,4 +1,5 @@
 import { ImagePreview } from "@opencode-ai/ui/image-preview"
+import { pickerOptions } from "@/context/model-variant"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { ProviderIcon } from "@opencode-ai/ui/provider-icon"
 import { ButtonV2 } from "@opencode-ai/ui/v2/button-v2"
@@ -328,7 +329,9 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
       keybind: command.keybindParts(item.id),
     })),
   )
-  const variants = createMemo(() => ["default", ...props.controls.model.selection.variant.list()])
+  const variants = createMemo(() =>
+    pickerOptions(props.controls.model.selection.current(), props.controls.model.selection.variant.list()),
+  )
   const controller = createPromptInputV2Controller({
     store: () => prompt.capture().store,
     state: interaction,
