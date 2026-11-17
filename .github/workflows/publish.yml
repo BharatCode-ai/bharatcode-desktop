@@ -7,12 +7,11 @@ on:
         description: Exact committed source (must equal the selected workflow ref)
         required: true
         type: string
-      channel:
-        description: Candidate channel
+      acknowledge_unsigned_windows:
+        description: Build an unsigned Windows installer for manual testing (not approval to publish)
         required: true
-        type: choice
-        options: [beta, prod]
-        default: beta
+        type: boolean
+        default: false
       target:
         description: Full release cohort or Windows-only test artifact (not publishable)
         required: false
@@ -33,11 +32,11 @@ defaults:
 
 env:
   BHARATCODE_SOURCE_SHA: ${{ inputs.source_sha }}
-  BHARATCODE_CHANNEL: ${{ inputs.channel }}
+  BHARATCODE_CHANNEL: prod
 
 jobs:
   admit:
-    if: github.repository == 'BharatCode-ai/bharatcode-desktop' && inputs.source_sha == github.sha
+    if: inputs.acknowledge_unsigned_windows && github.repository == 'BharatCode-ai/bharatcode-desktop' && inputs.source_sha == github.sha
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.identity.outputs.version }}
@@ -150,7 +149,7 @@ jobs:
         run: |
           bun scripts/prebuild.ts
           bun x electron-vite build
-      - name: Package Windows (unsigned beta policy)
+      - name: Package Windows (explicit unsigned candidate acknowledgement)
         if: runner.os == 'Windows'
         working-directory: packages/desktop
         env:
@@ -196,6 +195,15 @@ jobs:
         env:
           CANDIDATE_DIRECTORY: ${{ runner.temp }}/candidate
         run: bun packages/desktop/scripts/candidate-cohort.ts record "$CANDIDATE_DIRECTORY" "${{ matrix.target }}"
+      - name: Upgrade the actual public Windows installer on this disposable runner
+        if: runner.os == 'Windows' && needs.admit.outputs.version == '1.15.48'
+        shell: pwsh
+        run: |
+          ./script/desktop-stable-upgrade/windows.ps1
+          bun test ./packages/desktop/src/main/profile-upgrade.test.ts
+      - name: Upgrade the actual public Debian package on this disposable runner
+        if: runner.os == 'Linux' && needs.admit.outputs.version == '1.15.48'
+        run: bash script/desktop-stable-upgrade/debian.sh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: candidate-${{ matrix.target }}-${{ github.run_id }}-${{ github.run_attempt }}

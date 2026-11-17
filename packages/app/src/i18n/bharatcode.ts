@@ -1,6 +1,9 @@
 // Product-specific copy uses English fallback until translations are reviewed.
 // Kept separate from upstream's positional native-menu translation arrays.
 export const BHARATCODE_NATIVE_ENGLISH = {
+  "desktop.menu.aboutProduct": "About {{product}}",
+  "desktop.menu.hideProduct": "Hide {{product}}",
+  "desktop.menu.quitProduct": "Quit {{product}}",
   "desktop.support.error.export": "Could not save the support bundle. Please try again.",
   "desktop.chatImport.interrupted": "Interrupted before chat import",
   "desktop.chatImport.previousError": "Previous request failed",

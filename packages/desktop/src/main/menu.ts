@@ -1,4 +1,4 @@
-import { BrowserWindow, Menu } from "electron"
+import { app, BrowserWindow, Menu } from "electron"
 import type { MenuItemConstructorOptions } from "electron"
 import {
   DESKTOP_MENU,
@@ -7,7 +7,8 @@ import {
   type DesktopMenuRole,
 } from "@opencode-ai/app/desktop-menu"
 
-import { UPDATER_ENABLED } from "./constants"
+import { CHANNEL, UPDATER_ENABLED } from "./constants"
+import { productNameForChannel } from "./branding"
 import { runDesktopMenuAction } from "./desktop-menu-actions"
 import { openExternalURL } from "./windows"
 import { nativeT } from "./native-translations"
@@ -36,7 +37,15 @@ export function createMenu(deps: Deps) {
 
 function nativeItem(entry: DesktopMenuEntry, deps: Deps): MenuItemConstructorOptions {
   if (entry.type === "separator") return { type: "separator" }
-  if (entry.role) return { role: nativeRole(entry.role), label: entry.labelKey ? nativeT(entry.labelKey) : undefined }
+  if (entry.role) {
+    const label = entry.labelKey
+      ? nativeT(entry.labelKey, { product: productNameForChannel(app.isPackaged ? CHANNEL : "dev") })
+      : undefined
+    // The native About selector uses bundle defaults; open the panel with the
+    // configured display name. Hide and Quit keep their native shortcuts.
+    if (entry.role === "about") return { label, click: () => app.showAboutPanel() }
+    return { role: nativeRole(entry.role), label }
+  }
 
   const item: MenuItemConstructorOptions = {
     label: entry.labelKey ? nativeT(entry.labelKey) : undefined,

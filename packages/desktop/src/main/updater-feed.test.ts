@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test"
 import { GenericProvider } from "electron-updater/out/providers/GenericProvider"
 import { GitHubProvider } from "electron-updater/out/providers/GitHubProvider"
-import { checkDesktopBetaUpdate } from "./updater-feed"
+import { checkDesktopStableUpdate } from "./updater-feed"
 
-const release = (tag_name: string, extra = {}) => ({ tag_name, draft: false, prerelease: true, ...extra })
+const release = (tag_name: string, extra = {}) => ({ tag_name, draft: false, prerelease: false, ...extra })
 const feed = (tags: string[]) =>
   `<feed>${tags.map((tag) => `<entry><title>Fixture</title><link href="https://github.com/BharatCode-ai/bharatcode-desktop/releases/tag/${tag}"/><content>Fixture</content></entry>`).join("")}</feed>`
 
@@ -31,14 +31,14 @@ test("installed GitHub provider reproduces the Desktop tag / CLI release mismatc
 })
 
 for (const [platform, filename] of [
-  ["win32", "beta.yml"],
-  ["darwin", "beta-mac.yml"],
-  ["linux", "beta-linux.yml"],
+  ["win32", "latest.yml"],
+  ["darwin", "latest-mac.yml"],
+  ["linux", "latest-linux.yml"],
 ]) {
-  test(`Desktop beta uses installed generic provider with exact ${platform} metadata and artifact URLs`, async () => {
+  test(`Desktop stable uses installed generic provider with exact ${platform} metadata and artifact URLs`, async () => {
     const paths: string[] = []
     let provider: InstanceType<typeof GenericProvider>
-    const result = await checkDesktopBetaUpdate(
+    const result = await checkDesktopStableUpdate(
       {
         setFeedURL(options) {
           expect(options.useMultipleRangeRequests).toBe(false)
@@ -59,7 +59,7 @@ for (const [platform, filename] of [
         async checkForUpdates() {
           const updateInfo = await provider.getLatestVersion()
           expect(provider.resolveFiles(updateInfo)[0].url.href).toBe(
-            "https://github.com/BharatCode-ai/bharatcode-desktop/releases/download/desktop-beta-1.15.36/bharatcode-desktop-fixture.zip",
+            "https://github.com/BharatCode-ai/bharatcode-desktop/releases/download/desktop-1.15.36/bharatcode-desktop-fixture.zip",
           )
           return { isUpdateAvailable: true, updateInfo }
         },
@@ -70,30 +70,35 @@ for (const [platform, filename] of [
         expect(options?.redirect).toBe("error")
         return Response.json([
           release("v99.0.0"),
-          release("desktop-beta-1.15.9"),
-          release("desktop-beta-1.15.36"),
-          release("desktop-beta-9.0.0", { draft: true }),
-          release("desktop-beta-8.0.0", { prerelease: false }),
-          release("desktop-beta-2026-09-24-diagnostic"),
+          release("desktop-1.15.9"),
+          release("desktop-1.15.36"),
+          release("desktop-9.0.0", { draft: true }),
+          release("desktop-8.0.0", { prerelease: true }),
+          release("desktop-beta-99.0.0", { prerelease: true }),
+          release("desktop-beta-99.0.0"),
+          release("desktop-09.0.0"),
+          release("desktop-99999999999999999.0.0"),
+          release("desktop-8.0.0-rc.1"),
+          release("desktop-2026-09-24-diagnostic"),
         ])
       },
     )
     expect(result.isUpdateAvailable).toBe(true)
-    expect(paths).toEqual([`/BharatCode-ai/bharatcode-desktop/releases/download/desktop-beta-1.15.36/${filename}`])
+    expect(paths).toEqual([`/BharatCode-ai/bharatcode-desktop/releases/download/desktop-1.15.36/${filename}`])
   })
 }
 
 test("failed discovery never invokes the updater or falls back to CLI", async () => {
   for (const response of [
     Response.json([], { status: 200 }),
-    Response.json([release("v1.15.36")]),
+    Response.json([release("v1.15.36"), release("desktop-beta-1.15.48", { prerelease: true })]),
     Response.json({}),
     new Response("rate limited", { status: 403 }),
     new Response("not JSON"),
   ]) {
     let calls = 0
     await expect(
-      checkDesktopBetaUpdate(
+      checkDesktopStableUpdate(
         {
           setFeedURL() {
             calls++
@@ -110,29 +115,54 @@ test("failed discovery never invokes the updater or falls back to CLI", async ()
   }
 })
 
+test("stable discovery follows release pages on the known endpoint, never a supplied host", async () => {
+  const requests: string[] = []
+  const endpoint = "https://api.github.com/repos/BharatCode-ai/bharatcode-desktop/releases?per_page=100"
+  await checkDesktopStableUpdate(
+    {
+      setFeedURL(options) {
+        expect(options.url).toEndWith("/desktop-1.16.0/")
+        expect(options.channel).toBe("latest")
+      },
+      async checkForUpdates() {
+        return { updateInfo: { version: "1.16.0", files: [{ url: "bharatcode-desktop-win-x64.exe" }] } }
+      },
+    },
+    async (url) => {
+      requests.push(String(url))
+      return requests.length === 1
+        ? Response.json([release("v99.0.0"), release("desktop-1.15.48")], {
+            headers: { link: '<https://example.invalid>; rel="next"' },
+          })
+        : Response.json([release("desktop-1.16.0")])
+    },
+  )
+  expect(requests).toEqual([endpoint, endpoint + "&page=2"])
+})
+
 test("metadata failure or a version different from the selected tag fails rather than falling back", async () => {
   for (const version of [undefined, "1.15.35", "99.0.0"]) {
     await expect(
-      checkDesktopBetaUpdate(
+      checkDesktopStableUpdate(
         {
           setFeedURL() {},
           async checkForUpdates() {
             return { updateInfo: { version } }
           },
         },
-        async () => Response.json([release("desktop-beta-1.15.36")]),
+        async () => Response.json([release("desktop-1.15.36")]),
       ),
     ).rejects.toThrow("Desktop update feed unavailable")
   }
   await expect(
-    checkDesktopBetaUpdate(
+    checkDesktopStableUpdate(
       {
         setFeedURL() {},
         async checkForUpdates() {
           throw new Error("missing metadata")
         },
       },
-      async () => Response.json([release("desktop-beta-1.15.36")]),
+      async () => Response.json([release("desktop-1.15.36")]),
     ),
   ).rejects.toThrow("missing metadata")
 })
@@ -144,18 +174,43 @@ test("discovery network failure does not reuse an old feed; same-version results
       configured++
     },
     async checkForUpdates() {
-      return { isUpdateAvailable: false, updateInfo: { version: "1.15.36" } }
+      return {
+        isUpdateAvailable: false,
+        updateInfo: { version: "1.15.36", files: [{ url: "bharatcode-desktop-win-x64.exe" }] },
+      }
     },
   }
   await expect(
-    checkDesktopBetaUpdate(backend, async () => {
+    checkDesktopStableUpdate(backend, async () => {
       throw new DOMException("Timed out", "TimeoutError")
     }),
   ).rejects.toThrow("Timed out")
   expect(configured).toBe(0)
-  expect(await checkDesktopBetaUpdate(backend, async () => Response.json([release("desktop-beta-1.15.36")]))).toEqual({
+  expect(await checkDesktopStableUpdate(backend, async () => Response.json([release("desktop-1.15.36")]))).toEqual({
     isUpdateAvailable: false,
-    updateInfo: { version: "1.15.36" },
+    updateInfo: { version: "1.15.36", files: [{ url: "bharatcode-desktop-win-x64.exe" }] },
   })
   expect(configured).toBe(1)
+})
+
+test("even matching-version metadata cannot point the stable updater to a CLI or another release", async () => {
+  for (const metadata of [
+    { files: [{ url: "bharatcode-cli.exe" }] },
+    { files: [{ url: "https://example.invalid/bharatcode-desktop-win-x64.exe" }] },
+    { files: [{ url: "../desktop-beta-1.15.48/bharatcode-desktop-win-x64.exe" }] },
+    { files: [{ url: "bharatcode-desktop-win-x64.exe" }], path: "other.exe" },
+    { files: [{ url: "bharatcode-desktop-win-x64.exe" }], packages: { x64: { path: "cli.exe" } } },
+  ]) {
+    await expect(
+      checkDesktopStableUpdate(
+        {
+          setFeedURL() {},
+          async checkForUpdates() {
+            return { updateInfo: { version: "1.15.48", ...metadata } }
+          },
+        },
+        async () => Response.json([release("desktop-1.15.48")]),
+      ),
+    ).rejects.toThrow("Desktop update feed unavailable")
+  }
 })

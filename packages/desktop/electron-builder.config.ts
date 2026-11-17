@@ -6,6 +6,7 @@ import { verifyWslArtifact, wslRuntimeFilename } from "./src/main/wsl/artifact"
 import {
   BRANDING,
   appIdForChannel,
+  installedNameForChannel,
   normalizeChannel,
   packageNameForChannel,
   productNameForChannel,
@@ -18,7 +19,7 @@ const metainfo = `${path.join(packageDir, "resources", `${appId}.metainfo.xml`)}
 
 export function assertPackagingPolicy(platform: string, env = process.env, buildChannel = channel) {
   if (platform === "win32" && env.BHARATCODE_ALLOW_UNSIGNED_WINDOWS !== "1") {
-    throw new Error("Windows beta packaging requires explicit unsigned-policy acknowledgement")
+    throw new Error("Windows packaging requires explicit unsigned-policy acknowledgement")
   }
   if (platform === "darwin" && buildChannel !== "dev") {
     if (!env.CSC_LINK && !env.CSC_NAME) throw new Error("macOS release requires Developer ID signing")
@@ -63,6 +64,8 @@ const config: Configuration = {
         },
       }),
   mac: {
+    // Keep the .app filename for drag-to-replace upgrades as well as ShipIt.
+    executableName: installedNameForChannel(channel),
     category: "public.app-category.developer-tools",
     icon: "resources/icons/icon.icns",
     hardenedRuntime: true,
@@ -75,6 +78,8 @@ const config: Configuration = {
   },
   dmg: { sign: channel !== "dev" },
   win: {
+    // Existing pinned shortcuts and callback registrations target this .exe.
+    executableName: installedNameForChannel(channel),
     extraResources: [{ from: "resources/wsl-runtime", to: "wsl-runtime", filter: ["*"] }],
     icon: "resources/icons/icon.ico",
     // Current Windows release policy is explicitly unsigned. Never invoke an
@@ -84,8 +89,11 @@ const config: Configuration = {
     verifyUpdateCodeSignature: false,
   },
   nsis: {
+    // electron-builder UUIDv5 of the shipped ai.bharatcode.desktop.beta appId.
+    ...(channel !== "dev" && { guid: "7482e884-fa37-5b72-9a66-4f82ac598969" }),
     oneClick: true,
     perMachine: false,
+    deleteAppDataOnUninstall: false,
     installerIcon: "resources/icons/icon.ico",
     installerHeaderIcon: "resources/icons/icon.ico",
   },
@@ -96,7 +104,8 @@ const config: Configuration = {
     desktop: { entry: { StartupWMClass: appId } },
     target: ["AppImage", "deb"],
   },
-  deb: { fpm: [metainfo] },
+  // With a scoped npm name, FPM formerly derived this from "BharatCode Beta".
+  deb: { packageName: packageNameForChannel(channel), fpm: [metainfo] },
 }
 
 export default config

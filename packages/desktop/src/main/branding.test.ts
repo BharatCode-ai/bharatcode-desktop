@@ -20,7 +20,7 @@ describe("BharatCode desktop branding", () => {
   test("builds BharatCode app ids and product names by channel", () => {
     expect(appIdForChannel("dev")).toBe("ai.bharatcode.desktop.dev")
     expect(appIdForChannel("beta")).toBe("ai.bharatcode.desktop.beta")
-    expect(appIdForChannel("prod")).toBe("ai.bharatcode.desktop")
+    expect(appIdForChannel("prod")).toBe("ai.bharatcode.desktop.beta")
 
     expect(productNameForChannel("dev")).toBe("BharatCode Dev")
     expect(productNameForChannel("beta")).toBe("BharatCode Beta")

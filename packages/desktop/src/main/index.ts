@@ -6,7 +6,7 @@ import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import { getCACertificates, setDefaultCACertificates } from "node:tls"
 import type { Event } from "electron"
-import { app, BrowserWindow, powerMonitor, shell } from "electron"
+import { app, BrowserWindow, Menu, powerMonitor, shell } from "electron"
 
 import { Deferred, Effect, Fiber } from "effect"
 import contextMenu from "electron-context-menu"
@@ -16,7 +16,7 @@ import { checkAppExists, resolveAppPath } from "./apps"
 import { CHANNEL } from "./constants"
 import { registerIpcHandlers, sendDeepLinks, sendMenuCommand } from "./ipc"
 import { forwardInitializationFailure, initializeConnection } from "./initialization"
-import { BRANDING, appIdForChannel, productNameForChannel, shouldRegisterProtocol } from "./branding"
+import { BRANDING, configureDesktopProfile, shouldRegisterProtocol } from "./branding"
 import { createBharatCodeAccountClient, type BharatCodeSidecarConnection } from "./bharatcode-auth"
 import { supportErrors } from "./support-errors"
 import { createRuntimeAccounts } from "./runtime-accounts"
@@ -139,7 +139,6 @@ const main = Effect.gen(function* () {
 
   process.env.OPENCODE_DISABLE_EMBEDDED_WEB_UI = "true"
 
-  const appId = appIdForChannel(app.isPackaged ? CHANNEL : "dev")
   const diagnostic = testProfile(process.env, tmpdir(), randomUUID())
   if (diagnostic) {
     Object.assign(process.env, diagnostic.env)
@@ -149,9 +148,14 @@ const main = Effect.gen(function* () {
     app.setPath("sessionData", diagnostic.session)
     app.setPath("documents", diagnostic.documents)
   }
-  app.setName(productNameForChannel(app.isPackaged ? CHANNEL : "dev"))
-  app.setAppUserModelId(appId)
-  app.setPath("userData", diagnostic ? diagnostic.desktop : join(app.getPath("appData"), appId))
+  configureDesktopProfile(app, app.isPackaged ? CHANNEL : "dev", diagnostic?.desktop)
+  if (!app.requestSingleInstanceLock()) {
+    app.quit()
+    return
+  }
+  // Suppress Electron's default macOS app menu (named for Safe Storage)
+  // until the translated product menu is installed.
+  if (process.platform === "darwin") Menu.setApplicationMenu(null)
   initializeOldLayoutEligibility(app.getPath("userData"))
   logger = initLogging()
   initCrashReporter()
@@ -176,21 +180,6 @@ const main = Effect.gen(function* () {
       },
     },
   )
-  const mobileAccess = yield* Effect.promise(() => createMobileAccess({ userDataPath: app.getPath("userData"), getConnection: () => mobileConnection }))
-  app.once("will-quit", () => void mobileAccess.close())
-  const stopSidecars = async () => {
-    await mobileAccess.close()
-    await killSidecar()
-    await wslServers.stopAll()
-  }
-  const relaunch = () => {
-    setAppQuitting()
-    void stopSidecars().finally(() => {
-      app.relaunch()
-      app.quit()
-    })
-  }
-
   try {
     setDefaultCACertificates([...new Set([...getCACertificates("default"), ...getCACertificates("system")])])
   } catch (error) {
@@ -210,11 +199,6 @@ const main = Effect.gen(function* () {
   const features = app.commandLine.getSwitchValue("enable-features")
   app.commandLine.appendSwitch("enable-features", features ? `${jsCallStackFeature},${features}` : jsCallStackFeature)
   if (!app.isPackaged) app.commandLine.appendSwitch("remote-debugging-port", "9222")
-
-  if (!app.requestSingleInstanceLock()) {
-    app.quit()
-    return
-  }
 
   const shellEnv = preferAppEnv(app.getPath("userData"))
 
@@ -257,6 +241,24 @@ const main = Effect.gen(function* () {
   app.on("open-url", (event: Event, url: string) => {
     void deepLinkEvents.openUrl(event, url)
   })
+
+  // Register both cold-start callback paths before the first async startup step.
+  const mobileAccess = yield* Effect.promise(() =>
+    createMobileAccess({ userDataPath: app.getPath("userData"), getConnection: () => mobileConnection }),
+  )
+  app.once("will-quit", () => void mobileAccess.close())
+  const stopSidecars = async () => {
+    await mobileAccess.close()
+    await killSidecar()
+    await wslServers.stopAll()
+  }
+  const relaunch = () => {
+    setAppQuitting()
+    void stopSidecars().finally(() => {
+      app.relaunch()
+      app.quit()
+    })
+  }
 
   app.on("before-quit", () => {
     setAppQuitting()
@@ -317,6 +319,7 @@ const main = Effect.gen(function* () {
     checkForUpdates: () => void showUpdaterDialog(updater, true),
     relaunch,
   }
+  createMenu(menuDeps)
   setSupportAuthReader(() => account.getSupportStatus())
   registerIpcHandlers({
     account,
@@ -459,8 +462,7 @@ const main = Effect.gen(function* () {
   })
 
   void Effect.runPromise(Deferred.await(serverReady)).then(() => mobileAccess.restore()).catch(() => {})
-  const windows = restoreMainWindows()
-  if (windows.length) createMenu(menuDeps)
+  restoreMainWindows()
   // Render the upstream startup/error surface while the barrier is pending.
   // Joining propagates failure; it cannot falsely publish a ready connection.
   yield* Fiber.join(loadingTask).pipe(

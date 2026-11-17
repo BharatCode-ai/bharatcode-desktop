@@ -41,16 +41,16 @@ test("packaging cannot substitute an upstream product, protocol, CLI or update d
 })
 
 test("unsigned Windows is explicit and macOS release signing plus notarization is mandatory", () => {
-  expect(() => assertPackagingPolicy("win32", {}, "beta")).toThrow("unsigned")
-  expect(() => assertPackagingPolicy("win32", { BHARATCODE_ALLOW_UNSIGNED_WINDOWS: "1" }, "beta")).not.toThrow()
-  expect(() => assertPackagingPolicy("darwin", {}, "beta")).toThrow("Developer ID")
-  expect(() => assertPackagingPolicy("darwin", { CSC_LINK: "test" }, "beta")).toThrow("notarization")
+  expect(() => assertPackagingPolicy("win32", {}, "prod")).toThrow("unsigned")
+  expect(() => assertPackagingPolicy("win32", { BHARATCODE_ALLOW_UNSIGNED_WINDOWS: "1" }, "prod")).not.toThrow()
+  expect(() => assertPackagingPolicy("darwin", {}, "prod")).toThrow("Developer ID")
+  expect(() => assertPackagingPolicy("darwin", { CSC_LINK: "test" }, "prod")).toThrow("notarization")
   expect(() =>
     assertPackagingPolicy(
       "darwin",
       { CSC_LINK: "test", APPLE_API_KEY: "test", APPLE_API_KEY_ID: "test", APPLE_API_ISSUER: "test" },
-      "beta",
+      "prod",
     ),
   ).not.toThrow()
-  expect(() => assertPackagingPolicy("linux", {}, "beta")).not.toThrow()
+  expect(() => assertPackagingPolicy("linux", {}, "prod")).not.toThrow()
 })

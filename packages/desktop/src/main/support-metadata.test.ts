@@ -11,9 +11,7 @@ for (const platform of ["linux", "darwin", "win32"] as const) {
     test(`${platform}/${channel} resolves branded channel paths and overrides`, () => {
       const home = platform === "win32" ? "C:\\Users\\private" : "/home/private"
       const paths = resolveSupportPaths({ platform, channel, home, temp: home, env: {} })
-      expect(paths.database).toContain(
-        channel === "prod" ? "BharatCode" : `BharatCode ${channel === "dev" ? "Dev" : "Beta"}`,
-      )
+      expect(paths.database).toContain(channel === "dev" ? "BharatCode Dev" : "BharatCode Beta")
       const custom = resolveSupportPaths({
         platform,
         channel,
@@ -36,8 +34,8 @@ test("storage resolution honors sidecar channel/home while retaining the app upd
     temp: "/tmp",
     env: { BHARATCODE_CHANNEL: "prod", OPENCODE_TEST_HOME: "/tmp/isolated" },
   })
-  expect(paths.database).toBe("/tmp/isolated/.local/share/BharatCode/bharatcode.db")
-  expect(paths.config).toBe("/tmp/isolated/.config/BharatCode")
+  expect(paths.database).toBe("/tmp/isolated/.local/share/BharatCode Beta/bharatcode.db")
+  expect(paths.config).toBe("/tmp/isolated/.config/BharatCode Beta")
 })
 
 test("real Node collector reads only metadata and handles missing, legacy, malformed, and locked databases", async () => {
