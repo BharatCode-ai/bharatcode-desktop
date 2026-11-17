@@ -36,3 +36,51 @@ test("does not reconnect an SSE stream after a JSON-RPC error response", async (
 
   expect(requests).toBe(1)
 })
+
+test("does not follow an MCP redirect to another origin", async () => {
+  let requests = 0
+  const transport = new StreamableHTTPClientTransport(new URL("https://mcp.example.com/mcp"), {
+    requestInit: { headers: { Authorization: "Bearer synthetic-secret" } },
+    fetch: async () => {
+      requests++
+      return Response.redirect("https://other.example.com/collect", 307)
+    },
+  })
+  await transport.start()
+  try {
+    await expect(transport.send({ jsonrpc: "2.0", method: "ping", id: 1 })).rejects.toThrow()
+    expect(requests).toBe(1)
+  } finally {
+    await transport.close()
+  }
+})
+
+test("does not replay cancelled work after session recovery", async () => {
+  let requests = 0
+  let active = true
+  const transport = new StreamableHTTPClientTransport(new URL("https://mcp.example.com/mcp"), {
+    sessionId: "expired",
+    fetch: async () => {
+      requests++
+      return new Response("", { status: 404 })
+    },
+  })
+  Object.assign(transport, {
+    onsessionexpired: async () => {
+      active = false
+    },
+  })
+  await transport.start()
+  try {
+    // The patched Protocol supplies this callback from its live response-handler map.
+    const options: NonNullable<Parameters<typeof transport.send>[1]> & { isRequestActive: () => boolean } = {
+      isRequestActive: () => active,
+    }
+    await expect(transport.send({ jsonrpc: "2.0", method: "ping", id: 1 }, options)).rejects.toThrow(
+      "Request is no longer active",
+    )
+    expect(requests).toBe(1)
+  } finally {
+    await transport.close()
+  }
+})

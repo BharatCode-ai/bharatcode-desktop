@@ -8,6 +8,7 @@ import { EffectFlock } from "@opencode-ai/core/util/effect-flock"
 
 export const Tokens = Schema.Struct({
   accessToken: Schema.mutableKey(Schema.String),
+  issuer: Schema.mutableKey(Schema.optional(Schema.String)),
   refreshToken: Schema.mutableKey(Schema.optional(Schema.String)),
   expiresAt: Schema.mutableKey(Schema.optional(Schema.Number)),
   scope: Schema.mutableKey(Schema.optional(Schema.String)),
@@ -16,6 +17,7 @@ export type Tokens = Schema.Schema.Type<typeof Tokens>
 
 export const ClientInfo = Schema.Struct({
   clientId: Schema.mutableKey(Schema.String),
+  issuer: Schema.mutableKey(Schema.optional(Schema.String)),
   clientSecret: Schema.mutableKey(Schema.optional(Schema.String)),
   clientIdIssuedAt: Schema.mutableKey(Schema.optional(Schema.Number)),
   clientSecretExpiresAt: Schema.mutableKey(Schema.optional(Schema.Number)),

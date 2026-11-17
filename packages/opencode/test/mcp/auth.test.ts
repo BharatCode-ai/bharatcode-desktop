@@ -4,6 +4,8 @@ import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { Effect, Layer } from "effect"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { McpAuth } from "../../src/mcp/auth"
+import { auth as authorize } from "@modelcontextprotocol/sdk/client/auth.js"
+import { McpOAuthPendingProvider, McpOAuthProvider } from "../../src/mcp/oauth-provider"
 
 function authFile() {
   let raw = ""
@@ -76,3 +78,55 @@ test("serializes concurrent auth file updates across service instances", async (
     }),
   )
 })
+
+for (const configured of [false, true]) {
+  test(`preserves issuer binding for ${configured ? "configured" : "registered"} MCP credentials`, async () => {
+    const service = await Effect.runPromise(authService(authFile().fsLayer))
+    const serverUrl = "https://mcp.example.com/mcp"
+    const issuer = "https://trusted.example.com"
+    const config = configured ? { clientId: "test-client", clientSecret: "test-secret" } : {}
+    const pending = new McpOAuthPendingProvider("test", serverUrl, config, { onRedirect: async () => {} }, service)
+    await pending.saveClientInformation({
+      client_id: "test-client",
+      client_secret: "test-secret",
+      redirect_uris: [pending.redirectUrl],
+      issuer,
+    })
+    await pending.saveTokens({
+      access_token: "test-access",
+      refresh_token: "test-refresh",
+      token_type: "Bearer",
+      issuer,
+    })
+    await pending.commit()
+
+    const provider = new McpOAuthProvider("test", serverUrl, config, { onRedirect: async () => {} }, service)
+    expect((await provider.clientInformation())?.issuer).toBe(issuer)
+    expect((await provider.tokens())?.issuer).toBe(issuer)
+    let requests = 0
+    const changedIssuer = Object.assign(provider, {
+      discoveryState: async () => ({
+        authorizationServerUrl: "https://other.example.com",
+        resourceMetadata: { resource: serverUrl },
+        authorizationServerMetadata: {
+          issuer: "https://other.example.com",
+          authorization_endpoint: "https://other.example.com/authorize",
+          token_endpoint: "https://other.example.com/token",
+          response_types_supported: ["code"],
+        },
+      }),
+    })
+    await expect(
+      authorize(changedIssuer, {
+        serverUrl,
+        authorizationCode: "synthetic-code",
+        fetchFn: async () => {
+          requests++
+          throw new Error("Credentials must not reach the changed issuer")
+        },
+      }),
+    ).rejects.toThrow("Existing OAuth client information is required")
+    expect(requests).toBe(0)
+    expect((await provider.tokens())?.refresh_token).toBe("test-refresh")
+  })
+}
