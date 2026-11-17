@@ -32,17 +32,18 @@ test("registered production export IPC rejects foreign/subframe calls and uses t
                 args.path === "fixture-state" ||
                 (args.importer.endsWith("/ipc.ts") &&
                   !args.path.startsWith("node:") &&
-                  args.path !== "./support-export")
+                  args.path !== "./support-export" &&
+                  args.path !== "./browse")
               )
                 return { path: "boundaries", namespace: "fixture" }
-                return undefined
+              return undefined
             })
             builder.onLoad({ filter: /.*/, namespace: "fixture" }, () => ({
               loader: "js",
               contents: `
           export const handlers = new Map();
           export const ipcMain = {handle: (name, handler) => {if(handlers.has(name)) throw Error('duplicate route'); handlers.set(name, handler)}, on: () => {}};
-          export const app = {getPath: () => ${JSON.stringify(root)}, once: () => {}, on: () => {}};
+          export const app = {getAppPath: () => ${JSON.stringify(root)}, getPath: () => ${JSON.stringify(root)}, once: () => {}, on: () => {}};
           export const BrowserWindow = {}, clipboard = {}, dialog = {}, shell = {};
           export const isOwnedRenderer = id => id === 1;
           export const nativeT = key => key;
@@ -79,6 +80,10 @@ test("registered production export IPC rejects foreign/subframe calls and uses t
         {sender: {id:1,mainFrame},senderFrame:{}},
       ]) await assert.rejects(action(event), /desktop.support.error.export/);
       assert.equal(calls,0);
+      const browse = handlers.get('browse-setup');
+      assert.equal((await browse({sender:{id:2,mainFrame},senderFrame:mainFrame}, 'setup')).state, 'failed');
+      assert.equal((await browse({sender:{id:1,mainFrame},senderFrame:{}}, 'setup')).state, 'failed');
+      assert.equal((await browse({sender:{id:1,mainFrame},senderFrame:mainFrame}, 'check')).state, 'unavailable');
       assert.equal(await action({sender:{id:1,mainFrame},senderFrame:mainFrame}), 'canonical.zip');
       assert.equal(calls,1);
       // #59 deliberately retains one existing route; there is no competing exporter.
