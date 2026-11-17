@@ -1,3 +1,4 @@
+import type { BrowseAction, BrowseResult } from "../main/browse"
 import type { DesktopMenuAction } from "@opencode-ai/app/desktop-menu"
 import type { WslServersPlatform } from "@opencode-ai/app/wsl/types"
 import type { UpdaterState } from "@opencode-ai/app/updater"
@@ -58,6 +59,7 @@ export type FatalRendererError = {
 
 export type ElectronAPI = {
   mobileAccess: (input: MobileAction) => Promise<MobileState>
+  browseSetup: (action: BrowseAction) => Promise<BrowseResult>
   getChatImportStatus: () => Promise<{ state: "pending" | "complete" | "failed"; imported: number; skipped: number }>
   getAccountStatus: (runtimeId?: string) => Promise<BharatCodeAccountStatus>
   refreshAccountStatus: (runtimeId?: string) => Promise<BharatCodeAccountStatus>

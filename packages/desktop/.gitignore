@@ -31,3 +31,5 @@ resources/bharatcode-cli*
 resources/icons
 resources/*.metainfo.xml
 resources/wsl-runtime/
+
+resources/bharatcode-browse/
