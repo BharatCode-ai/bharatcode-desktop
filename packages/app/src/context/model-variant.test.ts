@@ -1,7 +1,25 @@
 import { describe, expect, test } from "bun:test"
-import { cycleModelVariant, getConfiguredAgentVariant, resolveModelVariant } from "./model-variant"
+import {
+  cycleModelVariant,
+  defaultPickerEffort,
+  getConfiguredAgentVariant,
+  pickerOptions,
+  resolveModelVariant,
+} from "./model-variant"
 
 describe("model variant", () => {
+  for (const id of ["glm-5.3-flash", "qwen-3.8-27b"]) {
+    test(`offers Low and High with a Low default for BharatCode ${id}`, () => {
+      const model = { provider: { id: "bharatcode" }, id }
+      const variants = ["low", "high"]
+      expect(pickerOptions(model, variants)).toEqual(["low", "high"])
+      expect(defaultPickerEffort(model, variants)).toBe("low")
+      expect(resolveModelVariant({ variants, selected: "high", configured: undefined })).toBe("high")
+      expect(defaultPickerEffort(model, [])).toBeUndefined()
+      expect(pickerOptions({ provider: { id: "other" }, id }, variants)).toEqual(["default", "low", "high"])
+    })
+  }
+
   test("resolves configured agent variant when model matches", () => {
     const value = getConfiguredAgentVariant({
       agent: {

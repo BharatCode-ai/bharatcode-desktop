@@ -1,3 +1,15 @@
+import { isBharatCodeGlm } from "@opencode-ai/core/util/bharatcode-effort"
+
+type PickerModel = { provider: { id: string }; id: string } | undefined
+
+export function defaultPickerEffort(model: PickerModel, variants: string[]) {
+  if (model && isBharatCodeGlm(model.provider.id, model.id) && variants.includes("low")) return "low"
+}
+
+export function pickerOptions(model: PickerModel, variants: string[]) {
+  return defaultPickerEffort(model, variants) ? variants : ["default", ...variants]
+}
+
 type AgentModel = {
   providerID: string
   modelID: string

@@ -1,7 +1,12 @@
 import { batch, createMemo, startTransition } from "solid-js"
 import { useModels } from "@/context/models"
 import type { ModelKey, ModelSelection } from "@/context/local"
-import { cycleModelVariant, getConfiguredAgentVariant, resolveModelVariant } from "@/context/model-variant"
+import {
+  cycleModelVariant,
+  defaultPickerEffort,
+  getConfiguredAgentVariant,
+  resolveModelVariant,
+} from "@/context/model-variant"
 import { usePrompt } from "@/context/prompt"
 import { useSDK } from "@/context/sdk"
 import { useSync } from "@/context/sync"
@@ -100,6 +105,7 @@ export function createPromptModelSelection(input: { agent: () => { model?: Model
         if (!model) return
         const saved = models.variant.get({ providerID: model.provider.id, modelID: model.id })
         if (saved && this.list().includes(saved)) return saved
+        return defaultPickerEffort(model, this.list())
       },
       list() {
         return Object.keys(current()?.variants ?? {})
@@ -117,6 +123,10 @@ export function createPromptModelSelection(input: { agent: () => { model?: Model
       cycle() {
         const variants = this.list()
         if (variants.length === 0) return
+        if (defaultPickerEffort(current(), variants)) {
+          const index = variants.indexOf(this.current() ?? "low")
+          return this.set(variants[(index + 1) % variants.length])
+        }
         this.set(
           cycleModelVariant({
             variants,

@@ -1,5 +1,6 @@
 import { Context, Effect, Layer, Schema, Semaphore } from "effect"
 import { serviceUse } from "@opencode-ai/core/effect/service-use"
+import { bharatCodeGlmEfforts, isBharatCodeGlm } from "@opencode-ai/core/util/bharatcode-effort"
 import { BharatCodeAccount } from "./account"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { ModelV2 } from "@opencode-ai/core/model"
@@ -274,6 +275,7 @@ export function toV2Model(model: Model): ModelV2.Info | undefined {
   const media = (values: readonly string[]) =>
     values.flatMap((value) => (value === "text" || value === "image" ? [`${value}/*`] : []))
   const id = ModelV2.ID.make(model.id)
+  const glm = eligibility.reasoning && isBharatCodeGlm(v2ProviderID, id)
   return ModelV2.Info.make({
     id,
     providerID: v2ProviderID,
@@ -284,8 +286,14 @@ export function toV2Model(model: Model): ModelV2.Info | undefined {
       input: media(eligibility.input),
       output: media(eligibility.output),
     },
-    request: { headers: {}, body: {} },
-    variants: [],
+    request: { headers: {}, body: {}, ...(glm ? { variant: "low" } : {}) },
+    variants: glm
+      ? bharatCodeGlmEfforts.map((effort) => ({
+          id: ModelV2.VariantID.make(effort),
+          headers: {},
+          body: { reasoning_effort: effort },
+        }))
+      : [],
     time: { released: (model.created ?? 0) * 1000 },
     cost: [],
     status: "active",
