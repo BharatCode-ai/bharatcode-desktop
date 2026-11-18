@@ -18,7 +18,7 @@ import { testEffect } from "../lib/effect"
 import { MODEL_CATALOG_UNAVAILABLE, MODEL_SIGN_IN_REQUIRED } from "@opencode-ai/core/util/model-recovery"
 
 const MESSAGE =
-  "BharatCode App is only available to Pro subscribers. If you're a student, please sign in with your student email id instead or reach out at help@bharatcode.ai to verify your student status. BharatCode Chat is free for all users, visit chat.bharatcode.ai."
+  "Coding access requires BharatCode Lite, Pro or verified student status. Students: verify your college email at https://bharatcode.ai/account#student-email-title, then refresh Account status and retry. Already subscribed? Check that you signed in with the right account."
 
 const providerLayer = LayerNode.compile(Provider.node, [
   // This file exercises the shipped surface, and a test build is generic by

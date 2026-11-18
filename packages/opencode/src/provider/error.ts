@@ -190,7 +190,11 @@ export function parseAPICallError(input: { providerID: ProviderV2.ID; error: API
   // A plan denial is fully explained by apiDenialMessage; passing the raw body
   // through as well would show the same refusal twice.
   const responseBody =
-    input.providerID === "bharatcode" && errorCode === "model_not_in_plan" ? undefined : input.error.responseBody
+    input.providerID === "bharatcode" &&
+    (errorCode === "model_not_in_plan" ||
+      BharatCodeModel.isAccessRequired(input.providerID, input.error.statusCode, errorCode))
+      ? undefined
+      : input.error.responseBody
   if (isContextOverflow(m) || input.error.statusCode === 413 || body?.error?.code === "context_length_exceeded") {
     return {
       type: "context_overflow",
@@ -204,7 +208,11 @@ export function parseAPICallError(input: { providerID: ProviderV2.ID; error: API
     type: "api_error",
     message: m,
     statusCode: input.error.statusCode,
-    isRetryable: input.providerID.startsWith("openai") ? isOpenAiErrorRetryable(input.error) : input.error.isRetryable,
+    isRetryable: BharatCodeModel.isAccessRequired(input.providerID, input.error.statusCode, errorCode)
+      ? false
+      : input.providerID.startsWith("openai")
+        ? isOpenAiErrorRetryable(input.error)
+        : input.error.isRetryable,
     responseHeaders: input.error.responseHeaders,
     responseBody,
     metadata,

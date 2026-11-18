@@ -1,5 +1,6 @@
-export const ACCESS_REQUIRED_MESSAGE =
-  "BharatCode App is only available to Pro subscribers. If you're a student, please sign in with your student email id instead or reach out at help@bharatcode.ai to verify your student status. BharatCode Chat is free for all users, visit chat.bharatcode.ai."
+import { MODEL_ACCESS_REQUIRED } from "@opencode-ai/core/util/model-recovery"
+
+export const ACCESS_REQUIRED_MESSAGE = MODEL_ACCESS_REQUIRED
 
 export const MODEL_ACCESS_DENIED_MESSAGE = "This BharatCode model is not available for your account."
 
