@@ -9,7 +9,7 @@ export type Identity = {
   source: string
   tree: string
   version: string
-  channel: "prod"
+  channel: "beta" | "prod"
   repository: string
   run: string
   attempt: string
@@ -46,13 +46,14 @@ export function validateIdentity(
     desktopVersion: string
     cliVersion: string
   },
+  options: { allowBeta?: boolean } = {},
 ) {
   if (
     !/^[a-f0-9]{40}$/.test(value.source) ||
     !/^[a-f0-9]{40}$/.test(value.tree) ||
     !/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/.test(value.version) ||
     !value.version.split(".").map(Number).every(Number.isSafeInteger) ||
-    value.channel !== "prod" ||
+    (value.channel !== "prod" && !(options.allowBeta && value.channel === "beta")) ||
     value.repository !== "BharatCode-ai/bharatcode-desktop" ||
     !/^[1-9]\d*$/.test(value.run) ||
     !/^[1-9]\d*$/.test(value.attempt) ||
@@ -216,7 +217,7 @@ export async function stageRelease(root: string, output: string, identity: Ident
     sha512: intel.files[0].sha512,
   }
   const tag = `desktop-${identity.version}`
-  const compatibility = identity.version === "1.15.48" ? `desktop-beta-${identity.version}` : null
+  const compatibility = identity.version === "1.15.50" ? `desktop-beta-${identity.version}` : null
   // Local retries may fill missing files, but must never overwrite or adopt
   // conflicting bytes, links or an unexpected member of either release.
   const stable = path.join(output, "stable")
@@ -326,7 +327,7 @@ export async function collectCohort(root: string, identity: Identity) {
 }
 
 const git = (...args: string[]) => execFileSync("git", args, { encoding: "utf8" }).trim()
-async function currentIdentity(): Promise<Identity> {
+async function currentIdentity(options: { allowBeta?: boolean } = {}): Promise<Identity> {
   const desktop = JSON.parse(await fs.readFile(new URL("../package.json", import.meta.url), "utf8"))
   const cli = JSON.parse(await fs.readFile(new URL("../../opencode/package.json", import.meta.url), "utf8"))
   const value = {
@@ -338,14 +339,18 @@ async function currentIdentity(): Promise<Identity> {
     run: process.env.GITHUB_RUN_ID ?? "",
     attempt: process.env.GITHUB_RUN_ATTEMPT ?? "",
   }
-  return validateIdentity(value, {
-    head: git("rev-parse", "HEAD"),
-    tree: value.tree,
-    dirty: !!git("status", "--porcelain", "--untracked-files=normal"),
-    workflowSource: process.env.GITHUB_SHA ?? "",
-    desktopVersion: desktop.version,
-    cliVersion: cli.version,
-  })
+  return validateIdentity(
+    value,
+    {
+      head: git("rev-parse", "HEAD"),
+      tree: value.tree,
+      dirty: !!git("status", "--porcelain", "--untracked-files=normal"),
+      workflowSource: process.env.GITHUB_SHA ?? "",
+      desktopVersion: desktop.version,
+      cliVersion: cli.version,
+    },
+    options,
+  )
 }
 
 async function verifySigning(target: Target, dist: string, identity: Identity) {
@@ -438,9 +443,9 @@ async function record(root: string, target: Target, identity: Identity) {
 }
 
 if (import.meta.main) {
-  const identity = await currentIdentity()
   const [mode, directory, target] = process.argv.slice(2)
-  if (mode === "admit") {
+  const identity = await currentIdentity({ allowBeta: mode === "admit-cli" })
+  if (mode === "admit" || mode === "admit-cli") {
     if (process.env.GITHUB_OUTPUT) await fs.appendFile(process.env.GITHUB_OUTPUT, `version=${identity.version}\n`)
     console.log(JSON.stringify(identity))
   } else if (mode === "record" && directory && target) {

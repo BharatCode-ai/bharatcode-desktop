@@ -194,6 +194,7 @@ describe("BharatCode public catalog", () => {
     expect(models.map((model) => model.id)).toEqual([valid.id])
     expect(BharatCodeCatalog.toV2Model(models[0])).toMatchObject({
       id: valid.id,
+      family: valid.id,
       capabilities: { tools: false },
       limit: { context: 256_000, output: 32_000 },
     })
@@ -318,6 +319,7 @@ describe("BharatCode public catalog", () => {
     })
     expect(BharatCodeCatalog.toV2Model(futureChat)).toMatchObject({
       id: "bharatcode:future-text-coder",
+      family: "bharatcode:future-text-coder",
       limit: { context: 128_000, output: 16_000 },
     })
 

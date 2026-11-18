@@ -15,7 +15,7 @@ test("1.15.46 generic provider resolves staged beta metadata to the exact stable
   try {
     const { release, output } = await stageFixture(root)
     const base = "https://github.com/BharatCode-ai/bharatcode-desktop/releases/download/"
-    expect(release.compatibility).toBe("desktop-beta-1.15.48")
+    expect(release.compatibility).toBe("desktop-beta-1.15.50")
     expect((await fs.readdir(path.join(output, "compatibility"))).sort()).toEqual([
       "beta-linux.yml",
       "beta-mac.yml",
@@ -45,7 +45,7 @@ test("1.15.46 generic provider resolves staged beta metadata to the exact stable
         },
       )
       const info = await provider.getLatestVersion()
-      expect(info.version).toBe("1.15.48")
+      expect(info.version).toBe("1.15.50")
       const files = provider.resolveFiles(info)
       expect(info.path).toBe(files[0].url.href)
       if (platform === "linux") {
@@ -81,7 +81,7 @@ test("1.15.46 generic provider resolves staged beta metadata to the exact stable
         const [oldMap, newMap] = await provider.getBlockMapFiles(file.url, "1.15.46", info.version)
         expect(newMap.href).toBe(file.url.href + ".blockmap")
         expect(release.files.some((entry) => entry.name === name + ".blockmap")).toBe(true)
-        expect(oldMap.href).toBe(newMap.href.replace("desktop-1.15.48", "desktop-1.15.46"))
+        expect(oldMap.href).toBe(newMap.href.replace("desktop-1.15.50", "desktop-1.15.46"))
         if (platform !== "win32") continue
         // No desktop-1.15.46 stable tag exists. Exercise the pinned updater's
         // actual fallback decision with no old cache, network or real profile.
@@ -119,7 +119,7 @@ test("1.15.46 generic provider resolves staged beta metadata to the exact stable
 test("subsequent stable versions stage no legacy metadata or compatibility tag", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "bc-stable-only-"))
   try {
-    const { release, output } = await stageFixture(root, "1.15.49")
+    const { release, output } = await stageFixture(root, "1.15.51")
     expect(release.compatibility).toBeNull()
     expect(release.compatibilityFiles).toEqual([])
     expect(await fs.readdir(output)).toEqual(["stable"])

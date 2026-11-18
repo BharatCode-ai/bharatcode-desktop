@@ -279,6 +279,9 @@ export function toV2Model(model: Model): ModelV2.Info | undefined {
   return ModelV2.Info.make({
     id,
     providerID: v2ProviderID,
+    // The picker groups recent models by family; an absent family is dropped.
+    // Each published ID remains independently selectable, including compatibility IDs.
+    family: ModelV2.Family.make(model.id),
     name: model.displayName,
     api: { id, type: "aisdk", package: V2_API_PACKAGE, settings: {} },
     capabilities: {

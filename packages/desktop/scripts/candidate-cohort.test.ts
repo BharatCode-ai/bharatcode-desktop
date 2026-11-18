@@ -60,6 +60,39 @@ test("candidate admission binds the workflow, checkout, committed versions and r
   ).toThrow()
 })
 
+test("CLI beta admission is explicit and does not weaken stable Desktop admission", () => {
+  const source = {
+    head: identity.source,
+    tree: identity.tree,
+    dirty: false,
+    workflowSource: identity.source,
+    desktopVersion: identity.version,
+    cliVersion: identity.version,
+  }
+  const beta = { ...identity, channel: "beta" as const }
+  expect(() => validateIdentity(beta, source)).toThrow()
+  expect(validateIdentity(beta, source, { allowBeta: true })).toEqual(beta)
+  expect(() => validateIdentity(beta, { ...source, dirty: true }, { allowBeta: true })).toThrow()
+  expect(() => validateIdentity(beta, { ...source, head: "f".repeat(40) }, { allowBeta: true })).toThrow()
+  expect(validateIdentity(identity, source)).toEqual(identity)
+})
+
+test("first stable candidate runs real upgrade checks for the same version as the bridge", async () => {
+  const workflow = Bun.YAML.parse(
+    await Bun.file(new URL("../../../.github/workflows/publish.yml", import.meta.url)).text(),
+  ) as { jobs: { package: { steps: Array<{ name?: string; if?: string }> } } }
+  for (const platform of ["Windows", "Debian"]) {
+    const step = workflow.jobs.package.steps.find((step: { name?: string }) =>
+      step.name?.startsWith("Upgrade the actual public " + platform),
+    )
+    expect(step?.if).toContain("needs.admit.outputs.version == '" + identity.version + "'")
+  }
+  for (const script of ["windows.ps1", "debian.sh"])
+    expect(
+      await Bun.file(new URL("../../../script/desktop-stable-upgrade/" + script, import.meta.url)).text(),
+    ).toContain(identity.version)
+})
+
 test("tested-release command binds the original run to a clean exact checkout, not the publishing workflow SHA", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "bc-release-command-"))
   try {
@@ -146,7 +179,7 @@ test("release staging preserves tested bytes and merges both Mac updater archite
     await fs.writeFile(path.join(input, "cohort.json"), manifest)
     const digest = createHash("sha256").update(manifest).digest("hex")
     const release = await stageRelease(input, output, identity, digest)
-    expect(release.tag).toBe("desktop-1.15.48")
+    expect(release.tag).toBe("desktop-1.15.50")
     expect(release.acceptance).toBe("pending")
     expect(release.publication).toBe("not-authorized")
     expect(release.candidateSha256).toBe(digest)

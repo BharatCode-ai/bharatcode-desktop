@@ -1,6 +1,6 @@
 # BharatCode Desktop release channels
 
-The public app is **BharatCode** (`prod`). Version **1.15.48** is the first stable candidate. The 1.15.47 beta candidate is not a stable installer and cannot be relabeled or promoted as one.
+The public app is **BharatCode** (`prod`). Version **1.15.50** is the first stable release candidate, including student-verification recovery and the latest merged image-history fix. The earlier 1.15.48/1.15.49 builds are superseded unpublished candidates; their test results do not approve this build. The 1.15.47 beta candidate is not a stable installer and cannot be relabeled or promoted as one.
 
 | Installed client | What its updater looks for |
 | --- | --- |
