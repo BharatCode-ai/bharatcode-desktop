@@ -119,6 +119,7 @@ const layer = Layer.effect(
       }
       let aborted = false
       let active = false
+      let toolStarted = false
       let capture:
         | {
             read: Effect.Effect<string | undefined>
@@ -168,6 +169,9 @@ const layer = Layer.effect(
                   // execution boundary, not the event notification, while text streams freely.
                   await bridge.promise(ensureSnapshot())
                   if (!active || args[1].abortSignal?.aborted) throw new DOMException("Aborted", "AbortError")
+                  // A failed stream may already have caused a side effect. Never
+                  // replay that turn automatically, even if the tool has settled.
+                  toolStarted = true
                   return execute(...args)
                 },
               },
@@ -417,6 +421,7 @@ const layer = Layer.effect(
           }
 
           case "tool-call": {
+            if (value.providerExecuted) toolStarted = true
             if (ctx.assistantMessage.summary) {
               throw new Error(`Tool call not allowed while generating summary: ${value.name}`)
             }
@@ -768,15 +773,6 @@ const layer = Layer.effect(
               Stream.runDrain,
             )
           }).pipe(
-            Effect.onInterrupt(() =>
-              Effect.gen(function* () {
-                aborted = true
-                active = false
-                if (!ctx.assistantMessage.error) {
-                  yield* halt(new DOMException("Aborted", "AbortError"))
-                }
-              }),
-            ),
             Effect.catchCauseIf(
               (cause) => !Cause.hasInterruptsOnly(cause),
               (cause) => Effect.fail(Cause.squash(cause)),
@@ -785,6 +781,7 @@ const layer = Layer.effect(
               SessionRetry.policy({
                 provider: input.model.providerID,
                 parse,
+                canRetry: () => !toolStarted && !aborted,
                 set: (info) => {
                   return status.set(ctx.sessionID, {
                     type: "retry",
@@ -794,6 +791,17 @@ const layer = Layer.effect(
                     next: info.next,
                   })
                 },
+              }),
+            ),
+            // Include the backoff wait, not just the active stream, so Cancel
+            // always leaves a stopped message and idle session with no retry.
+            Effect.onInterrupt(() =>
+              Effect.gen(function* () {
+                aborted = true
+                active = false
+                if (!ctx.assistantMessage.error) {
+                  yield* halt(new DOMException("Aborted", "AbortError"))
+                }
               }),
             ),
             Effect.catch(halt),

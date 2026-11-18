@@ -4,7 +4,9 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { expect } from "bun:test"
 import { tool } from "ai"
-import { Cause, Effect, Exit, Fiber, Layer, Stream } from "effect"
+import { Cause, Effect, Exit, Fiber, Layer, Queue, Stream } from "effect"
+import { TestClock } from "effect/testing"
+import { BharatCodeAccount } from "@/bharatcode/account"
 import path from "path"
 import z from "zod"
 import type { Agent } from "../../src/agent/agent"
@@ -19,7 +21,7 @@ import { SessionStatus } from "../../src/session/status"
 import { SessionSummary } from "../../src/session/summary"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { provideTmpdirInstance, provideTmpdirServer } from "../fixture/fixture"
-import { testEffect } from "../lib/effect"
+import { pollWithTimeout, testEffect } from "../lib/effect"
 import { raw, reply, TestLLMServer } from "../lib/llm-server"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { ProviderV2 } from "@opencode-ai/core/provider"
@@ -103,17 +105,6 @@ function defer<T>() {
   })
   return { promise, resolve }
 }
-
-const waitFor = <A, R>(check: Effect.Effect<A | undefined, never, R>, message: string) =>
-  Effect.gen(function* () {
-    const stop = Date.now() + 500
-    while (Date.now() < stop) {
-      const value = yield* check
-      if (value !== undefined) return value
-      yield* Effect.sleep("10 millis")
-    }
-    return yield* Effect.fail(new Error(message))
-  })
 
 const user = Effect.fn("TestSession.user")(function* (sessionID: SessionID, text: string) {
   const session = yield* Session.Service
@@ -234,6 +225,174 @@ const boot = Effect.fn("test.boot")(function* () {
   return { processors, session, provider }
 })
 
+for (const mode of ["recover-after-tool", "exhaust", "cancel-backoff", "tool-completed"] as const) {
+  let requests = 0
+  let executions = 0
+  const histories: LLM.StreamInput["messages"][] = []
+  const failure = new BharatCodeAccount.TransportError({
+    operation: "authenticated request",
+    message: "BharatCode authenticated request could not reach the service.",
+    cause: Object.assign(new Error("synthetic socket reset"), { code: "ECONNRESET" }),
+  })
+  const controlled = Layer.succeed(
+    LLM.Service,
+    LLM.Service.of({
+      stream: (input) =>
+        Stream.suspend((): Stream.Stream<LLMEvent, BharatCodeAccount.TransportError> => {
+          requests++
+          histories.push(input.messages)
+          if (requests === 1 && (mode === "recover-after-tool" || mode === "tool-completed")) {
+            return Stream.make(
+              LLMEvent.stepStart({ index: 0 }),
+              LLMEvent.toolInputStart({ id: "saved-tool", name: "lookup" }),
+              LLMEvent.toolInputEnd({ id: "saved-tool", name: "lookup" }),
+              LLMEvent.toolCall({ id: "saved-tool", name: "lookup", input: { query: "once" } }),
+            ).pipe(
+              Stream.concat(
+                Stream.fromEffect(
+                  Effect.promise(() =>
+                    input.tools.lookup.execute!(
+                      { query: "once" },
+                      {
+                        toolCallId: "saved-tool",
+                        messages: input.messages,
+                      },
+                    ),
+                  ),
+                ).pipe(
+                  Stream.map(() =>
+                    LLMEvent.toolResult({
+                      id: "saved-tool",
+                      name: "lookup",
+                      result: { type: "json", value: { title: "Saved", output: "saved tool result", metadata: {} } },
+                    }),
+                  ),
+                ),
+              ),
+              Stream.concat(
+                mode === "tool-completed"
+                  ? Stream.fail(failure)
+                  : Stream.make(
+                      LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
+                      LLMEvent.finish({ reason: "tool-calls" }),
+                    ),
+              ),
+            )
+          }
+          if (mode !== "recover-after-tool" || requests === 2) return Stream.fail(failure)
+          return Stream.make(
+            LLMEvent.stepStart({ index: 0 }),
+            LLMEvent.textStart({ id: "recovered" }),
+            LLMEvent.textDelta({ id: "recovered", text: "continued successfully" }),
+            LLMEvent.textEnd({ id: "recovered" }),
+            LLMEvent.stepFinish({ index: 0, reason: "stop" }),
+            LLMEvent.finish({ reason: "stop" }),
+          )
+        }),
+    }),
+  )
+  const recovery = testEffect(LayerNode.compile(root, [...replacements, [LLM.node, controlled]]))
+  recovery.effect(
+    `BharatCode connection recovery: ${mode}`,
+    () =>
+      provideTmpdirInstance(
+        (dir) =>
+          Effect.gen(function* () {
+            const { processors, session, provider } = yield* boot()
+            const events = yield* EventV2Bridge.Service
+            const status = yield* SessionStatus.Service
+            const notices = yield* Queue.unbounded<number>()
+            const chat = yield* session.create({})
+            const parent = yield* user(chat.id, "continue without repeating completed work")
+            const mdl = yield* provider.getModel(ref.providerID, ref.modelID)
+            const off = yield* events.listen((event) => {
+              if (event.type !== SessionStatus.Event.Status.type) return Effect.void
+              const data = event.data as typeof SessionStatus.Event.Status.data.Type
+              return data.sessionID === chat.id && data.status.type === "retry"
+                ? Queue.offer(notices, data.status.attempt).pipe(Effect.asVoid)
+                : Effect.void
+            })
+            const tools = {
+              lookup: tool({
+                description: "One side effect",
+                inputSchema: z.object({ query: z.string() }),
+                execute: async () => {
+                  executions++
+                  return { title: "Saved", output: "saved tool result", metadata: {} }
+                },
+              }),
+            }
+            const first = yield* assistant(chat.id, parent.id, path.resolve(dir))
+            const firstHandle = yield* processors.create({ assistantMessage: first, sessionID: chat.id, model: mdl })
+            const initial: LLM.StreamInput = {
+              user: parent,
+              sessionID: chat.id,
+              model: mdl,
+              agent: agent(),
+              system: [],
+              messages: [{ role: "user", content: "continue" }],
+              tools,
+            }
+            if (mode === "tool-completed") {
+              expect(yield* firstHandle.process(initial)).toBe("stop")
+              expect(requests).toBe(1)
+              expect(executions).toBe(1)
+              const parts = yield* MessageV2.parts(first.id)
+              expect(parts.filter((part) => part.type === "tool")).toMatchObject([
+                { state: { status: "completed", output: "saved tool result" } },
+              ])
+              yield* off
+              return
+            }
+            const handle =
+              mode === "recover-after-tool"
+                ? yield* Effect.gen(function* () {
+                    expect(yield* firstHandle.process(initial)).toBe("continue")
+                    const next = yield* assistant(chat.id, parent.id, path.resolve(dir))
+                    return yield* processors.create({ assistantMessage: next, sessionID: chat.id, model: mdl })
+                  })
+                : firstHandle
+            const previous = yield* MessageV2.get({ sessionID: chat.id, messageID: first.id })
+            const messages =
+              mode === "recover-after-tool"
+                ? yield* MessageV2.toModelMessagesEffect([{ info: parent, parts: [] }, previous], mdl)
+                : initial.messages
+            const run = yield* handle.process({ ...initial, messages }).pipe(Effect.forkChild)
+            expect(yield* Queue.take(notices)).toBe(1)
+            if (mode === "cancel-backoff") {
+              yield* Fiber.interrupt(run)
+              yield* TestClock.adjust("2 minutes")
+              expect(Exit.isFailure(yield* Fiber.await(run))).toBe(true)
+              expect(requests).toBe(1)
+              expect(handle.message.error?.name).toBe("MessageAbortedError")
+              expect(yield* status.get(chat.id)).toMatchObject({ type: "idle" })
+            } else if (mode === "exhaust") {
+              for (const attempt of [2, 3, 4, 5]) {
+                yield* TestClock.adjust("31 seconds")
+                expect(yield* Queue.take(notices)).toBe(attempt)
+              }
+              yield* TestClock.adjust("31 seconds")
+              expect(yield* Fiber.join(run)).toBe("stop")
+              expect(requests).toBe(6)
+              expect(handle.message.error?.name).toBe("APIError")
+            } else {
+              yield* TestClock.adjust("31 seconds")
+              expect(yield* Fiber.join(run)).toBe("continue")
+              expect(requests).toBe(3)
+              expect(executions).toBe(1)
+              expect(histories[1]).toEqual(histories[2])
+              expect(JSON.stringify(histories[2])).toContain("saved tool result")
+              expect((yield* MessageV2.get({ sessionID: chat.id, messageID: first.id })).parts).toEqual(previous.parts)
+              expect(handle.message.error).toBeUndefined()
+            }
+            yield* off
+          }),
+        { config: cfg },
+      ),
+    15_000,
+  )
+}
+
 for (const mode of ["text", "tool", "abort", "snapshot-failure", "provider-failure"] as const) {
   const gate = defer<void>()
   let tracks = 0
@@ -346,7 +505,7 @@ for (const mode of ["text", "tool", "abort", "snapshot-failure", "provider-failu
             expect(handle.message.error).toBeDefined()
             return
           }
-          yield* waitFor(
+          yield* pollWithTimeout(
             MessageV2.parts(msg.id).pipe(
               Effect.map((parts) =>
                 parts.find((part) =>
@@ -599,7 +758,7 @@ it.live("session.processor effect tests preserve text start time", () =>
           })
           .pipe(Effect.forkChild)
 
-        yield* waitFor(
+        yield* pollWithTimeout(
           MessageV2.parts(msg.id).pipe(
             Effect.map((parts) => parts.find((part): part is SessionV1.TextPart => part.type === "text")),
             Effect.provideService(Database.Service, database),
@@ -1212,7 +1371,7 @@ it.live("session.processor effect tests mark pending tools as aborted on cleanup
           .pipe(Effect.forkChild)
 
         yield* llm.wait(1)
-        yield* waitFor(
+        yield* pollWithTimeout(
           MessageV2.parts(msg.id).pipe(
             Effect.map((parts) => parts.find((part): part is SessionV1.ToolPart => part.type === "tool")),
             Effect.provideService(Database.Service, database),

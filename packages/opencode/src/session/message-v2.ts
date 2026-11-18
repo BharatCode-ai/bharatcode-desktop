@@ -29,6 +29,7 @@ import { lt } from "drizzle-orm"
 import { or } from "drizzle-orm"
 import { MessageTable, PartTable, SessionTable } from "@opencode-ai/core/session/sql"
 import { ProviderError } from "@/provider/error"
+import { BharatCodeAccount } from "@/bharatcode/account"
 import { iife } from "@/util/iife"
 import { errorMessage } from "@/util/error"
 import { isMedia } from "@/util/media"
@@ -654,6 +655,9 @@ export function fromError(
       ).toObject()
     case OutputLengthError.isInstance(e):
       return e
+    case e instanceof BharatCodeAccount.TransportError && e.operation === "authenticated request":
+      if (ctx.aborted) return new AbortedError({ message: "Request cancelled." }).toObject()
+      return new APIError(BharatCodeAccount.transportFailure(e), { cause: e }).toObject()
     case LoadAPIKeyError.isInstance(e):
       return new AuthError(
         {

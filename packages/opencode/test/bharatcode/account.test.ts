@@ -2,6 +2,9 @@ import { describe, expect, test } from "bun:test"
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
+import { createServer } from "node:net"
+import { streamText } from "ai"
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible"
 import { Effect, Layer, Semaphore } from "effect"
 import { Auth } from "@/auth"
 import { BharatCodeAccount } from "@/bharatcode/account"
@@ -849,5 +852,118 @@ describe("BharatCode native account", () => {
     })
     expect(BharatCodeAccount.fetchFailure(new AbortController().signal, error)).toBe(error)
     expect(BharatCodeAccount.fetchFailure(undefined, error)).toBe(error)
+  })
+
+  test("a real socket reset remains retryable through authenticatedFetch without refreshing or deleting credentials", async () => {
+    const server = createServer((socket) => socket.destroy())
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
+    try {
+      const address = server.address()
+      if (!address || typeof address === "string") throw new Error("Missing loopback address")
+      const initial = oauth({ expires: 9_999_999 })
+      let calls = 0
+      const service = run(
+        BharatCodeAccount.use.authenticatedFetch("https://bharatcode.ai/api/model/v1/chat/completions", {
+          method: "POST",
+        }),
+        {
+          initial,
+          now: () => 1_000,
+          fetch: async () => {
+            calls++
+            return fetch(`http://127.0.0.1:${address.port}`)
+          },
+        },
+      )
+      const error = await service.promise.catch((error: unknown) => error)
+      const provider = createOpenAICompatible({
+        name: "bharatcode",
+        baseURL: BharatCodeAccount.MODEL_API_BASE_URL,
+        apiKey: "synthetic-test-only",
+        fetch: Object.assign(
+          async () => {
+            throw error
+          },
+          { preconnect: () => {} },
+        ),
+      })
+      const stream = streamText({
+        model: provider.chatModel("glm-5.3-flash"),
+        prompt: "synthetic",
+        maxRetries: 0,
+        onError: () => {},
+      })
+      let sdkError: unknown
+      for await (const part of stream.fullStream) if (part.type === "error") sdkError = part.error
+      expect(sdkError).toBe(error)
+      const providerID = ProviderV2.ID.make("bharatcode")
+      const surfaced = MessageV2.fromError(BharatCodeAccount.fetchFailure(undefined, sdkError), { providerID })
+      expect(surfaced).toMatchObject({
+        name: "APIError",
+        data: { isRetryable: true, metadata: { code: "ECONNRESET" } },
+      })
+      expect(SessionRetry.retryable(surfaced, providerID)).toEqual({
+        message: "Connection to BharatCode was interrupted.",
+      })
+      expect(calls).toBe(1)
+      expect(service.store.read()).toEqual(initial)
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())))
+    }
+  })
+
+  test("transport classification is bounded, sanitized and excludes permanent failures", () => {
+    const providerID = ProviderV2.ID.make("bharatcode")
+    for (const [code, retry] of [
+      ["ECONNRESET", true],
+      ["ETIMEDOUT", true],
+      ["EAI_AGAIN", true],
+      ["UND_ERR_SOCKET", true],
+      ["ENOTFOUND", false],
+      ["CERT_HAS_EXPIRED", false],
+      ["ERR_SSL_PROTOCOL_ERROR", false],
+      ["CUSTOM_SECRET_CODE", false],
+    ] as const) {
+      const cause = Object.assign(new Error("https://secret.invalid/?token=private-prompt"), { code })
+      const error = new BharatCodeAccount.TransportError({
+        operation: "authenticated request",
+        message: "original wrapper",
+        cause,
+      })
+      const surfaced = MessageV2.fromError(error, { providerID })
+      expect(Boolean(SessionRetry.retryable(surfaced, providerID))).toBe(retry)
+      expect(JSON.stringify(surfaced)).not.toMatch(/secret|private-prompt|CUSTOM_SECRET_CODE/)
+    }
+    const cause = new TypeError("fetch failed", {
+      cause: Object.assign(new Error("private"), { code: "CERT_HAS_EXPIRED" }),
+    })
+    const error = new BharatCodeAccount.TransportError({
+      operation: "authenticated request",
+      message: "wrapper",
+      cause,
+    })
+    expect(SessionRetry.retryable(MessageV2.fromError(error, { providerID }), providerID)).toBeUndefined()
+    const cyclic = new TypeError("Failed to fetch") as TypeError & { cause: unknown }
+    cyclic.cause = cyclic
+    expect(
+      BharatCodeAccount.transportFailure(
+        new BharatCodeAccount.TransportError({ operation: "authenticated request", message: "wrapper", cause: cyclic }),
+      ).isRetryable,
+    ).toBe(true)
+  })
+
+  test("Cancel wins over a racing connection reset and never becomes a retry", () => {
+    const controller = new AbortController()
+    controller.abort(new DOMException("User cancelled", "AbortError"))
+    const providerID = ProviderV2.ID.make("bharatcode")
+    const error = new BharatCodeAccount.TransportError({
+      operation: "authenticated request",
+      message: "wrapper",
+      cause: Object.assign(new Error("reset"), { code: "ECONNRESET" }),
+    })
+    const surfaced = MessageV2.fromError(BharatCodeAccount.fetchFailure(controller.signal, error), { providerID })
+    expect(surfaced.name).toBe("MessageAbortedError")
+    expect(SessionRetry.retryable(surfaced, providerID)).toBeUndefined()
+    expect(MessageV2.fromError(error, { providerID, aborted: true }).name).toBe("MessageAbortedError")
   })
 })

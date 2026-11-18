@@ -179,7 +179,7 @@ test("release staging preserves tested bytes and merges both Mac updater archite
     await fs.writeFile(path.join(input, "cohort.json"), manifest)
     const digest = createHash("sha256").update(manifest).digest("hex")
     const release = await stageRelease(input, output, identity, digest)
-    expect(release.tag).toBe("desktop-1.15.50")
+    expect(release.tag).toBe("desktop-1.15.51")
     expect(release.acceptance).toBe("pending")
     expect(release.publication).toBe("not-authorized")
     expect(release.candidateSha256).toBe(digest)

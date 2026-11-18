@@ -176,6 +176,72 @@ export function fetchFailure(signal: AbortSignal | null | undefined, error: unkn
   return signal?.aborted && signal.reason !== undefined ? signal.reason : error
 }
 
+// Keep low-level diagnostics useful without displaying a fetch error's URL,
+// headers or body. Only known temporary transport failures are retried.
+export function transportFailure(error: TransportError) {
+  const temporary = new Set([
+    "ECONNRESET",
+    "ECONNREFUSED",
+    "ECONNABORTED",
+    "ETIMEDOUT",
+    "EPIPE",
+    "EAI_AGAIN",
+    "ENETUNREACH",
+    "EHOSTUNREACH",
+    "UND_ERR_SOCKET",
+    "UND_ERR_CONNECT_TIMEOUT",
+    "UND_ERR_HEADERS_TIMEOUT",
+    "UND_ERR_BODY_TIMEOUT",
+  ])
+  const permanent = new Set([
+    "ENOTFOUND",
+    "CERT_HAS_EXPIRED",
+    "DEPTH_ZERO_SELF_SIGNED_CERT",
+    "SELF_SIGNED_CERT_IN_CHAIN",
+    "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+    "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+    "ERR_TLS_CERT_ALTNAME_INVALID",
+    "TLS_ERROR",
+  ])
+  let cause: unknown = error.cause
+  let code = "BHARATCODE_TRANSPORT"
+  let genericFetchFailure = false
+  for (let depth = 0; depth < 5 && cause && typeof cause === "object"; depth++) {
+    const value = cause as { code?: unknown; name?: unknown; message?: unknown; cause?: unknown }
+    if (typeof value.code === "string" && permanent.has(value.code)) {
+      code = value.code
+      break
+    }
+    if (typeof value.code === "string" && /CERT|TLS|SSL/i.test(value.code)) {
+      code = "TLS_ERROR"
+      break
+    }
+    if (typeof value.code === "string" && temporary.has(value.code)) code = value.code
+    if (
+      value.name === "TypeError" &&
+      typeof value.message === "string" &&
+      /^(?:fetch failed|failed to fetch|networkerror when attempting to fetch resource\.?|load failed)$/i.test(
+        value.message,
+      )
+    )
+      genericFetchFailure = true
+    cause = value.cause
+  }
+  if (code === "BHARATCODE_TRANSPORT" && genericFetchFailure) code = "FETCH_FAILED"
+  const isRetryable = temporary.has(code) || code === "FETCH_FAILED"
+  return {
+    message: isRetryable
+      ? "Connection to BharatCode was interrupted."
+      : code === "ENOTFOUND"
+        ? "BharatCode could not be found. Check your internet connection and DNS settings."
+        : permanent.has(code)
+          ? "A secure connection to BharatCode could not be established. Check your network or proxy settings."
+          : "BharatCode could not complete the request. Check your connection and try again.",
+    isRetryable,
+    metadata: { code },
+  }
+}
+
 function accountChanged(operation: string) {
   return new ServiceError({
     operation,

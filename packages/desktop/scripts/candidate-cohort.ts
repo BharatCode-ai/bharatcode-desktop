@@ -217,7 +217,7 @@ export async function stageRelease(root: string, output: string, identity: Ident
     sha512: intel.files[0].sha512,
   }
   const tag = `desktop-${identity.version}`
-  const compatibility = identity.version === "1.15.50" ? `desktop-beta-${identity.version}` : null
+  const compatibility = identity.version === "1.15.51" ? `desktop-beta-${identity.version}` : null
   // Local retries may fill missing files, but must never overwrite or adopt
   // conflicting bytes, links or an unexpected member of either release.
   const stable = path.join(output, "stable")

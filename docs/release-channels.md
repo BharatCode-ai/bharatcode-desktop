@@ -1,6 +1,8 @@
 # BharatCode Desktop release channels
 
-The public app is **BharatCode** (`prod`). Version **1.15.50** is the first stable release candidate, including student-verification recovery and the latest merged image-history fix. The earlier 1.15.48/1.15.49 builds are superseded unpublished candidates; their test results do not approve this build. The 1.15.47 beta candidate is not a stable installer and cannot be relabeled or promoted as one.
+The public app is **BharatCode** (`prod`). Version **1.15.51** is the first stable release candidate, including bounded connection recovery, student-verification recovery and the latest merged image-history fix. The earlier 1.15.48/1.15.49/1.15.50 builds are superseded unpublished candidates; their test results do not approve this build. The 1.15.47 beta candidate is not a stable installer and cannot be relabeled or promoted as one.
+
+Connection recovery keeps the existing five-retry limit and jittered backoff capped at 30 seconds for transport failures. Cancel interrupts both the active request and a pending backoff. Automatic retries never restart a turn after a local or provider-executed tool has started; completed results remain in history for an explicit continuation. A failure on a later model turn can retry using those existing results without re-executing the tools. Permanent DNS/TLS failures and authorization refusals are not treated as temporary connection resets.
 
 | Installed client | What its updater looks for |
 | --- | --- |

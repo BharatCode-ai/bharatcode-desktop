@@ -7,7 +7,7 @@ import { assembleCohort, stageRelease, type Receipt } from "../candidate-cohort"
 export const identity = {
   source: "a".repeat(40),
   tree: "b".repeat(40),
-  version: "1.15.50",
+  version: "1.15.51",
   channel: "prod" as const,
   repository: "BharatCode-ai/bharatcode-desktop",
   run: "123",
