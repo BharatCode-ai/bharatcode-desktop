@@ -26,6 +26,7 @@ const fields = {
   session: [
     "id",
     "project_id",
+    "workspace_id",
     "parent_id",
     "slug",
     "directory",
@@ -38,13 +39,26 @@ const fields = {
     "time_created",
     "time_updated",
     "time_archived",
+    "goal",
   ],
   message: ["id", "session_id", "time_created", "time_updated", "data"],
   part: ["id", "message_id", "session_id", "time_created", "time_updated", "data"],
 } as const
 
+const columnCache = new Map<string, Set<string>>()
+function getColumns(db: DatabaseSync, table: string): Set<string> {
+  let cols = columnCache.get(table)
+  if (!cols) {
+    const tableColumns = db.prepare(`PRAGMA table_info("${table}")`).all() as { name: string }[]
+    cols = new Set(tableColumns.map((col) => col.name))
+    columnCache.set(table, cols)
+  }
+  return cols
+}
+
 function insert(db: DatabaseSync, table: keyof typeof fields, row: Row) {
-  const keys = fields[table].filter((key) => row[key] !== undefined)
+  const validColumns = getColumns(db, table)
+  const keys = fields[table].filter((key) => row[key] !== undefined && validColumns.has(key))
   db.prepare(
     `INSERT INTO "${table}" (${keys.map((key) => `"${key}"`).join(",")}) VALUES (${keys.map(() => "?").join(",")})`,
   ).run(...keys.map((key) => row[key]!))
@@ -142,6 +156,7 @@ function normalize(value: SQLInputValue) {
 }
 
 export async function importPreviousChats(source: string, destination: string) {
+  columnCache.clear()
   const sourceStat = await lstat(source).catch((error: NodeJS.ErrnoException) => {
     if (error.code === "ENOENT") return undefined
     throw error
