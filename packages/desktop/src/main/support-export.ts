@@ -3,6 +3,7 @@ import { rename, unlink, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { ZipWriter, Uint8ArrayWriter, TextReader } from "@zip.js/zip.js"
 import { createSupportBundle, type SupportBundleInput } from "./support-bundle"
+import { supportEvents } from "@opencode-ai/core/util/support-event"
 
 export function createSupportExporter(options: {
   directory: () => string
@@ -12,13 +13,18 @@ export function createSupportExporter(options: {
 }) {
   let pending: Promise<string> | undefined
   const save = async () => {
-    const input = await Promise.resolve()
+    const input: SupportBundleInput = await Promise.resolve()
       .then(options.input)
       .catch(() => ({}))
     const generated = new Date().toISOString()
-    const document = createSupportBundle({ ...input, generated })
+    const backendEvents = supportEvents(input.backendEvents)
+    const document = createSupportBundle({ ...input, generated, backendEvents })
     const writer = new ZipWriter(new Uint8ArrayWriter())
     await writer.add("support-bundle.json", new TextReader(JSON.stringify(document, null, 2)))
+    await writer.add(
+      "backend-events.jsonl",
+      new TextReader(backendEvents.map((event) => JSON.stringify(event)).join("\n")),
+    )
     const bytes = await writer.close()
     const output = join(
       options.directory(),

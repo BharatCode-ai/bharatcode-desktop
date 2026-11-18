@@ -29,6 +29,8 @@ import { ModelV2 } from "@opencode-ai/core/model"
 import { SessionProjector } from "@opencode-ai/core/session/projector"
 import { LLMEvent } from "@opencode-ai/llm"
 import { Snapshot } from "@/snapshot"
+import { subscribeSupportEvents } from "@/support-events"
+import type { SupportEvent } from "@opencode-ai/core/util/support-event"
 
 const summary = Layer.succeed(
   SessionSummary.Service,
@@ -331,6 +333,9 @@ for (const mode of ["recover-after-tool", "exhaust", "cancel-backoff", "tool-com
       provideTmpdirInstance(
         (dir) =>
           Effect.gen(function* () {
+            const diagnostics: SupportEvent[] = []
+            const detach = subscribeSupportEvents((event) => diagnostics.push(event))
+            yield* Effect.addFinalizer(() => Effect.sync(detach))
             const { processors, session, provider } = yield* boot()
             const events = yield* EventV2Bridge.Service
             const status = yield* SessionStatus.Service
@@ -372,6 +377,7 @@ for (const mode of ["recover-after-tool", "exhaust", "cancel-backoff", "tool-com
               expect(requests).toBe(1)
               expect(executions).toBe(0)
               expect(firstHandle.message.error?.name).toBe("APIError")
+              expect(diagnostics.some((event) => event.event === "tool_replay_prevented")).toBe(true)
               yield* off
               return
             }
@@ -379,6 +385,8 @@ for (const mode of ["recover-after-tool", "exhaust", "cancel-backoff", "tool-com
               expect(yield* firstHandle.process(initial)).toBe("stop")
               expect(requests).toBe(1)
               expect(executions).toBe(1)
+              expect(diagnostics.filter((event) => event.event === "retry_scheduled")).toHaveLength(0)
+              expect(diagnostics.some((event) => event.event === "tool_replay_prevented")).toBe(true)
               const parts = yield* MessageV2.parts(first.id)
               expect(parts.filter((part) => part.type === "tool")).toMatchObject([
                 { state: { status: "completed", output: "saved tool result" } },
@@ -408,6 +416,7 @@ for (const mode of ["recover-after-tool", "exhaust", "cancel-backoff", "tool-com
               expect(requests).toBe(1)
               expect(handle.message.error?.name).toBe("MessageAbortedError")
               expect(yield* status.get(chat.id)).toMatchObject({ type: "idle" })
+              expect(diagnostics.some((event) => event.event === "request_cancelled")).toBe(true)
             } else if (mode === "exhaust") {
               for (const attempt of [2, 3, 4, 5]) {
                 yield* TestClock.adjust("31 seconds")
@@ -426,7 +435,15 @@ for (const mode of ["recover-after-tool", "exhaust", "cancel-backoff", "tool-com
               expect(JSON.stringify(histories[2])).toContain("saved tool result")
               expect((yield* MessageV2.get({ sessionID: chat.id, messageID: first.id })).parts).toEqual(previous.parts)
               expect(handle.message.error).toBeUndefined()
+              expect(diagnostics.at(-1)?.event).toBe("request_completed")
             }
+            expect(diagnostics.find((event) => event.event === "request_failed")?.code).toBe("ECONNRESET")
+            expect(diagnostics.find((event) => event.event === "request_failed")?.operationId).toMatch(
+              /^[0-9a-f-]{36}$/,
+            )
+            expect(diagnostics.some((event) => event.event === "retry_scheduled")).toBe(true)
+            expect(JSON.stringify(diagnostics)).not.toContain("saved tool result")
+            expect(JSON.stringify(diagnostics)).not.toContain("continue without")
             yield* off
           }),
         { config: cfg },

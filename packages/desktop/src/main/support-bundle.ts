@@ -1,3 +1,5 @@
+import { supportEvents } from "@opencode-ai/core/util/support-event"
+
 export const supportErrorCategories = [
   "startup",
   "sidecar",
@@ -97,6 +99,13 @@ export function createSupportBundle(input: SupportBundleInput) {
         renderer: integer(errors.renderer, 200) ?? 0,
         other: integer(errors.other, 200) ?? 0,
       },
+    },
+    backendLog: {
+      file: "backend-events.jsonl" as const,
+      scope: "local_backend_only" as const,
+      windowHours: 24 as const,
+      retainedLimit: 200 as const,
+      count: supportEvents(input.backendEvents).length,
     },
   }
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Never install on a developer machine or production server.
 set -euo pipefail
-[[ "${GITHUB_ACTIONS:-}" = true && "${RUNNER_ENVIRONMENT:-}" = github-hosted && "${BHARATCODE_VERSION:-}" = 1.15.51 ]]
+[[ "${GITHUB_ACTIONS:-}" = true && "${RUNNER_ENVIRONMENT:-}" = github-hosted && "${BHARATCODE_VERSION:-}" = 1.15.52 ]]
 asset=bharatcode-desktop-linux-amd64.deb
 old="$RUNNER_TEMP/public-11546.deb"
 new="$RUNNER_TEMP/candidate/linux-x64/$asset"

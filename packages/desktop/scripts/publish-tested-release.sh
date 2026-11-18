@@ -11,10 +11,10 @@ api="repos/$repo"
 stable=${RELEASE_TAG:?}
 version=${stable#desktop-}
 [[ "$stable" == desktop-"$version" && "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
-[[ "$(printf '%s\n' 1.15.51 "$version" | sort -V | head -1)" == 1.15.51 ]]
+[[ "$(printf '%s\n' 1.15.52 "$version" | sort -V | head -1)" == 1.15.52 ]]
 (cd "$root/stable" && sha256sum --strict --check SHA256SUMS)
 bridge=''
-if [[ "$version" == 1.15.51 ]]; then bridge=desktop-beta-1.15.51; fi
+if [[ "$version" == 1.15.52 ]]; then bridge=desktop-beta-1.15.52; fi
 jq -e --arg stable "$stable" --arg bridge "$bridge" --arg sha "$SOURCE_SHA" --arg hash "$CANDIDATE_SHA256" \
   --arg run "$SOURCE_RUN_ID" --arg attempt "$SOURCE_RUN_ATTEMPT" --arg repo "$repo" '
   .tag == $stable and (.compatibility // "") == $bridge and .candidateSha256 == $hash and

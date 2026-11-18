@@ -233,13 +233,13 @@ jobs:
           CANDIDATE_DIRECTORY: ${{ runner.temp }}/candidate
         run: bun packages/desktop/scripts/candidate-cohort.ts record "$CANDIDATE_DIRECTORY" "${{ matrix.target }}"
       - name: Upgrade the actual public Windows installer on this disposable runner
-        if: runner.os == 'Windows' && needs.admit.outputs.version == '1.15.51'
+        if: runner.os == 'Windows' && needs.admit.outputs.version == '1.15.52'
         shell: pwsh
         run: |
           ./script/desktop-stable-upgrade/windows.ps1
           bun test ./packages/desktop/src/main/profile-upgrade.test.ts
       - name: Upgrade the actual public Debian package on this disposable runner
-        if: runner.os == 'Linux' && needs.admit.outputs.version == '1.15.51'
+        if: runner.os == 'Linux' && needs.admit.outputs.version == '1.15.52'
         run: bash script/desktop-stable-upgrade/debian.sh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

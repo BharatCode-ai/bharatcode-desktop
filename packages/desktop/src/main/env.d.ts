@@ -13,6 +13,7 @@ declare module "virtual:opencode-server" {
     export const listen: (
       options: Parameters<typeof import("../../../opencode/dist/types/src/node").Server.listen>[0] & {
         onSupportDatabase?: (metadata: unknown) => void
+        onSupportEvent?: (event: unknown) => void
       },
     ) => ReturnType<typeof import("../../../opencode/dist/types/src/node").Server.listen>
     export type Listener = import("../../../opencode/dist/types/src/node").Server.Listener

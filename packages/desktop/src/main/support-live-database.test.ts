@@ -94,7 +94,7 @@ test("real initialized runtime exports active-WAL metadata without reading or ch
     const reader = new ZipReader(new Uint8ArrayReader(new Uint8Array(await readFile(result.output))))
     try {
       const entries = await reader.getEntries()
-      expect(entries.map((entry) => entry.filename)).toEqual(["support-bundle.json"])
+      expect(entries.map((entry) => entry.filename)).toEqual(["support-bundle.json", "backend-events.jsonl"])
       const entry = entries[0]
       if (entry.directory) throw new Error("expected JSON")
       const text = await entry.getData!(new TextWriter())

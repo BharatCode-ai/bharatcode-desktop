@@ -1,6 +1,6 @@
 # One-time packaging check, only on the disposable first-stable candidate runner.
 $ErrorActionPreference = 'Stop'
-if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted' -or $env:BHARATCODE_VERSION -ne '1.15.51') {
+if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted' -or $env:BHARATCODE_VERSION -ne '1.15.52') {
     throw 'Requires the hosted first-stable candidate runner'
 }
 $asset = 'bharatcode-desktop-win-x64.exe'

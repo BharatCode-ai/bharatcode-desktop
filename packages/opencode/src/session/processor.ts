@@ -27,6 +27,8 @@ import { Database } from "@opencode-ai/core/database/database"
 import { Usage, type LLMEvent } from "@opencode-ai/llm"
 import { ToolLoopGuard } from "@opencode-ai/core/session/tool-loop-guard"
 import { EffectBridge } from "@/effect/bridge"
+import { recordSupportEvent } from "@/support-events"
+import { randomUUID } from "node:crypto"
 
 const DOOM_LOOP_THRESHOLD = 3
 export type Result = "compact" | "stop" | "continue"
@@ -120,6 +122,24 @@ const layer = Layer.effect(
       let aborted = false
       let active = false
       let toolStarted = false
+      let attempt = 0
+      const operationId = randomUUID()
+      const diagnostic = (event: string, error?: ReturnType<typeof parse>) => {
+        const data: Record<string, unknown> = error && isRecord(error.data) ? error.data : {}
+        const metadata = isRecord(data.metadata) ? data.metadata : {}
+        const headers = isRecord(data.responseHeaders) ? data.responseHeaders : {}
+        recordSupportEvent({
+          event,
+          operationId,
+          model: input.model.id,
+          attempt,
+          toolStarted,
+          code: metadata.code ?? (error ? (data.statusCode ? "HTTP_ERROR" : "UNKNOWN_ERROR") : undefined),
+          status: data.statusCode,
+          retryable: data.isRetryable,
+          requestId: headers["x-request-id"],
+        })
+      }
       let capture:
         | {
             read: Effect.Effect<string | undefined>
@@ -730,6 +750,7 @@ const layer = Layer.effect(
           stack: e instanceof Error ? e.stack : undefined,
         })
         const error = parse(e)
+        if (toolStarted && !aborted) diagnostic("tool_replay_prevented", error)
         if (SessionV1.ContextOverflowError.isInstance(error)) {
           if ((yield* config.get()).compaction?.auto === false && !ctx.assistantMessage.summary) {
             ctx.assistantMessage.error = error
@@ -761,6 +782,8 @@ const layer = Layer.effect(
 
         return yield* Effect.gen(function* () {
           yield* Effect.gen(function* () {
+            attempt++
+            diagnostic("request_started")
             ctx.currentText = undefined
             ctx.reasoningMap = {}
             yield* status.set(ctx.sessionID, { type: "busy" })
@@ -772,10 +795,15 @@ const layer = Layer.effect(
               Stream.takeUntil(() => ctx.needsCompaction),
               Stream.runDrain,
             )
+            diagnostic("request_completed")
           }).pipe(
             Effect.catchCauseIf(
               (cause) => !Cause.hasInterruptsOnly(cause),
-              (cause) => Effect.fail(Cause.squash(cause)),
+              (cause) => {
+                const error = Cause.squash(cause)
+                diagnostic("request_failed", parse(error))
+                return Effect.fail(error)
+              },
             ),
             Effect.retry(
               SessionRetry.policy({
@@ -783,6 +811,7 @@ const layer = Layer.effect(
                 parse,
                 canRetry: () => !toolStarted && !aborted,
                 set: (info) => {
+                  diagnostic("retry_scheduled")
                   return status.set(ctx.sessionID, {
                     type: "retry",
                     attempt: info.attempt,
@@ -799,6 +828,7 @@ const layer = Layer.effect(
               Effect.gen(function* () {
                 aborted = true
                 active = false
+                diagnostic("request_cancelled")
                 if (!ctx.assistantMessage.error) {
                   yield* halt(new DOMException("Aborted", "AbortError"))
                 }

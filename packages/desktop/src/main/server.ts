@@ -1,4 +1,5 @@
 import { supportRuntimeDatabase } from "./support-runtime-database"
+import { supportBackend } from "./support-backend"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { app, utilityProcess } from "electron"
@@ -13,6 +14,7 @@ import { setChatImportStatus } from "./chat-import-status"
 export type HealthCheck = { wait: Promise<void> }
 
 type SidecarMessage =
+  | { type: "support-event"; event: unknown }
   | { type: "ready"; databaseMetadata?: unknown }
   | { type: "stopped" }
   | { type: "error"; error: { message: string; stack?: string } }
@@ -72,6 +74,14 @@ export async function spawnLocalServer(
     stdio: "pipe",
   })
   const supportOwner = supportRuntimeDatabase.attach()
+  const backendOwner = supportBackend.attach()
+  const backendMessage = (message: SidecarMessage) => {
+    if (message?.type === "support-event") backendOwner.publish(message.event)
+    if (message?.type === "ready") backendOwner.publish({ event: "backend_started", time: new Date().toISOString() })
+    if (message?.type === "error")
+      backendOwner.publish({ event: "backend_error", time: new Date().toISOString(), code: "BACKEND_START_FAILED" })
+  }
+  child.on("message", backendMessage)
   let exited = false
   let importer: ReturnType<typeof utilityProcess.fork> | undefined
   const exit = defer<number>()
@@ -84,6 +94,13 @@ export async function spawnLocalServer(
   app.on("child-process-gone", onProcessGone)
   child.once("exit", (code) => {
     exited = true
+    backendOwner.publish({
+      event: "backend_stopped",
+      time: new Date().toISOString(),
+      code: code === 0 ? "NORMAL_EXIT" : "BACKEND_EXIT",
+    })
+    backendOwner.dispose()
+    child.off("message", backendMessage)
     supportOwner.dispose()
     importer?.kill()
     app.off("child-process-gone", onProcessGone)
