@@ -3,12 +3,16 @@ import { checkModelConnection } from "./model-recovery-check"
 import {
   MODEL_SIGN_IN_REQUIRED,
   MODEL_CATALOG_UNAVAILABLE,
+  MODEL_ACCESS_REQUIRED,
+  STUDENT_VERIFICATION_URL,
   modelRecoveryAction,
 } from "@opencode-ai/core/util/model-recovery"
 
 test("only known account/catalog errors offer recovery", () => {
   expect(modelRecoveryAction(MODEL_SIGN_IN_REQUIRED)).toBe("sign-in")
   expect(modelRecoveryAction(MODEL_CATALOG_UNAVAILABLE)).toBe("retry")
+  expect(modelRecoveryAction(MODEL_ACCESS_REQUIRED)).toBe("verify-student")
+  expect(STUDENT_VERIFICATION_URL).toBe("https://bharatcode.ai/account#student-email-title")
   expect(modelRecoveryAction("Model unavailable.")).toBeUndefined()
   expect(modelRecoveryAction("Subscription required")).toBeUndefined()
 })

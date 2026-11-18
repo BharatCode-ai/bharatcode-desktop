@@ -21,6 +21,42 @@ function bharatcodeError(statusCode: number, error: Record<string, unknown>) {
 }
 
 describe("BharatCode API refusals", () => {
+  test("replaces the obsolete Pro-only refusal with student self-service and never retries it", () => {
+    const parsed = bharatcodeError(402, {
+      message: "BharatCode App is only available to Pro subscribers.",
+      code: "subscription_required",
+      action_url: "https://untrusted.invalid/verify",
+    })
+    expect(parsed).toMatchObject({
+      type: "api_error",
+      statusCode: 402,
+      isRetryable: false,
+      message: BharatCodeModel.ACCESS_REQUIRED_MESSAGE,
+    })
+    expect(parsed.message).toContain("Lite, Pro or verified student")
+    expect(parsed.message).toContain("https://bharatcode.ai/account#student-email-title")
+    expect(parsed.message).not.toContain("help@")
+    expect(parsed.message).not.toContain("untrusted.invalid")
+    if (parsed.type === "api_error") expect(parsed.responseBody).toBeUndefined()
+  })
+
+  test("does not turn unrelated denials into a student-verification instruction", () => {
+    expect(bharatcodeError(401, { message: "Sign in again", code: "subscription_required" }).message).not.toBe(
+      BharatCodeModel.ACCESS_REQUIRED_MESSAGE,
+    )
+    expect(bharatcodeError(429, { message: "Daily limit reached", code: "student_daily_limit" }).message).not.toBe(
+      BharatCodeModel.ACCESS_REQUIRED_MESSAGE,
+    )
+    expect(
+      BharatCodeModel.apiDenialMessage({
+        providerID: "other",
+        status: 402,
+        errorCode: "subscription_required",
+        serverMessage: "Other provider requires payment",
+      }),
+    ).toBeUndefined()
+  })
+
   test("shows the server's plan refusal instead of the generic text", () => {
     const parsed = bharatcodeError(403, {
       message: STUDENT_REFUSAL,
