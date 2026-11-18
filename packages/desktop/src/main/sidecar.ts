@@ -1,4 +1,5 @@
 import { createSupportBundle } from "./support-bundle"
+import { supportEvent } from "@opencode-ai/core/util/support-event"
 import * as http from "node:http"
 import * as tls from "node:tls"
 
@@ -23,6 +24,7 @@ type StopCommand = { type: "stop" }
 type SidecarCommand = StartCommand | StopCommand
 
 type SidecarMessage =
+  | { type: "support-event"; event: unknown }
   | { type: "ready"; databaseMetadata?: unknown }
   | { type: "stopped" }
   | { type: "error"; error: { message: string; stack?: string } }
@@ -64,6 +66,10 @@ async function start(command: StartCommand) {
       cors: ["oc://renderer"],
       onSupportDatabase: (metadata: unknown) => {
         databaseMetadata = createSupportBundle({ database: metadata }).database
+      },
+      onSupportEvent: (value: unknown) => {
+        const event = supportEvent(value)
+        if (event) parentPort.postMessage({ type: "support-event", event })
       },
     })
     parentPort.postMessage({ type: "ready", databaseMetadata })

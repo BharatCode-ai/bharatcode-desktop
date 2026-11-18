@@ -24,6 +24,11 @@ on:
         required: true
         type: boolean
         default: false
+      approve_unsigned_windows:
+        description: I explicitly approve the tested unsigned Windows installer for this stable release
+        required: true
+        type: boolean
+        default: false
       acceptance_notes:
         description: Tester, date, OS/architectures, checklist results and explicitly approved limitations
         required: true
@@ -39,6 +44,7 @@ permissions:
   actions: read
 
 concurrency:
+  # Serialize against earlier beta workflow runs as well as stable retries.
   group: desktop-beta-publication
   cancel-in-progress: false
 
@@ -50,7 +56,8 @@ env:
 
 jobs:
   publish:
-    if: inputs.manual_acceptance_confirmed && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    if: inputs.manual_acceptance_confirmed && inputs.approve_unsigned_windows && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    # Reuse the protected environment; do not auto-create an unprotected one.
     environment: desktop-beta-release
     runs-on: ubuntu-24.04
     permissions:
@@ -79,9 +86,15 @@ jobs:
               .path == ".github/workflows/publish.yml"
             ' > /dev/null
 
-      - name: Checkout exact candidate tooling
+      - name: Checkout protected publication tooling
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Checkout exact tested source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          path: tested-source
           ref: ${{ inputs.source_sha }}
           persist-credentials: false
       - name: Setup pinned Bun without installing or rebuilding
@@ -100,67 +113,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bun packages/desktop/scripts/stage-tested-release.ts "$RUNNER_TEMP/tested-cohort" "$RUNNER_TEMP/release-assets"
-          (cd "$RUNNER_TEMP/release-assets" && sha256sum --check SHA256SUMS)
+          bun packages/desktop/scripts/stage-tested-release.ts "$RUNNER_TEMP/tested-cohort" "$RUNNER_TEMP/release-assets" tested-source
 
-      - name: Create new draft and upload without overwrite
-        id: draft
+      - name: Reconcile and verify immutable stable release then one-time compatibility metadata
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.stage.outputs.tag }}
           ACCEPTANCE_NOTES: ${{ inputs.acceptance_notes }}
+          MANUAL_ACCEPTANCE: ${{ inputs.manual_acceptance_confirmed }}
+          APPROVE_UNSIGNED_WINDOWS: ${{ inputs.approve_unsigned_windows }}
         shell: bash
-        run: |
-          set -euo pipefail
-          [[ "$RELEASE_TAG" =~ ^desktop-beta-[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          gh api "repos/$GITHUB_REPOSITORY/releases" --paginate --slurp \
-            | jq -e --arg tag "$RELEASE_TAG" '[.[][] | select(.tag_name == $tag)] | length == 0' > /dev/null
-          gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/$RELEASE_TAG" \
-            | jq -e --arg ref "refs/tags/$RELEASE_TAG" '[.[] | select(.ref == $ref)] | length == 0' > /dev/null
-          {
-            echo 'BharatCode Desktop beta. Windows and Linux are unsigned; both macOS architectures are Developer ID signed and notarized.'
-            echo
-            echo "Source: $SOURCE_SHA"
-            echo "Build: https://github.com/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/attempts/$SOURCE_RUN_ATTEMPT"
-            echo "Tested cohort manifest SHA-256: $CANDIDATE_SHA256"
-            echo "Manual acceptance approved by $GITHUB_ACTOR at $(date -u +%FT%TZ):"
-            printf '%s\n' "$ACCEPTANCE_NOTES"
-            echo
-            echo 'Package-build receipts remain acceptance pending; this operator approval does not turn unexecuted automated tests into PASS.'
-          } > "$RUNNER_TEMP/release-notes.md"
-          jq -n --arg tag "$RELEASE_TAG" --arg sha "$SOURCE_SHA" --rawfile notes "$RUNNER_TEMP/release-notes.md" \
-            '{tag_name:$tag,target_commitish:$sha,name:("BharatCode " + $tag),body:$notes,draft:true,prerelease:true}' \
-            | gh api "repos/$GITHUB_REPOSITORY/releases" --method POST --input - > "$RUNNER_TEMP/draft.json"
-          release_id=$(jq -er '.id | select(type == "number")' "$RUNNER_TEMP/draft.json")
-          echo "id=$release_id" >> "$GITHUB_OUTPUT"
-          gh release upload "$RELEASE_TAG" "$RUNNER_TEMP"/release-assets/* --repo "$GITHUB_REPOSITORY"
-
-      - name: Verify uploaded digests before publication
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ steps.stage.outputs.tag }}
-          RELEASE_ID: ${{ steps.draft.outputs.id }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd "$RUNNER_TEMP/release-assets"
-          sha256sum --check SHA256SUMS
-          { cat SHA256SUMS; sha256sum SHA256SUMS; } | sort > "$RUNNER_TEMP/expected-digests.txt"
-          gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" > "$RUNNER_TEMP/uploaded.json"
-          jq -e --arg sha "$SOURCE_SHA" --arg tag "$RELEASE_TAG" \
-            '.draft == true and .prerelease == true and .target_commitish == $sha and .tag_name == $tag' "$RUNNER_TEMP/uploaded.json" > /dev/null
-          jq -r '.assets[] | "\(.digest | ltrimstr("sha256:"))  \(.name)"' "$RUNNER_TEMP/uploaded.json" \
-            | sort > "$RUNNER_TEMP/uploaded-digests.txt"
-          diff "$RUNNER_TEMP/expected-digests.txt" "$RUNNER_TEMP/uploaded-digests.txt"
-          gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --method PATCH -F draft=false -F prerelease=true > /dev/null
-          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > "$RUNNER_TEMP/published.json"
-          jq -e --arg sha "$SOURCE_SHA" --arg tag "$RELEASE_TAG" \
-            '.draft == false and .prerelease == true and .immutable == true and .target_commitish == $sha and .tag_name == $tag' "$RUNNER_TEMP/published.json" > /dev/null
-          jq -r '.assets[] | "\(.digest | ltrimstr("sha256:"))  \(.name)"' "$RUNNER_TEMP/published.json" \
-            | sort > "$RUNNER_TEMP/published-digests.txt"
-          diff "$RUNNER_TEMP/expected-digests.txt" "$RUNNER_TEMP/published-digests.txt"
-          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir "$RUNNER_TEMP/live-downloads"
-          (cd "$RUNNER_TEMP/live-downloads" && sha256sum --check "$RUNNER_TEMP/expected-digests.txt")
+        run: bash packages/desktop/scripts/publish-tested-release.sh "$RUNNER_TEMP/release-assets"
 
       - name: Notify website only after download verification
         if: inputs.notify_website
@@ -172,5 +135,5 @@ jobs:
           set -euo pipefail
           test -n "$GH_TOKEN"
           jq -n --arg repo "$GITHUB_REPOSITORY" --arg tag "$RELEASE_TAG" \
-            '{event_type:"desktop_release_published",client_payload:{repo:$repo,tag:$tag,channel:"beta",release_url:("https://github.com/"+$repo+"/releases/tag/"+$tag)}}' \
+            '{event_type:"desktop_release_published",client_payload:{repo:$repo,tag:$tag,channel:"stable",release_url:("https://github.com/"+$repo+"/releases/tag/"+$tag)}}' \
             | gh api repos/BharatCode-ai/bharatcode/dispatches --method POST --input -

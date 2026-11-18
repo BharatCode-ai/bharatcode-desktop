@@ -74,14 +74,14 @@ jobs:
         with:
           install-flags: --frozen-lockfile
       - name: Admit exact source
-        run: bun packages/desktop/scripts/candidate-cohort.ts admit
+        run: bun packages/desktop/scripts/candidate-cohort.ts admit-cli
       - name: Cross-compile all CLI platforms
         working-directory: packages/opencode
         run: bun run build
       - name: Pack complete cohort and record source
         run: |
           bun packages/opencode/script/pack.ts packages/opencode/dist "$RUNNER_TEMP/cli-candidate"
-          bun packages/desktop/scripts/candidate-cohort.ts admit > "$RUNNER_TEMP/cli-candidate/source.json"
+          bun packages/desktop/scripts/candidate-cohort.ts admit-cli > "$RUNNER_TEMP/cli-candidate/source.json"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: cli-candidate-${{ github.run_id }}-${{ github.run_attempt }}

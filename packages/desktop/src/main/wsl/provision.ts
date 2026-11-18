@@ -117,7 +117,7 @@ export async function provisionWslRuntime(input: {
     channel: input.channel,
     home: linuxPath(identity.home),
     temp: "/tmp",
-    env: {},
+    env: { OPENCODE_CLIENT: "desktop" },
   }).bin
   const expected = posix.join(bin, manifest.sha256, manifest.filename)
   const output = await input.execute(

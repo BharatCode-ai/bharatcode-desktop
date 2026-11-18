@@ -6,17 +6,19 @@ import { stageRelease, validateIdentity, type Identity } from "./candidate-cohor
 // Called only after the workflow verifies the successful original producer run.
 // No dependencies, rebuild, credentials, network calls or publication occur here.
 if (import.meta.main) {
-  const [input, output] = process.argv.slice(2)
+  const [input, output, checkout = process.cwd()] = process.argv.slice(2)
   if (!input || !output) throw new Error("Expected candidate and release directories")
-  const git = (...args: string[]) => execFileSync("git", args, { encoding: "utf8" }).trim()
-  const desktop = await Bun.file(new URL("../package.json", import.meta.url)).json()
-  const cli = await Bun.file(new URL("../../opencode/package.json", import.meta.url)).json()
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: checkout, encoding: "utf8" }).trim()
+  // Read the tested versions as data. Never run Bun in the candidate tree
+  // (its bunfig, preloads and .env are not publication tooling).
+  const desktop = JSON.parse(git("show", "HEAD:packages/desktop/package.json"))
+  const cli = JSON.parse(git("show", "HEAD:packages/opencode/package.json"))
   const identity = validateIdentity(
     {
       source: process.env.SOURCE_SHA ?? "",
       tree: git("rev-parse", "HEAD^{tree}"),
       version: desktop.version,
-      channel: "beta",
+      channel: "prod",
       repository: process.env.GITHUB_REPOSITORY ?? "",
       run: process.env.SOURCE_RUN_ID ?? "",
       attempt: process.env.SOURCE_RUN_ATTEMPT ?? "",

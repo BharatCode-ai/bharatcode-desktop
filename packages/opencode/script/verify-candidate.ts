@@ -84,6 +84,7 @@ if (import.meta.main) {
       desktopVersion: desktop.version,
       cliVersion: cli.version,
     },
+    { allowBeta: true },
   )
   const result = await verifyCandidate(path.resolve(directory), identity, process.env.CANDIDATE_SHA256 ?? "")
   if (process.env.GITHUB_OUTPUT)

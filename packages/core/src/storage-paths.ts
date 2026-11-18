@@ -24,13 +24,13 @@ export function normalizeChannel(channel: string | undefined): Channel {
   return "local"
 }
 
-/**
- * The on-disk directory name for a channel, matching the desktop product name
- * (productNameForChannel in desktop/src/main/branding.ts). Electron derives its
- * own paths from productName the same way, so using it here keeps the CLI and
- * the app pointed at one directory instead of two, and it reads correctly in
- * Finder and Explorer.
- */
+// Stable Desktop replaces beta in place. The public channel (including WSL
+// artifact identity) changes; the installed profile never does. Standalone
+// CLI installations keep their own channel semantics, even if both roots exist.
+export function desktopProfileChannel(channel: Channel) {
+  return channel === "prod" ? "beta" : channel
+}
+
 /**
  * Directory names used before the move to the product name. Shipped releases
  * wrote here, so the import engine still has to be able to find them.
@@ -44,9 +44,10 @@ export function displayName(channel: Channel) {
 
 export function resolve(input: Input) {
   const channel = normalizeChannel(input.channel)
-  const name = input.name ?? displayName(channel)
   const paths = input.platform === "win32" ? path.win32 : path.posix
   const env = input.env ?? {}
+  const profile = env.OPENCODE_CLIENT === "desktop" ? desktopProfileChannel(channel) : channel
+  const name = input.name ?? displayName(profile)
   const roots =
     input.platform === "darwin"
       ? {

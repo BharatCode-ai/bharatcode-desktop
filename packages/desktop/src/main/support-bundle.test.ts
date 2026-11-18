@@ -45,6 +45,7 @@ test("constructs only versioned diagnostic fields and omits extra private data",
     "config",
     "database",
     "errors",
+    "backendLog",
   ])
   expect(result.auth).toEqual({ mode: "bharatcode_oauth", source: "cached", state: "signed_in", authenticated: true })
   expect(result.database).toEqual(input.database)

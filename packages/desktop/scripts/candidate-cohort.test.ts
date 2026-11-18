@@ -13,15 +13,7 @@ import {
   type Receipt,
 } from "./candidate-cohort"
 
-const identity = {
-  source: "a".repeat(40),
-  tree: "b".repeat(40),
-  version: "1.15.35",
-  channel: "beta" as const,
-  repository: "BharatCode-ai/bharatcode-desktop",
-  run: "123",
-  attempt: "1",
-}
+import { identity, fixture } from "./fixtures/desktop-cohort"
 
 test("candidate admission binds the workflow, checkout, committed versions and run", () => {
   expect(
@@ -68,55 +60,38 @@ test("candidate admission binds the workflow, checkout, committed versions and r
   ).toThrow()
 })
 
-async function fixture(root: string, value = identity) {
-  const targets = ["windows-x64", "darwin-x64", "darwin-arm64", "linux-x64"] as const
-  for (const target of targets) {
-    const dir = path.join(root, target)
-    await fs.mkdir(dir)
-    const suffixes = target === "windows-x64" ? ["exe"] : target.startsWith("darwin") ? ["zip"] : ["AppImage", "deb"]
-    const files: Receipt["files"] = []
-    for (const ext of suffixes) {
-      const platform =
-        target === "linux-x64"
-          ? `linux-${ext === "deb" ? "amd64" : "x86_64"}`
-          : target.replace("windows", "win").replace("darwin", "mac")
-      const name = `bharatcode-desktop-${platform}.${ext}`
-      const bytes = Buffer.from(`synthetic ${target} ${ext}`)
-      await fs.writeFile(path.join(dir, name), bytes)
-      files.push({ name, bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") })
-    }
-    const metadataName = `${target}-beta${target.startsWith("darwin") ? "-mac" : target === "linux-x64" ? "-linux" : ""}.yml`
-    const artifact = await fs.readFile(path.join(dir, files[0].name))
-    const metadata = Buffer.from(
-      Bun.YAML.stringify({
-        version: value.version,
-        files: [
-          {
-            url: files[0].name,
-            size: artifact.length,
-            sha512: createHash("sha512").update(artifact).digest("base64"),
-          },
-        ],
-      }),
-    )
-    await fs.writeFile(path.join(dir, metadataName), metadata)
-    files.push({
-      name: metadataName,
-      bytes: metadata.length,
-      sha256: createHash("sha256").update(metadata).digest("hex"),
-    })
-    const receipt: Receipt = {
-      schema: 1,
-      identity: value,
-      target,
-      files,
-      signing: target.startsWith("darwin") ? "apple-notarized-stapled" : "unsigned",
-      verification: "package-build-only",
-      acceptance: "pending",
-    }
-    await fs.writeFile(path.join(dir, "receipt.json"), JSON.stringify(receipt))
+test("CLI beta admission is explicit and does not weaken stable Desktop admission", () => {
+  const source = {
+    head: identity.source,
+    tree: identity.tree,
+    dirty: false,
+    workflowSource: identity.source,
+    desktopVersion: identity.version,
+    cliVersion: identity.version,
   }
-}
+  const beta = { ...identity, channel: "beta" as const }
+  expect(() => validateIdentity(beta, source)).toThrow()
+  expect(validateIdentity(beta, source, { allowBeta: true })).toEqual(beta)
+  expect(() => validateIdentity(beta, { ...source, dirty: true }, { allowBeta: true })).toThrow()
+  expect(() => validateIdentity(beta, { ...source, head: "f".repeat(40) }, { allowBeta: true })).toThrow()
+  expect(validateIdentity(identity, source)).toEqual(identity)
+})
+
+test("first stable candidate runs real upgrade checks for the same version as the bridge", async () => {
+  const workflow = Bun.YAML.parse(
+    await Bun.file(new URL("../../../.github/workflows/publish.yml", import.meta.url)).text(),
+  ) as { jobs: { package: { steps: Array<{ name?: string; if?: string }> } } }
+  for (const platform of ["Windows", "Debian"]) {
+    const step = workflow.jobs.package.steps.find((step: { name?: string }) =>
+      step.name?.startsWith("Upgrade the actual public " + platform),
+    )
+    expect(step?.if).toContain("needs.admit.outputs.version == '" + identity.version + "'")
+  }
+  for (const script of ["windows.ps1", "debian.sh"])
+    expect(
+      await Bun.file(new URL("../../../script/desktop-stable-upgrade/" + script, import.meta.url)).text(),
+    ).toContain(identity.version)
+})
 
 test("tested-release command binds the original run to a clean exact checkout, not the publishing workflow SHA", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "bc-release-command-"))
@@ -125,34 +100,31 @@ test("tested-release command binds the original run to a clean exact checkout, n
     const input = path.join(root, "input")
     await fs.mkdir(repo)
     await fs.mkdir(input)
+    const checkout = path.resolve(import.meta.dir, "../../..")
+    const fromCheckout = (...args: string[]) => {
+      const result = spawnSync("git", args, { cwd: checkout, encoding: "utf8" })
+      expect(result.status).toBe(0)
+      return result.stdout.trim()
+    }
     const env = {
       ...process.env,
       GIT_CONFIG_NOSYSTEM: "1",
       GIT_CONFIG_GLOBAL: process.platform === "win32" ? "NUL" : "/dev/null",
+      GIT_ALTERNATE_OBJECT_DIRECTORIES: fromCheckout("rev-parse", "--path-format=absolute", "--git-path", "objects"),
     }
     const git = (...args: string[]) => {
       const result = spawnSync("git", args, { cwd: repo, env, encoding: "utf8" })
       expect(result.status).toBe(0)
       return result.stdout.trim()
     }
+    // Share existing local Git objects; materialize only the two package
+    // manifests. No synthetic commit, remote, install or full working copy.
     git("init", "--quiet")
-    git(
-      "-c",
-      "user.name=Fixture",
-      "-c",
-      "user.email=fixture@example.invalid",
-      "-c",
-      "core.hooksPath=/dev/null",
-      "commit",
-      "--allow-empty",
-      "--quiet",
-      "-m",
-      "fixture",
-    )
-    // The command reads the real package version, unlike the pure function
-    // fixtures. Keep this integration case valid after routine version bumps.
-    const desktop = await Bun.file(new URL("../package.json", import.meta.url)).json()
-    const cli = await Bun.file(new URL("../../opencode/package.json", import.meta.url)).json()
+    git("update-ref", "HEAD", fromCheckout("rev-parse", "HEAD"))
+    git("sparse-checkout", "set", "--no-cone", "/packages/desktop/package.json", "/packages/opencode/package.json")
+    git("read-tree", "-mu", "HEAD")
+    const desktop = await Bun.file(path.join(repo, "packages/desktop/package.json")).json()
+    const cli = await Bun.file(path.join(repo, "packages/opencode/package.json")).json()
     expect(cli.version).toBe(desktop.version)
     const value = {
       ...identity,
@@ -207,12 +179,13 @@ test("release staging preserves tested bytes and merges both Mac updater archite
     await fs.writeFile(path.join(input, "cohort.json"), manifest)
     const digest = createHash("sha256").update(manifest).digest("hex")
     const release = await stageRelease(input, output, identity, digest)
-    expect(release.tag).toBe("desktop-beta-1.15.35")
+    expect(release.tag).toBe("desktop-1.15.52")
     expect(release.acceptance).toBe("pending")
     expect(release.publication).toBe("not-authorized")
     expect(release.candidateSha256).toBe(digest)
-    expect(release.files).toHaveLength(8)
-    const mac = Bun.YAML.parse(await fs.readFile(path.join(output, "beta-mac.yml"), "utf8")) as {
+    expect(release.files).toHaveLength(11)
+    const stable = path.join(output, "stable")
+    const mac = Bun.YAML.parse(await fs.readFile(path.join(stable, "latest-mac.yml"), "utf8")) as {
       files: { url: string; sha512: string; size: number }[]
       path: string
       sha512: string
@@ -224,18 +197,22 @@ test("release staging preserves tested bytes and merges both Mac updater archite
     expect(mac.path).toBe(mac.files[0].url)
     expect(mac.sha512).toBe(mac.files[0].sha512)
     for (const file of release.files) {
-      const content = await fs.readFile(path.join(output, file.name))
+      const content = await fs.readFile(path.join(stable, file.name))
       expect(content.length).toBe(file.bytes)
       expect(createHash("sha256").update(content).digest("hex")).toBe(file.sha256)
     }
-    const sums = await fs.readFile(path.join(output, "SHA256SUMS"), "utf8")
-    expect(sums.trim().split("\n")).toHaveLength(9)
+    const sums = await fs.readFile(path.join(stable, "SHA256SUMS"), "utf8")
+    expect(sums.trim().split("\n")).toHaveLength(12)
     expect(sums).toContain("  release-manifest.json\n")
-    expect(await fs.readFile(path.join(output, "bharatcode-desktop-mac-arm64.zip"))).toEqual(
+    expect(await fs.readFile(path.join(stable, "bharatcode-desktop-mac-arm64.zip"))).toEqual(
       await fs.readFile(path.join(input, "darwin-arm64", "bharatcode-desktop-mac-arm64.zip")),
     )
+    await fs.unlink(path.join(output, "compatibility/beta-mac.yml"))
+    expect(await stageRelease(input, output, identity, digest)).toEqual(release)
+    await fs.writeFile(path.join(output, "compatibility/beta-mac.yml"), "conflict")
     await expect(stageRelease(input, output, identity, digest)).rejects.toThrow()
-    expect(await fs.readFile(path.join(output, "SHA256SUMS"), "utf8")).toBe(sums)
+    expect(await fs.readFile(path.join(output, "compatibility/beta-mac.yml"), "utf8")).toBe("conflict")
+    expect(await fs.readFile(path.join(stable, "SHA256SUMS"), "utf8")).toBe(sums)
     await expect(stageRelease(input, path.join(root, "wrong-hash"), identity, "0".repeat(64))).rejects.toThrow()
     await expect(
       stageRelease(input, path.join(root, "wrong-run"), { ...identity, run: "124" }, digest),
@@ -305,7 +282,7 @@ test("cohort requires every architecture, exact source/run and immutable verifie
   try {
     await fixture(root)
     const cohort = await assembleCohort(root, identity)
-    expect(cohort.files).toHaveLength(9)
+    expect(cohort.files).toHaveLength(12)
     expect(cohort.acceptance).toBe("pending")
     expect(cohort.publication).toBe("not-authorized")
     await fs.appendFile(path.join(root, "linux-x64", "bharatcode-desktop-linux-amd64.deb"), "drift")
@@ -327,7 +304,7 @@ test("download collection rejects missing, extra and stale-attempt producers", a
     await expect(collectCohort(root, identity)).rejects.toThrow()
     await fs.rmdir(path.join(root, "candidate-linux-x64-123-2"))
     const output = await collectCohort(root, identity)
-    expect((await assembleCohort(output, identity)).files).toHaveLength(9)
+    expect((await assembleCohort(output, identity)).files).toHaveLength(12)
     await expect(collectCohort(root, identity)).rejects.toThrow()
   } finally {
     await fs.rm(root, { recursive: true, force: true })
@@ -339,11 +316,11 @@ test("producer inspection recognizes native Linux aliases and validates updater 
   try {
     await fixture(root)
     const dir = path.join(root, "linux-x64")
-    await fs.rename(path.join(dir, "linux-x64-beta-linux.yml"), path.join(dir, "beta-linux.yml"))
+    await fs.rename(path.join(dir, "linux-x64-latest-linux.yml"), path.join(dir, "latest-linux.yml"))
     expect((await inspectPackageOutputs(dir, "linux-x64", identity)).map((file) => file.name)).toEqual([
-      "beta-linux.yml",
       "bharatcode-desktop-linux-amd64.deb",
       "bharatcode-desktop-linux-x86_64.AppImage",
+      "latest-linux.yml",
     ])
     await expect(inspectPackageOutputs(dir, "linux-x64", { ...identity, version: "1.0.0" })).rejects.toThrow()
     await fs.rename(
@@ -360,6 +337,7 @@ test("updater metadata cannot redirect outside or misidentify packaged bytes", a
   for (const change of [
     { version: "1.0.0" },
     { files: [] },
+    { packages: { x64: { path: "https://example.invalid/web-installer" } } },
     { files: [{ url: "../outside.zip" }] },
     { path: "../outside.zip", sha512: "invalid" },
   ]) {
@@ -384,6 +362,28 @@ test("updater metadata cannot redirect outside or misidentify packaged bytes", a
     } finally {
       await fs.rm(root, { recursive: true, force: true })
     }
+  }
+})
+
+test("packaging rejects Linux metadata missing or misidentifying either install format", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "bc-linux-formats-"))
+  try {
+    await fixture(root)
+    const dir = path.join(root, "linux-x64")
+    const file = path.join(dir, "latest-linux.yml")
+    const raw = Bun.YAML.parse(await fs.readFile(path.join(dir, "linux-x64-latest-linux.yml"), "utf8")) as {
+      version: string
+      files: { url: string; size: number; sha512: string }[]
+    }
+    for (const entry of raw.files) {
+      const others = raw.files.filter((item) => item !== entry)
+      for (const files of [others, [...others, { ...entry, size: 1 }], [...others, { ...entry, sha512: "wrong" }]]) {
+        await fs.writeFile(file, Bun.YAML.stringify({ version: raw.version, files }))
+        await expect(inspectPackageOutputs(dir, "linux-x64", identity)).rejects.toThrow()
+      }
+    }
+  } finally {
+    await fs.rm(root, { recursive: true, force: true })
   }
 })
 
@@ -414,6 +414,9 @@ test("candidate workflow is manual, read-only, exact-checkout and never publishe
   expect(workflow.permissions).toEqual({ contents: "read" })
   expect(text).not.toMatch(/Azure|AZURE_|gh release|npm publish|--clobber|--force|blacksmith|packages\/cli/)
   expect(text).toContain("--publish never")
+  expect(text).toContain("BHARATCODE_CHANNEL: prod")
+  expect(text).not.toContain("inputs.channel")
+  expect(text).toContain("if: inputs.acknowledge_unsigned_windows")
   expect(text).toContain('CSC_IDENTITY_AUTO_DISCOVERY: "false"')
   expect(text).toContain("--wsl-candidate")
   expect(text).toContain("assemble")

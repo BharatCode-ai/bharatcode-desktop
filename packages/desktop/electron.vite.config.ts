@@ -3,6 +3,7 @@ import { defineConfig } from "electron-vite"
 import appPlugin from "@opencode-ai/app/vite"
 import * as fs from "node:fs/promises"
 import { execFileSync } from "node:child_process"
+import { normalizeChannel } from "./src/main/branding"
 
 const OPENCODE_SERVER_DIST = "../opencode/dist/node"
 const sourceSha = process.env.BHARATCODE_SOURCE_SHA ?? "unavailable"
@@ -14,12 +15,7 @@ if (
   throw new Error("Desktop WSL identity requires the exact clean source checkout")
 }
 
-const channel = (() => {
-  const raw = process.env.BHARATCODE_CHANNEL ?? process.env.OPENCODE_CHANNEL
-  if (raw === "dev" || raw === "beta" || raw === "prod") return raw
-  if (process.env.OPENCODE_CHANNEL === "latest") return "prod"
-  return "dev"
-})()
+const channel = normalizeChannel(process.env.BHARATCODE_CHANNEL ?? process.env.OPENCODE_CHANNEL)
 
 const nodePtyPkg = `@lydell/node-pty-${process.platform}-${process.arch}`
 
@@ -110,6 +106,7 @@ const require = __cjs_mod__.createRequire(import.meta.url);
   renderer: {
     define: {
       "import.meta.env.OPENCODE_CHANNEL": JSON.stringify(channel),
+      "import.meta.env.VITE_OPENCODE_CHANNEL": JSON.stringify(channel),
     },
     plugins: [appPlugin, sentry],
     publicDir: "../../../app/public",

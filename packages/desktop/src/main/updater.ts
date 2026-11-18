@@ -1,12 +1,12 @@
 import { app, dialog } from "electron"
 import pkg from "electron-updater"
-import { CHANNEL, UPDATER_ENABLED } from "./constants"
+import { UPDATER_ENABLED } from "./constants"
 import { createUpdaterController, type UpdaterReadyRecord } from "./updater-controller"
 import { getLogger } from "./logging"
 import { getStore } from "./store"
 import { setAppQuitting } from "./windows"
 import { nativeT } from "./native-translations"
-import { checkDesktopBetaUpdate } from "./updater-feed"
+import { checkDesktopStableUpdate } from "./updater-feed"
 
 const { autoUpdater } = pkg
 const key = "ready"
@@ -14,8 +14,8 @@ const key = "ready"
 export function setupAutoUpdater(stop: () => Promise<void>) {
   const logger = getLogger()
   autoUpdater.logger = logger
-  autoUpdater.channel = CHANNEL === "beta" ? "beta" : "latest"
-  autoUpdater.allowPrerelease = CHANNEL === "beta"
+  autoUpdater.channel = "latest"
+  autoUpdater.allowPrerelease = false
   autoUpdater.allowDowngrade = false
   autoUpdater.autoDownload = false
   autoUpdater.autoInstallOnAppQuit = false
@@ -32,7 +32,7 @@ export function setupAutoUpdater(stop: () => Promise<void>) {
       UPDATER_ENABLED && process.env.BHARATCODE_TEST_ONBOARDING !== "1" && process.env.OPENCODE_TEST_ONBOARDING !== "1",
     currentVersion: app.getVersion(),
     backend: {
-      checkForUpdates: () => (CHANNEL === "beta" ? checkDesktopBetaUpdate(autoUpdater) : autoUpdater.checkForUpdates()),
+      checkForUpdates: () => checkDesktopStableUpdate(autoUpdater),
       downloadUpdate: () => autoUpdater.downloadUpdate(),
       quitAndInstall: () => {
         // quitAndInstall closes all windows before emitting before-quit, so

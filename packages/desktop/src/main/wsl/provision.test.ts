@@ -35,13 +35,13 @@ native("publishes a content-addressed runtime once and verifies it without rewri
     execute,
     distro: "Ubuntu",
     identity: { user: "tester", uid: process.getuid!(), home },
-    channel: "test",
+    channel: "prod",
     sourcePath,
     manifest: {
       schema: 1 as const,
       source_sha: "1".repeat(40),
       version: "1.15.35",
-      channel: "dev" as const,
+      channel: "prod" as const,
       arch: "x64" as const,
       filename: "bharatcode-runtime-linux-x64-glibc",
       bytes: bytes.length,
@@ -53,6 +53,9 @@ native("publishes a content-addressed runtime once and verifies it without rewri
     await writeFile(sourcePath, bytes)
     await expect(provisionWslRuntime({ ...input, install: false })).rejects.toThrow()
     const installed = await provisionWslRuntime(input)
+    expect(installed).toBe(
+      join(home, ".cache", "BharatCode Beta", "bin", input.manifest.sha256, input.manifest.filename),
+    )
     expect(await readFile(installed)).toEqual(bytes)
     await writeFile(sourcePath, "changed source must not overwrite existing runtime")
     expect(await provisionWslRuntime(input)).toBe(installed)

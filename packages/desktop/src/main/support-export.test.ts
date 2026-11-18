@@ -11,7 +11,7 @@ async function contents(filename: string) {
   const reader = new ZipReader(new Uint8ArrayReader(new Uint8Array(await readFile(filename))))
   try {
     const entries = await reader.getEntries()
-    expect(entries.map((entry) => entry.filename)).toEqual(["support-bundle.json"])
+    expect(entries.map((entry) => entry.filename)).toEqual(["support-bundle.json", "backend-events.jsonl"])
     const entry = entries[0]
     if (entry.directory) throw new Error("Expected diagnostic document")
     return await entry.getData!(new TextWriter())
@@ -56,6 +56,18 @@ test("the actual archive excludes #67/#68 adversarial log/config values and syml
           database: { schemaVersion: input, latestMigration: input, path: input, checks: [input] },
           errors: { network: input },
           rawLogs: input,
+          backendEvents: [
+            {
+              event: "request_failed",
+              time: new Date().toISOString(),
+              code: input,
+              requestId: input,
+              operationId: input,
+              model: input,
+              message: input,
+              response: input,
+            },
+          ],
           content: { parts: [input] },
         }),
         reveal: () => {},
@@ -63,6 +75,14 @@ test("the actual archive excludes #67/#68 adversarial log/config values and syml
       })
       const file = await run()
       const text = await contents(file)
+      const archive = new ZipReader(new Uint8ArrayReader(new Uint8Array(await readFile(file))))
+      try {
+        for (const entry of await archive.getEntries()) {
+          if (!entry.directory) expect(await entry.getData!(new TextWriter())).not.toContain(secret)
+        }
+      } finally {
+        await archive.close()
+      }
       expect(text).not.toContain(secret)
       expect(text).not.toContain("PRIVATE-FILE-CONTENT")
       expect(text).not.toContain("my-secret-token")

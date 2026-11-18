@@ -1,3 +1,7 @@
+import { join } from "node:path"
+import type { App } from "electron"
+import { StoragePaths } from "../../../core/src/storage-paths"
+
 export type Channel = "dev" | "beta" | "prod"
 
 export const BRANDING = {
@@ -24,13 +28,29 @@ export function productNameForChannel(channel: Channel) {
 }
 
 export function appIdForChannel(channel: Channel) {
-  if (channel === "prod") return "ai.bharatcode.desktop"
-  return `ai.bharatcode.desktop.${channel}`
+  return `ai.bharatcode.desktop.${StoragePaths.desktopProfileChannel(channel)}`
 }
 
 export function packageNameForChannel(channel: Channel) {
-  if (channel === "prod") return "bharatcode"
-  return `bharatcode-${channel}`
+  return `bharatcode-${StoragePaths.desktopProfileChannel(channel)}`
+}
+
+export function installedNameForChannel(channel: Channel) {
+  return StoragePaths.displayName(StoragePaths.desktopProfileChannel(channel))
+}
+
+export function configureDesktopProfile(
+  app: Pick<App, "getPath" | "setPath" | "setName" | "setAppUserModelId" | "setAboutPanelOptions">,
+  channel: Channel,
+  diagnosticDirectory?: string,
+) {
+  const id = appIdForChannel(channel)
+  // Electron uses its internal name in macOS Keychain and Linux secret stores.
+  // The installer's productName is the user-facing brand, not a credential key.
+  app.setName(installedNameForChannel(channel))
+  app.setAppUserModelId(id)
+  app.setPath("userData", diagnosticDirectory ?? join(app.getPath("appData"), id))
+  app.setAboutPanelOptions({ applicationName: productNameForChannel(channel) })
 }
 
 export function shouldRegisterProtocol(input: { packaged: boolean; channel: Channel; diagnostic: boolean }) {

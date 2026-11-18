@@ -12,6 +12,7 @@ type Input = { channel: Channel; platform: NodeJS.Platform; home: string; temp: 
 export function resolveSupportPaths(input: Input) {
   const paths = StoragePaths.resolve({
     ...input,
+    env: { ...input.env, OPENCODE_CLIENT: "desktop" },
     channel: input.env.BHARATCODE_CHANNEL ?? input.channel,
     home: input.env.OPENCODE_TEST_HOME ?? input.home,
   })

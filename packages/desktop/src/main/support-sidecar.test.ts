@@ -26,6 +26,7 @@ test("sidecar startup sends only projected database metadata through the private
               contents: `
           export const Server = { async listen(options) {
             options.onSupportDatabase({ availability: 'available', source: 'runtime_snapshot', capturedAt: '2026-10-21T12:00:00.000Z', schemaVersion: 42, migrationFormat: 'current', appliedCount: 5, latestMigration: 20261021000000, email: 'owner@private.test', token: 'sk-private', rows: ['private prompt'] });
+            options.onSupportEvent({ event: 'request_failed', time: new Date().toISOString(), code: 'ECONNRESET', attempt: 1, message: 'private prompt', headers: {authorization:'sk-private'} });
             return { stop: async () => {} };
           }};
         `,
@@ -44,8 +45,9 @@ test("sidecar startup sends only projected database metadata through the private
         `
       import assert from 'node:assert/strict';
       let dispatch;
+      const diagnostics = [];
       const ready = Promise.withResolvers();
-      process.parentPort = { on(_name, callback) { dispatch = callback }, postMessage(message) { if (message.type === 'ready') ready.resolve(message); if (message.type === 'error') ready.reject(new Error(message.error.message)); } };
+      process.parentPort = { on(_name, callback) { dispatch = callback }, postMessage(message) { if (message.type === 'ready') ready.resolve(message); if (message.type === 'error') ready.reject(new Error(message.error.message)); if (message.type === 'support-event') diagnostics.push(message.event); } };
       await import(${JSON.stringify(pathToFileURL(join(root, "sidecar.mjs")).href)});
       dispatch({ data: { type: 'start', hostname: '127.0.0.1', port: 0, password: 'synthetic-only', userDataPath: ${JSON.stringify(root)} } });
       const message = await ready.promise;
@@ -53,6 +55,9 @@ test("sidecar startup sends only projected database metadata through the private
       assert.equal(message.databaseMetadata.schemaVersion, 42);
       assert.equal(message.databaseMetadata.appliedCount, 5);
       assert(!JSON.stringify(message).includes('private'));
+      assert.equal(diagnostics.length,1);
+      assert.equal(diagnostics[0].code,'ECONNRESET');
+      assert(!JSON.stringify(diagnostics).includes('private'));
       console.log('PRIVATE_READY_PASS');
       dispatch({data:{type:'stop'}});
     `,

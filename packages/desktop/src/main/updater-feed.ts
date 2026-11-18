@@ -7,27 +7,40 @@ type Backend<T> = {
 
 const unavailable = () => new Error("Desktop update feed unavailable")
 const base = `${BRANDING.repo.url}/releases/download/`
+type Metadata = { version?: string; files?: readonly { url: string }[]; path?: string }
 
-/** Resolve the namespaced Desktop beta, never the repository's CLI release. */
-export async function checkDesktopBetaUpdate<T extends { updateInfo?: { version?: string } } | null | undefined>(
+/** Only public, stable Desktop tags. Repository "latest" can be a CLI release. */
+export async function checkDesktopStableUpdate<T extends { updateInfo?: Metadata } | null | undefined>(
   backend: Backend<T>,
   request: typeof fetch = fetch,
 ) {
-  const response = await request(
-    `https://api.github.com/repos/${BRANDING.repo.owner}/${BRANDING.repo.name}/releases?per_page=100`,
-    {
+  const endpoint = `https://api.github.com/repos/${BRANDING.repo.owner}/${BRANDING.repo.name}/releases?per_page=100`
+  const signal = AbortSignal.timeout(15_000)
+  const releases: unknown[] = []
+  for (let page = 1; ; page++) {
+    const response = await request(page === 1 ? endpoint : `${endpoint}&page=${page}`, {
       headers: { accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" },
-      signal: AbortSignal.timeout(15_000),
+      signal,
       redirect: "error",
-    },
-  )
-  if (!response.ok) throw unavailable()
-  const releases: unknown = await response.json()
-  if (!Array.isArray(releases)) throw unavailable()
+    })
+    if (!response.ok) throw unavailable()
+    const items: unknown = await response.json()
+    if (!Array.isArray(items)) throw unavailable()
+    releases.push(...items)
+    if (!response.headers.get("link")?.includes('rel="next"')) break
+  }
   const candidates = releases.flatMap((release) => {
-    if (!release || typeof release !== "object" || release.draft !== false || release.prerelease !== true) return []
-    if (typeof release.tag_name !== "string") return []
-    const match = /^desktop-beta-((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))$/.exec(release.tag_name)
+    if (
+      !release ||
+      typeof release !== "object" ||
+      !("draft" in release) ||
+      release.draft !== false ||
+      !("prerelease" in release) ||
+      release.prerelease !== false
+    )
+      return []
+    if (!("tag_name" in release) || typeof release.tag_name !== "string") return []
+    const match = /^desktop-((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))$/.exec(release.tag_name)
     if (!match) return []
     const parts = match[1].split(".").map(Number)
     if (!parts.every(Number.isSafeInteger)) return []
@@ -40,10 +53,28 @@ export async function checkDesktopBetaUpdate<T extends { updateInfo?: { version?
   backend.setFeedURL({
     provider: "generic",
     url: `${base}${latest.tag}/`,
-    channel: "beta",
+    channel: "latest",
     useMultipleRangeRequests: false,
   })
   const result = await backend.checkForUpdates()
-  if (result && result.updateInfo?.version !== latest.version) throw unavailable()
+  if (result) {
+    const info = result.updateInfo
+    // GenericProvider also accepts absolute URLs and NSIS web packages. Stable
+    // metadata may only point at Desktop assets under the selected tag.
+    if (
+      !info ||
+      info.version !== latest.version ||
+      "packages" in info ||
+      !Array.isArray(info.files) ||
+      !info.files.length ||
+      info.files.some(
+        (file) =>
+          typeof file?.url !== "string" ||
+          !/^bharatcode-desktop-[a-zA-Z0-9_-]+\.(exe|zip|AppImage|deb)$/.test(file.url),
+      ) ||
+      (info.path !== undefined && !info.files.some((file) => file.url === info.path))
+    )
+      throw unavailable()
+  }
   return result
 }

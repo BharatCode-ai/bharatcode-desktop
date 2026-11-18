@@ -1,4 +1,6 @@
 import type { SupportDatabaseMetadata } from "./support-database"
+import { subscribeSupportEvents } from "../support-events"
+import type { SupportEvent } from "@opencode-ai/core/util/support-event"
 import "./init-projectors"
 
 import { NodeHttpServer } from "@effect/platform-node"
@@ -32,6 +34,7 @@ type ServerApp = {
 
 type ListenOptions = CorsOptions & {
   onSupportDatabase?: (metadata: SupportDatabaseMetadata) => void
+  onSupportEvent?: (event: SupportEvent) => void
   port: number
   hostname: string
   credentials?: { username: string; password: string }
@@ -77,7 +80,11 @@ export async function listen(opts: ListenOptions): Promise<Listener> {
   if (opts.credentials && (!opts.credentials.username || !opts.credentials.password)) {
     throw new Error("Explicit server credentials must not be empty")
   }
-  const listener = await Effect.runPromise(listenEffect(opts))
+  const detach = opts.onSupportEvent ? subscribeSupportEvents(opts.onSupportEvent) : () => {}
+  const listener = await Effect.runPromise(listenEffect(opts)).catch((error) => {
+    detach()
+    throw error
+  })
   return {
     hostname: listener.hostname,
     port: listener.port,
@@ -87,7 +94,7 @@ export async function listen(opts: ListenOptions): Promise<Listener> {
         listener
           .stop(close)
           .pipe(Effect.catchCause((cause) => (Cause.hasInterruptsOnly(cause) ? Effect.void : Effect.failCause(cause)))),
-      ),
+      ).finally(detach),
   }
 }
 

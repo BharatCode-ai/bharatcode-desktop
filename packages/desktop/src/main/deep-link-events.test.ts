@@ -109,8 +109,9 @@ test("production callback entrypoints and deferred forwarding use the tested bou
   expect(source.indexOf("incomingDeepLinksReady = true")).toBeGreaterThan(
     source.indexOf("yield* Fiber.join(loadingTask)"),
   )
-  expect(source.indexOf("deepLinkEvents.flush()")).toBeGreaterThan(
-    source.indexOf("const windows = restoreMainWindows()"),
+  expect(source.indexOf("deepLinkEvents.flush()")).toBeGreaterThan(source.lastIndexOf("restoreMainWindows()"))
+  expect(source.indexOf("deepLinkEvents.openUrl(event, url)")).toBeLessThan(
+    source.indexOf("const mobileAccess = yield*"),
   )
   expect(source).not.toContain('logger.log("deep link received')
   expect(source).not.toContain('logger.warn("failed to handle BharatCode auth callback", error)')

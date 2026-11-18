@@ -86,3 +86,33 @@ test("a rejected diagnostics observer cannot prevent a healthy listener from sta
     await listener.stop()
   }
 })
+
+test("live backend event observer is private, failure-isolated, and detached when its listener stops", async () => {
+  const { Server } = await import("../../src/server/server")
+  const { recordSupportEvent } = await import("../../src/support-events")
+  const entries: unknown[] = []
+  const listener = await Server.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    onSupportEvent(value) {
+      entries.push(value)
+      throw new Error("private observer failure")
+    },
+  })
+  try {
+    recordSupportEvent({
+      event: "request_failed",
+      code: "ECONNRESET",
+      message: "private prompt",
+      headers: { authorization: "private token" },
+    })
+    expect(entries).toHaveLength(1)
+    expect(entries[0]).toMatchObject({ event: "request_failed", code: "ECONNRESET" })
+    expect(JSON.stringify(entries)).not.toContain("private")
+    expect((await fetch(new URL("/global/health", listener.url))).status).toBe(200)
+  } finally {
+    await listener.stop()
+  }
+  recordSupportEvent({ event: "request_completed" })
+  expect(entries).toHaveLength(1)
+})

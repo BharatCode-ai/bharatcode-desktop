@@ -1,5 +1,6 @@
 import { supportRuntimeDatabase } from "./support-runtime-database"
 import { supportErrors } from "./support-errors"
+import { supportBackend } from "./support-backend"
 import { MainLogger } from "electron-log"
 import log from "electron-log/main.js"
 import { app, crashReporter, netLog, shell } from "electron"
@@ -25,6 +26,7 @@ export const getLogger = () => logger
 
 export function initLogging() {
   initRunDirectory()
+  supportBackend.configure(join(root, "backend-events.json"))
   log.transports.file.maxSize = 5 * 1024 * 1024
   log.transports.file.resolvePathFn = (_vars, message) =>
     join(
@@ -80,6 +82,7 @@ export const exportDebugLogs = createSupportExporter({
       channel: CHANNEL,
       auth: supportAuth(),
       errors: supportErrors.summary(),
+      backendEvents: supportBackend.read(),
     }
   },
   reveal: (filename) => shell.showItemInFolder(filename),

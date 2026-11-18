@@ -10,16 +10,17 @@ async function run() {
   // Custom databases are deliberate destinations, not upgrade targets.
   if (process.env.OPENCODE_DB) return { imported: 0, skipped: 0 }
   const channel = StoragePaths.normalizeChannel(process.env.BHARATCODE_CHANNEL ?? import.meta.env.OPENCODE_CHANNEL)
+  const profile = StoragePaths.desktopProfileChannel(channel)
   const input = {
     channel,
     platform: process.platform,
     home: process.env.OPENCODE_TEST_HOME ?? homedir(),
     temp: tmpdir(),
-    env: process.env,
+    env: { ...process.env, OPENCODE_CLIENT: "desktop" },
   }
   const source = StoragePaths.resolve({
     ...input,
-    name: channel === "prod" ? "bharatcode" : `bharatcode-${channel}`,
+    name: `bharatcode-${profile}`,
   }).database
   const destination = StoragePaths.resolve(input).database
   if (source.toLowerCase() === destination.toLowerCase() && process.platform === "win32")

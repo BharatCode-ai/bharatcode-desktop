@@ -29,6 +29,9 @@ test("CLI builds once and publication requires explicit approval at the same wor
   expect(workflow.jobs.build.steps.find((step) => step.name === "Cross-compile all CLI platforms")?.run).toBe(
     "bun run build",
   )
+  expect(workflow.jobs.build.steps.find((step) => step.name === "Admit exact source")?.run).toBe(
+    "bun packages/desktop/scripts/candidate-cohort.ts admit-cli",
+  )
   for (const guard of [
     "inputs.manual_acceptance_confirmed",
     "inputs.source_sha == github.sha",
@@ -87,6 +90,26 @@ process.exit(91)
 `,
       { mode: 0o700 },
     )
+    // Registry verification uses uncached HTTP, not npm view. Keep the real
+    // publisher's readback and bounded retries offline in this fixture.
+    await fs.writeFile(
+      path.join(root, "curl"),
+      `#!/usr/bin/env node
+const fs = require("node:fs")
+const path = require("node:path")
+const url = new URL(process.argv.at(-1))
+if (url.origin !== "https://registry.npmjs.org" || !url.searchParams.has("nocache")) process.exit(90)
+const data = JSON.parse(fs.readFileSync(path.join(process.env.RUNNER_TEMP, "verified-cli.json")))
+if (url.pathname.startsWith("/-/package/")) {
+  console.log(JSON.stringify({next:data.version})); process.exit(0)
+}
+const item = data.packages.find(item => url.pathname === "/" + item.name + "/" + data.version)
+if (!item) process.exit(91)
+console.log(JSON.stringify({dist:{integrity:process.env.WRONG_INTEGRITY ? "wrong" : item.integrity}}))
+`,
+      { mode: 0o700 },
+    )
+    await fs.writeFile(path.join(root, "sleep"), '#!/bin/sh\n[ "$1" = "20" ]\n', { mode: 0o700 })
     const execute = (name: string, extra: NodeJS.ProcessEnv = {}) =>
       spawnSync("bash", ["-c", script(name)], {
         encoding: "utf8",

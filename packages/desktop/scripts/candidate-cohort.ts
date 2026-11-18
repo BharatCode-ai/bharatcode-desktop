@@ -46,12 +46,14 @@ export function validateIdentity(
     desktopVersion: string
     cliVersion: string
   },
+  options: { allowBeta?: boolean } = {},
 ) {
   if (
     !/^[a-f0-9]{40}$/.test(value.source) ||
     !/^[a-f0-9]{40}$/.test(value.tree) ||
-    !/^\d+\.\d+\.\d+$/.test(value.version) ||
-    !["beta", "prod"].includes(value.channel) ||
+    !/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/.test(value.version) ||
+    !value.version.split(".").map(Number).every(Number.isSafeInteger) ||
+    (value.channel !== "prod" && !(options.allowBeta && value.channel === "beta")) ||
     value.repository !== "BharatCode-ai/bharatcode-desktop" ||
     !/^[1-9]\d*$/.test(value.run) ||
     !/^[1-9]\d*$/.test(value.attempt) ||
@@ -75,18 +77,34 @@ function required(target: Target) {
   const extensions = target.startsWith("darwin") ? ["zip"] : target === "windows-x64" ? ["exe"] : ["AppImage", "deb"]
   return extensions.map((ext) => `${stem(target)}.${ext}`)
 }
-function updater(target: Target, channel: Identity["channel"]) {
-  return `${target}-${channel === "beta" ? "beta" : "latest"}${target.startsWith("darwin") ? "-mac" : target === "linux-x64" ? "-linux" : ""}.yml`
+function updater(target: Target) {
+  return `${target}-latest${target.startsWith("darwin") ? "-mac" : target === "linux-x64" ? "-linux" : ""}.yml`
 }
-async function verifyUpdater(directory: string, name: string, files: File[], identity: Pick<Identity, "version">) {
-  const metadata = Bun.YAML.parse((await bytes(path.join(directory, name))).toString()) as Updater
-  if (metadata.version !== identity.version || !Array.isArray(metadata.files) || !metadata.files.length) throw fail()
+async function verifyUpdater(
+  metadataPath: string,
+  directory: string,
+  packages: readonly string[],
+  identity: Pick<Identity, "version">,
+  base = "",
+) {
+  const metadata = Bun.YAML.parse((await bytes(metadataPath)).toString()) as Updater
+  if (
+    metadata.version !== identity.version ||
+    "packages" in metadata ||
+    !Array.isArray(metadata.files) ||
+    !metadata.files.length
+  )
+    throw fail()
   if (new Set(metadata.files.map((file) => file.url)).size !== metadata.files.length) throw fail()
-  const packages = files.filter((file) => /\.(exe|zip|AppImage)$/.test(file.name))
-  if (packages.some((file) => !metadata.files.some((entry) => entry.url === file.name))) throw fail()
+  // DebUpdater and AppImageUpdater select different entries in the same feed.
+  // Require the complete platform package set, including both mac architectures
+  // after merging, and accept only the exact local or canonical URLs.
+  const expected = new Map(packages.map((name) => [base + name, name]))
+  if (metadata.files.length !== expected.size) throw fail()
   for (const file of metadata.files) {
-    if (!files.some((known) => known.name === file.url) || !/^[a-zA-Z0-9._-]+$/.test(file.url)) throw fail()
-    const artifact = await bytes(path.join(directory, file.url))
+    const name = expected.get(file.url)
+    if (!name) throw fail()
+    const artifact = await bytes(path.join(directory, name))
     if (file.size !== artifact.length || file.sha512 !== createHash("sha512").update(artifact).digest("base64"))
       throw fail()
   }
@@ -104,7 +122,7 @@ export async function inspectPackageOutputs(
   const packages = required(target)
   const entries = await fs.readdir(dist)
   if (packages.some((name) => !entries.includes(name))) throw fail()
-  const metadata = updater(target, identity.channel).slice(target.length + 1)
+  const metadata = updater(target).slice(target.length + 1)
   if (!entries.includes(metadata)) throw fail()
   const names = entries.filter(
     (name) => packages.includes(name) || packages.some((item) => name === `${item}.blockmap`),
@@ -115,7 +133,7 @@ export async function inspectPackageOutputs(
     const content = await bytes(path.join(dist, name))
     files.push({ name, bytes: content.length, sha256: hash(content) })
   }
-  await verifyUpdater(dist, metadata, files, identity)
+  await verifyUpdater(path.join(dist, metadata), dist, packages, identity)
   return files
 }
 async function bytes(file: string) {
@@ -143,9 +161,7 @@ export async function assembleCohort(root: string, identity: Identity) {
       ) ||
       !Array.isArray(receipt.files) ||
       new Set(receipt.files.map((x) => x.name)).size !== receipt.files.length ||
-      [...required(target), updater(target, identity.channel)].some(
-        (name) => !receipt.files.some((file) => file.name === name),
-      )
+      [...required(target), updater(target)].some((name) => !receipt.files.some((file) => file.name === name))
     )
       throw fail()
     const names = await fs.readdir(directory)
@@ -161,11 +177,9 @@ export async function assembleCohort(root: string, identity: Identity) {
         !/^[a-f0-9]{64}$/.test(file.sha256) ||
         !Number.isSafeInteger(file.bytes) ||
         file.bytes <= 0 ||
-        ![
-          ...required(target),
-          ...required(target).map((name) => `${name}.blockmap`),
-          updater(target, identity.channel),
-        ].includes(file.name)
+        ![...required(target), ...required(target).map((name) => `${name}.blockmap`), updater(target)].includes(
+          file.name,
+        )
       )
         throw fail()
       const content = await bytes(path.join(directory, file.name))
@@ -173,7 +187,7 @@ export async function assembleCohort(root: string, identity: Identity) {
       if (files.some((existing) => existing.name === file.name)) throw fail()
       files.push({ ...file, producer: target })
     }
-    await verifyUpdater(directory, updater(target, identity.channel), receipt.files, identity)
+    await verifyUpdater(path.join(directory, updater(target)), directory, required(target), identity)
   }
   return { schema: 1, identity, files, acceptance: "pending", publication: "not-authorized" }
 }
@@ -181,7 +195,7 @@ export async function assembleCohort(root: string, identity: Identity) {
 // Pure artifact preparation: approval and publication belong to the separate
 // manual workflow. In particular, a green package build is not user acceptance.
 export async function stageRelease(root: string, output: string, identity: Identity, candidateSha256: string) {
-  if (identity.channel !== "beta" || !/^[a-f0-9]{64}$/.test(candidateSha256)) throw fail()
+  if (identity.channel !== "prod" || !/^[a-f0-9]{64}$/.test(candidateSha256)) throw fail()
   const manifest = await bytes(path.join(root, "cohort.json"))
   if (hash(manifest) !== candidateSha256) throw fail()
   const cohort = await assembleCohort(root, identity)
@@ -189,9 +203,7 @@ export async function stageRelease(root: string, output: string, identity: Ident
   const metadata = await Promise.all(
     targets.map(async (target) => ({
       target,
-      value: Bun.YAML.parse(
-        (await bytes(path.join(root, target, updater(target, identity.channel)))).toString(),
-      ) as Updater,
+      value: Bun.YAML.parse((await bytes(path.join(root, target, updater(target)))).toString()) as Updater,
     })),
   )
   const windows = metadata.find((item) => item.target === "windows-x64")!.value
@@ -204,46 +216,98 @@ export async function stageRelease(root: string, output: string, identity: Ident
     path: intel.files[0].url,
     sha512: intel.files[0].sha512,
   }
-  // Refuse an existing destination; never clobber an earlier staged candidate.
-  await fs.mkdir(output)
+  const tag = `desktop-${identity.version}`
+  const compatibility = identity.version === "1.15.52" ? `desktop-beta-${identity.version}` : null
+  // Local retries may fill missing files, but must never overwrite or adopt
+  // conflicting bytes, links or an unexpected member of either release.
+  const stable = path.join(output, "stable")
+  const bridge = path.join(output, "compatibility")
+  await stageDirectory(output, compatibility ? ["stable", "compatibility"] : ["stable"])
+  const packages = cohort.files.filter((item) => !item.name.endsWith(".yml"))
+  const channels = [
+    ["latest.yml", windows, required("windows-x64")],
+    ["latest-mac.yml", mac, [...required("darwin-x64"), ...required("darwin-arm64")]],
+    ["latest-linux.yml", linux, required("linux-x64")],
+  ] as const
+  await stageDirectory(stable, [
+    ...packages.map((p) => p.name),
+    ...channels.map(([name]) => name),
+    "release-manifest.json",
+    "SHA256SUMS",
+  ])
+  if (compatibility)
+    await stageDirectory(
+      bridge,
+      channels.map(([name]) => name.replace("latest", "beta")),
+    )
+  const compatibilityFiles: File[] = []
   const files: File[] = []
-  for (const file of cohort.files.filter((item) => !item.name.endsWith(".yml"))) {
+  for (const file of packages) {
     const content = await bytes(path.join(root, file.producer, file.name))
     if (content.length !== file.bytes || hash(content) !== file.sha256) throw fail()
-    await fs.writeFile(path.join(output, file.name), content, { flag: "wx" })
-    files.push({ name: file.name, bytes: content.length, sha256: hash(content) })
+    await stageFile(stable, file.name, content)
+    files.push({ name: file.name, bytes: file.bytes, sha256: file.sha256 })
   }
-  for (const [name, value] of [
-    ["beta.yml", windows],
-    ["beta-mac.yml", mac],
-    ["beta-linux.yml", linux],
-  ] as const) {
+  for (const [name, value, packages] of channels) {
     const content = Buffer.from(Bun.YAML.stringify(value))
-    await fs.writeFile(path.join(output, name), content, { flag: "wx" })
-    const platformFiles = files.filter((file) => value.files.some((entry) => entry.url === file.name))
-    await verifyUpdater(output, name, platformFiles, identity)
+    await stageFile(stable, name, content)
+    await verifyUpdater(path.join(stable, name), stable, packages, identity)
     files.push({ name, bytes: content.length, sha256: hash(content) })
+    if (compatibility) {
+      // GenericProvider resolves these against the beta release. Absolute URLs
+      // keep the packages AND their new blockmaps on the same immutable stable tag.
+      const base = `https://github.com/${identity.repository}/releases/download/${tag}/`
+      const pointer = {
+        ...value,
+        files: value.files.map((entry) => ({ ...entry, url: base + entry.url })),
+        ...(value.path === undefined ? {} : { path: base + value.path }),
+      }
+      const filename = name.replace("latest", "beta")
+      const data = Buffer.from(Bun.YAML.stringify(pointer))
+      await stageFile(bridge, filename, data)
+      await verifyUpdater(path.join(bridge, filename), stable, packages, identity, base)
+      compatibilityFiles.push({ name: filename, bytes: data.length, sha256: hash(data) })
+    }
   }
   files.sort((a, b) => a.name.localeCompare(b.name, "en"))
   const release = {
     schema: 1,
     identity,
-    tag: `desktop-beta-${identity.version}`,
+    tag,
+    compatibility,
+    compatibilityFiles,
     candidateSha256,
     files,
     acceptance: "pending",
     publication: "not-authorized",
   }
   const releaseBytes = Buffer.from(JSON.stringify(release, null, 2) + "\n")
-  await fs.writeFile(path.join(output, "release-manifest.json"), releaseBytes, { flag: "wx" })
-  await fs.writeFile(
-    path.join(output, "SHA256SUMS"),
-    [...files.map((file) => `${file.sha256}  ${file.name}`), `${hash(releaseBytes)}  release-manifest.json`]
-      .sort()
-      .join("\n") + "\n",
-    { flag: "wx" },
+  await stageFile(stable, "release-manifest.json", releaseBytes)
+  await stageFile(
+    stable,
+    "SHA256SUMS",
+    Buffer.from(
+      [...files.map((file) => `${file.sha256}  ${file.name}`), `${hash(releaseBytes)}  release-manifest.json`]
+        .sort()
+        .join("\n") + "\n",
+    ),
   )
   return release
+}
+
+async function stageDirectory(dir: string, allowed: string[]) {
+  await fs.mkdir(dir, { recursive: true })
+  if (!(await fs.lstat(dir)).isDirectory() || (await fs.readdir(dir)).some((name) => !allowed.includes(name)))
+    throw fail()
+}
+
+async function stageFile(dir: string, name: string, content: Buffer) {
+  const file = path.join(dir, name)
+  try {
+    await fs.writeFile(file, content, { flag: "wx" })
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST" || !(await bytes(file)).equals(content)) throw error
+  }
 }
 
 export async function collectCohort(root: string, identity: Identity) {
@@ -263,7 +327,7 @@ export async function collectCohort(root: string, identity: Identity) {
 }
 
 const git = (...args: string[]) => execFileSync("git", args, { encoding: "utf8" }).trim()
-async function currentIdentity(): Promise<Identity> {
+async function currentIdentity(options: { allowBeta?: boolean } = {}): Promise<Identity> {
   const desktop = JSON.parse(await fs.readFile(new URL("../package.json", import.meta.url), "utf8"))
   const cli = JSON.parse(await fs.readFile(new URL("../../opencode/package.json", import.meta.url), "utf8"))
   const value = {
@@ -275,14 +339,18 @@ async function currentIdentity(): Promise<Identity> {
     run: process.env.GITHUB_RUN_ID ?? "",
     attempt: process.env.GITHUB_RUN_ATTEMPT ?? "",
   }
-  return validateIdentity(value, {
-    head: git("rev-parse", "HEAD"),
-    tree: value.tree,
-    dirty: !!git("status", "--porcelain", "--untracked-files=normal"),
-    workflowSource: process.env.GITHUB_SHA ?? "",
-    desktopVersion: desktop.version,
-    cliVersion: cli.version,
-  })
+  return validateIdentity(
+    value,
+    {
+      head: git("rev-parse", "HEAD"),
+      tree: value.tree,
+      dirty: !!git("status", "--porcelain", "--untracked-files=normal"),
+      workflowSource: process.env.GITHUB_SHA ?? "",
+      desktopVersion: desktop.version,
+      cliVersion: cli.version,
+    },
+    options,
+  )
 }
 
 async function verifySigning(target: Target, dist: string, identity: Identity) {
@@ -360,8 +428,8 @@ async function record(root: string, target: Target, identity: Identity) {
     if (content.length !== file.bytes || hash(content) !== file.sha256) throw fail()
     files.push({ ...file, name })
   }
-  if (!files.some((file) => file.name === updater(target, identity.channel))) throw fail()
-  await verifyUpdater(directory, updater(target, identity.channel), files, identity)
+  if (!files.some((file) => file.name === updater(target))) throw fail()
+  await verifyUpdater(path.join(directory, updater(target)), directory, required(target), identity)
   const receipt: Receipt = {
     schema: 1,
     identity,
@@ -375,9 +443,9 @@ async function record(root: string, target: Target, identity: Identity) {
 }
 
 if (import.meta.main) {
-  const identity = await currentIdentity()
   const [mode, directory, target] = process.argv.slice(2)
-  if (mode === "admit") {
+  const identity = await currentIdentity({ allowBeta: mode === "admit-cli" })
+  if (mode === "admit" || mode === "admit-cli") {
     if (process.env.GITHUB_OUTPUT) await fs.appendFile(process.env.GITHUB_OUTPUT, `version=${identity.version}\n`)
     console.log(JSON.stringify(identity))
   } else if (mode === "record" && directory && target) {
