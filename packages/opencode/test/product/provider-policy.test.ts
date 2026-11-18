@@ -79,7 +79,7 @@ describe("BharatCode shipped provider policy", () => {
 
   test("renders a catalog access denial instead of inventing a missing model", () => {
     const message =
-      "BharatCode App is only available to Pro subscribers. If you're a student, please sign in with your student email id instead or reach out at help@bharatcode.ai to verify your student status. BharatCode Chat is free for all users, visit chat.bharatcode.ai."
+      "Coding access requires BharatCode Lite, Pro or verified student status. Students: verify your college email at https://bharatcode.ai/account#student-email-title, then refresh Account status and retry. Already subscribed? Check that you signed in with the right account."
     const error = new Provider.ModelNotFoundError({
       providerID: ProviderV2.ID.make("bharatcode"),
       modelID: ModelV2.ID.make(CODING_MODEL_ID),

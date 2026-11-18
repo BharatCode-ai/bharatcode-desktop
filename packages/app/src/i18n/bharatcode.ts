@@ -100,6 +100,9 @@ export const BHARATCODE_ENGLISH = {
   "session.goal.error": "Could not confirm the goal update. Check your connection, then try again.",
   "model.recovery.checking": "Checking…",
   "model.recovery.retry": "Retry connection",
+  "model.recovery.verifyStudent": "Verify student email",
+  "model.recovery.afterVerification":
+    "Sign in on the website with the same college email and verify its code. Then choose Refresh status in Desktop Settings > Account and retry your message.",
   "model.recovery.restored": "Connection restored. Send your message again when ready.",
   "model.recovery.unavailable": "Models are still unavailable. Check Account settings or retry.",
   "model.recovery.signInIncomplete": "Sign-in has not completed. Try again.",

@@ -1,7 +1,7 @@
-import { createEffect, onCleanup, Show } from "solid-js"
+import { createEffect, onCleanup, Show, Switch, Match } from "solid-js"
 import { createStore } from "solid-js/store"
 import { Button } from "@opencode-ai/ui/button"
-import { modelRecoveryAction } from "@opencode-ai/core/util/model-recovery"
+import { modelRecoveryAction, STUDENT_VERIFICATION_URL } from "@opencode-ai/core/util/model-recovery"
 import { useLanguage } from "@/context/language"
 import { usePlatform } from "@/context/platform"
 import { useSDK } from "@/context/sdk"
@@ -10,6 +10,35 @@ import { ServerConnection } from "@/context/server"
 import { checkModelConnection, type ModelRecoveryResult } from "./model-recovery-check"
 
 export function ModelRecovery(props: { message: string; modelID?: string; requestKey: string }) {
+  const platform = usePlatform()
+  const language = useLanguage()
+  return (
+    <Switch>
+      <Match when={modelRecoveryAction(props.message) === "verify-student"}>
+        <div class="flex flex-col gap-2 mt-3" data-component="student-access-recovery">
+          <a
+            href={STUDENT_VERIFICATION_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            class="text-text-strong underline underline-offset-4 focus-visible:outline-2"
+            onClick={(event) => {
+              event.preventDefault()
+              platform.openExternal(STUDENT_VERIFICATION_URL)
+            }}
+          >
+            {language.t("model.recovery.verifyStudent")}
+          </a>
+          <p>{language.t("model.recovery.afterVerification")}</p>
+        </div>
+      </Match>
+      <Match when={modelRecoveryAction(props.message)}>
+        <ConnectionRecovery {...props} />
+      </Match>
+    </Switch>
+  )
+}
+
+function ConnectionRecovery(props: { message: string; modelID?: string; requestKey: string }) {
   const platform = usePlatform()
   const language = useLanguage()
   const sdk = useSDK()
