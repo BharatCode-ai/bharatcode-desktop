@@ -225,9 +225,10 @@ const boot = Effect.fn("test.boot")(function* () {
   return { processors, session, provider }
 })
 
-for (const mode of ["recover-after-tool", "exhaust", "cancel-backoff", "tool-completed"] as const) {
+for (const mode of ["recover-after-tool", "exhaust", "cancel-backoff", "tool-completed", "tool-pending"] as const) {
   let requests = 0
   let executions = 0
+  let pendingExecution: Promise<unknown> | undefined
   const histories: LLM.StreamInput["messages"][] = []
   const failure = new BharatCodeAccount.TransportError({
     operation: "authenticated request",
@@ -241,6 +242,20 @@ for (const mode of ["recover-after-tool", "exhaust", "cancel-backoff", "tool-com
         Stream.suspend((): Stream.Stream<LLMEvent, BharatCodeAccount.TransportError> => {
           requests++
           histories.push(input.messages)
+          if (mode === "tool-pending")
+            return Stream.fromEffect(
+              Effect.sync(() => {
+                pendingExecution = Promise.resolve(
+                  input.tools.lookup.execute!(
+                    { query: "once" },
+                    {
+                      toolCallId: "pending-tool",
+                      messages: input.messages,
+                    },
+                  ),
+                ).catch(() => undefined)
+              }),
+            ).pipe(Stream.flatMap(() => Stream.fail(failure)))
           if (requests === 1 && (mode === "recover-after-tool" || mode === "tool-completed")) {
             return Stream.make(
               LLMEvent.stepStart({ index: 0 }),
@@ -291,8 +306,26 @@ for (const mode of ["recover-after-tool", "exhaust", "cancel-backoff", "tool-com
         }),
     }),
   )
-  const recovery = testEffect(LayerNode.compile(root, [...replacements, [LLM.node, controlled]]))
-  recovery.effect(
+  const recovery = testEffect(
+    LayerNode.compile(root, [
+      ...replacements,
+      [LLM.node, controlled],
+      ...(mode === "tool-pending"
+        ? [
+            [
+              Snapshot.node,
+              Layer.mock(Snapshot.Service, {
+                init: () => Effect.void,
+                cleanup: () => Effect.void,
+                track: () => Effect.never,
+              }),
+            ] as const,
+          ]
+        : []),
+    ]),
+  )
+  const test = mode === "tool-pending" ? recovery.live : recovery.effect
+  test(
     `BharatCode connection recovery: ${mode}`,
     () =>
       provideTmpdirInstance(
@@ -332,6 +365,15 @@ for (const mode of ["recover-after-tool", "exhaust", "cancel-backoff", "tool-com
               system: [],
               messages: [{ role: "user", content: "continue" }],
               tools,
+            }
+            if (mode === "tool-pending") {
+              expect(yield* firstHandle.process(initial).pipe(Effect.timeout("1 second"))).toBe("stop")
+              yield* Effect.promise(() => pendingExecution!)
+              expect(requests).toBe(1)
+              expect(executions).toBe(0)
+              expect(firstHandle.message.error?.name).toBe("APIError")
+              yield* off
+              return
             }
             if (mode === "tool-completed") {
               expect(yield* firstHandle.process(initial)).toBe("stop")

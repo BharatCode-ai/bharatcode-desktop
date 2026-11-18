@@ -165,13 +165,13 @@ const layer = Layer.effect(
                 ...tool,
                 execute: async (...args: Parameters<typeof execute>) => {
                   if (!active || args[1].abortSignal?.aborted) throw new DOMException("Aborted", "AbortError")
+                  // Include tools waiting for a snapshot: that wait can overlap
+                  // a stream failure and must not allow the turn to be replayed.
+                  toolStarted = true
                   // The SDK can invoke tools before emitting step-start. Guard the actual
                   // execution boundary, not the event notification, while text streams freely.
                   await bridge.promise(ensureSnapshot())
                   if (!active || args[1].abortSignal?.aborted) throw new DOMException("Aborted", "AbortError")
-                  // A failed stream may already have caused a side effect. Never
-                  // replay that turn automatically, even if the tool has settled.
-                  toolStarted = true
                   return execute(...args)
                 },
               },
