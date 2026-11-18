@@ -192,7 +192,39 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
     return { type: "json", value: output as never }
   }
 
-  for (const msg of input) {
+  const messages = input.filter(
+    (msg) =>
+      msg.info.role !== "assistant" ||
+      !msg.info.error ||
+      (AbortedError.isInstance(msg.info.error) &&
+        msg.parts.some((p) => p.type !== "step-start" && p.type !== "reasoning")),
+  )
+  // Count the media actually replayed, not files stored on disk or cleared by compaction.
+  // Work on the outbound representation only: the original session remains recoverable.
+  let omit = 0
+  if (model.providerID === "bharatcode" && !options?.stripMedia) {
+    for (const msg of messages) {
+      for (const part of msg.parts) {
+        if (msg.info.role === "user" && part.type === "file" && part.mime.startsWith("image/")) omit++
+        if (
+          msg.info.role === "assistant" &&
+          part.type === "tool" &&
+          part.state.status === "completed" &&
+          !part.state.time.compacted
+        )
+          omit += part.state.attachments?.filter((a) => a.mime.startsWith("image/")).length ?? 0
+      }
+    }
+    omit -= 8
+  }
+  const omitImage = (mime: string) => {
+    if (omit <= 0 || !mime.startsWith("image/")) return false
+    omit--
+    return true
+  }
+  const placeholder = (name?: string) => `[Earlier image: ${name?.split(/[\\/]/).pop() || "unnamed image"}]`
+
+  for (const msg of messages) {
     if (msg.parts.length === 0) continue
 
     if (msg.info.role === "user") {
@@ -210,7 +242,9 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
           })
         // text/plain and directory files are converted into text parts, ignore them
         if (part.type === "file" && part.mime !== "text/plain" && part.mime !== "application/x-directory") {
-          if (options?.stripMedia && isMedia(part.mime)) {
+          if (omitImage(part.mime)) {
+            userMessage.parts.push({ type: "text", text: placeholder(part.filename) })
+          } else if (options?.stripMedia && isMedia(part.mime)) {
             userMessage.parts.push({
               type: "text",
               text: `[Attached ${part.mime}: ${part.filename ?? "file"}]`,
@@ -245,15 +279,6 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
       const differentModel = `${model.providerID}/${model.id}` !== `${msg.info.providerID}/${msg.info.modelID}`
       const media: Array<{ mime: string; url: string; filename?: string }> = []
 
-      if (
-        msg.info.error &&
-        !(
-          AbortedError.isInstance(msg.info.error) &&
-          msg.parts.some((part) => part.type !== "step-start" && part.type !== "reasoning")
-        )
-      ) {
-        continue
-      }
       const assistantMessage: UIMessage = {
         id: msg.info.id,
         role: "assistant",
@@ -290,10 +315,22 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
         if (part.type === "tool") {
           toolNames.add(part.tool)
           if (part.state.status === "completed") {
-            const outputText = part.state.time.compacted
+            const original = part.state.time.compacted
               ? "[Old tool result content cleared]"
               : truncateToolOutput(part.state.output, options?.toolOutputMaxChars)
-            const attachments = part.state.time.compacted || options?.stripMedia ? [] : (part.state.attachments ?? [])
+            const names: string[] = []
+            const path =
+              part.tool === "read" && typeof part.state.input.filePath === "string"
+                ? part.state.input.filePath
+                : undefined
+            const attachments = (
+              part.state.time.compacted || options?.stripMedia ? [] : (part.state.attachments ?? [])
+            ).filter((a) => {
+              if (!omitImage(a.mime)) return true
+              names.push(placeholder(a.filename || path))
+              return false
+            })
+            const outputText = names.length ? [original, ...names].join("\n") : original
 
             // For providers that don't support media in tool results, extract media files
             // (images, PDFs) to be sent as a separate user message
