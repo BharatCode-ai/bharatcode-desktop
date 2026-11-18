@@ -18,6 +18,7 @@ import type { MessageV2 } from "./message-v2"
 import { Plugin } from "@/plugin"
 import { Permission } from "@/permission"
 import { EventV2Bridge } from "@/event-v2-bridge"
+import { PerformanceTrace } from "@opencode-ai/core/performance-trace"
 import { EventV2 } from "@opencode-ai/core/event"
 import { Wildcard } from "@/util/wildcard"
 import { SessionID } from "@/session/schema"
@@ -246,6 +247,10 @@ const live: Layer.Layer<
             "llm.provider": input.model.providerID,
             "llm.model": input.model.id,
           })
+          PerformanceTrace.mark(input.sessionID, "network_start", {
+            modelID: input.model.id,
+            providerID: input.model.providerID,
+          })
           return {
             type: "native" as const,
             stream: native.stream,
@@ -272,6 +277,10 @@ const live: Layer.Layer<
         "llm.runtime": "ai-sdk",
         "llm.provider": input.model.providerID,
         "llm.model": input.model.id,
+      })
+      PerformanceTrace.mark(input.sessionID, "network_start", {
+        modelID: input.model.id,
+        providerID: input.model.providerID,
       })
       // Default runtime path: AI SDK owns provider execution and tool dispatch;
       // LLMAISDK.toLLMEvents below normalizes fullStream parts for the processor.
@@ -365,11 +374,38 @@ const live: Layer.Layer<
 
             const result = yield* run({ ...input, abort: ctrl.signal })
 
-            if (result.type === "native") return result.stream
+            if (result.type === "native") {
+              return result.stream.pipe(
+                Stream.tap((event) =>
+                  Effect.sync(() => {
+                    if (
+                      event.type === "text-start" ||
+                      event.type === "text-delta" ||
+                      event.type === "reasoning-start" ||
+                      event.type === "reasoning-delta" ||
+                      event.type === "tool-call" ||
+                      event.type === "tool-input-start" ||
+                      event.type === "tool-input-delta"
+                    ) {
+                      PerformanceTrace.mark(input.sessionID, "first_stream_event")
+                    }
+                    if (
+                      event.type === "text-delta" ||
+                      event.type === "reasoning-delta" ||
+                      event.type === "tool-call" ||
+                      event.type === "tool-input-start" ||
+                      event.type === "tool-input-delta"
+                    ) {
+                      PerformanceTrace.mark(input.sessionID, "first_token_parsed")
+                    }
+                  }),
+                ),
+              )
+            }
 
             // Adapter seam: both runtimes expose the same LLMEvent stream. Native
             // already returns one; AI SDK streams are converted here.
-            const state = LLMAISDK.adapterState()
+            const state = LLMAISDK.adapterState(input.sessionID)
             return Stream.fromAsyncIterable(result.result.fullStream, (e) =>
               e instanceof Error ? e : new Error(String(e)),
             ).pipe(

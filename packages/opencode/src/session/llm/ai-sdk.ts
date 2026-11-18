@@ -3,12 +3,14 @@ import { Effect, Schema } from "effect"
 import { type streamText } from "ai"
 import { errorMessage } from "@/util/error"
 import { ProviderError } from "@/provider/error"
+import { PerformanceTrace } from "@opencode-ai/core/performance-trace"
 
 type Result = Awaited<ReturnType<typeof streamText>>
 type AISDKEvent = Result["fullStream"] extends AsyncIterable<infer T> ? T : never
 
-export function adapterState() {
+export function adapterState(sessionID?: string) {
   return {
+    sessionID,
     step: 0,
     text: 0,
     reasoning: 0,
@@ -74,10 +76,28 @@ function currentReasoningID(state: ReturnType<typeof adapterState>, id: string |
   return state.currentReasoningID
 }
 
+function isContentOrToolEvent(type: string): boolean {
+  switch (type) {
+    case "text-start":
+    case "text-delta":
+    case "reasoning-start":
+    case "reasoning-delta":
+    case "tool-input-start":
+    case "tool-input-delta":
+    case "tool-call":
+      return true
+    default:
+      return false
+  }
+}
+
 export function toLLMEvents(
   state: ReturnType<typeof adapterState>,
   event: AISDKEvent,
 ): Effect.Effect<ReadonlyArray<LLMEvent>, unknown> {
+  if (state.sessionID && isContentOrToolEvent(event.type)) {
+    PerformanceTrace.mark(state.sessionID, "first_stream_event")
+  }
   switch (event.type) {
     case "start":
       return Effect.succeed([])
@@ -122,7 +142,7 @@ export function toLLMEvents(
         ]
         // Reset so the adapter can be reused for a follow-up stream without leaking
         // counters or block IDs. adapterState() is the single source of truth for shape.
-        Object.assign(state, adapterState())
+        Object.assign(state, adapterState(state.sessionID))
         return events
       })
 
@@ -138,6 +158,9 @@ export function toLLMEvents(
       })
 
     case "text-delta":
+      if (state.sessionID) {
+        PerformanceTrace.mark(state.sessionID, "first_token_parsed")
+      }
       return Effect.succeed([
         LLMEvent.textDelta({
           id: currentTextID(state, event.id),
@@ -170,6 +193,9 @@ export function toLLMEvents(
       })
 
     case "reasoning-delta":
+      if (state.sessionID) {
+        PerformanceTrace.mark(state.sessionID, "first_token_parsed")
+      }
       return Effect.succeed([
         LLMEvent.reasoningDelta({
           id: currentReasoningID(state, event.id),
@@ -191,6 +217,9 @@ export function toLLMEvents(
       })
 
     case "tool-input-start":
+      if (state.sessionID) {
+        PerformanceTrace.mark(state.sessionID, "first_token_parsed")
+      }
       return Effect.sync(() => {
         state.toolNames[event.id] = event.toolName
         return [
@@ -203,6 +232,9 @@ export function toLLMEvents(
       })
 
     case "tool-input-delta":
+      if (state.sessionID) {
+        PerformanceTrace.mark(state.sessionID, "first_token_parsed")
+      }
       return Effect.succeed([
         LLMEvent.toolInputDelta({
           id: event.id,
@@ -221,6 +253,9 @@ export function toLLMEvents(
       ])
 
     case "tool-call":
+      if (state.sessionID) {
+        PerformanceTrace.mark(state.sessionID, "first_token_parsed")
+      }
       return Effect.sync(() => {
         state.toolNames[event.toolCallId] = event.toolName
         return [
