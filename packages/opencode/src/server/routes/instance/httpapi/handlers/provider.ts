@@ -3,6 +3,7 @@ import { Config } from "@/config/config"
 import { ModelsDev } from "@opencode-ai/core/models-dev"
 import { Provider } from "@/provider/provider"
 import { Auth } from "@/auth"
+import { usable } from "@/session/overflow"
 import { ProductPolicy } from "../../../../../product/policy"
 
 import { mapValues } from "remeda"
@@ -42,10 +43,22 @@ export const providerHandlers = HttpApiBuilder.group(InstanceHttpApi, "provider"
     const policy = yield* ProductPolicy.Service
 
     const list = Effect.fn("ProviderHttpApi.list")(function* () {
+      const settings = yield* cfg.get()
+      const toPublic = (item: Provider.Info): Provider.Info => {
+        const info = Provider.toPublicInfo(item)
+        if (settings.compaction?.auto === false) return info
+        return {
+          ...info,
+          models: mapValues(info.models, (model) => {
+            const compaction = usable({ cfg: settings, model })
+            return compaction > 0 ? { ...model, limit: { ...model.limit, compaction } } : model
+          }),
+        }
+      }
       if (policy.isShipped) {
         const connected = yield* provider.list()
         return {
-          all: Object.values(connected).map(Provider.toPublicInfo),
+          all: Object.values(connected).map(toPublic),
           default: Provider.defaultModelIDs(connected),
           connected: Object.keys(connected),
         }
@@ -65,7 +78,7 @@ export const providerHandlers = HttpApiBuilder.group(InstanceHttpApi, "provider"
         connected,
       )
       return {
-        all: Object.values(providers).map(Provider.toPublicInfo),
+        all: Object.values(providers).map(toPublic),
         default: Provider.defaultModelIDs(providers),
         connected: Object.keys(providers).filter((id) => id in connected || credentials[id]),
       }
