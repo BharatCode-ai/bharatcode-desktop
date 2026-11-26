@@ -12,6 +12,9 @@ async function setup(t, options = {}) {
   const upstream = createServer((req, res) => {
     seen.push({ url: req.url, method: req.method, headers: req.headers })
     res.setHeader('set-cookie', 'bc_test=sidecar-private; Domain=.bharatcode.ai; Secure; HttpOnly')
+    if (options.rejectSidecar?.()) {
+      res.writeHead(401); res.end('Sidecar authorization required'); return
+    }
     if (options.asyncAdmission && req.url.startsWith('/session/ses_one/prompt_async?')) {
       req.resume()
       admittedAt = Date.now() + 250
@@ -100,6 +103,15 @@ test('scan needs explicit desktop approval, and one-use code cannot be claimed t
   const result = await (await c.post('/mobile/v1/claim/status', claim)).json()
   assert.equal(result.state, 'approved')
   assert.ok(result.token.length >= 40)
+  // The first approval response may be lost in transit.
+  const retry = await c.post('/mobile/v1/claim/status', claim)
+  assert.equal(retry.status, 200)
+  const retried = await retry.json()
+  assert.equal(retried.token === result.token, true)
+  assert.equal(retried.device.id, result.device.id)
+  assert.equal(c.gateway.devices().length, 1)
+  const health = await fetch(c.origin + '/mobile/v1/health', { headers: { authorization: 'Bearer ' + result.token } })
+  assert.equal(health.status, 200)
   assert.equal((await c.post('/mobile/v1/claim/status', claim)).status, 410)
 })
 
@@ -329,4 +341,28 @@ test('public link claims are bounded, expire, and a refreshed invitation invalid
   await assert.rejects(c.gateway.approve(first.claimID))
   c.expire()
   assert.equal((await c.post('/mobile/v1/claim', body)).status, 401)
+})
+
+for (const runtime of ['desktop', undefined]) {
+  test(`sidecar rejection preserves the approved pairing (${runtime ?? 'proxy'})`, async t => {
+    let unavailable = true
+    const c = await setup(t, { runtime, rejectSidecar: () => unavailable })
+    const { token, device } = await c.pair()
+    const get = path => fetch(c.origin + path, { headers: { authorization: 'Bearer ' + token } })
+    assert.equal((await get('/mobile/v1/health')).status, 200)
+    assert.equal((await get('/api/session')).status, 502)
+    unavailable = false
+    assert.equal((await get('/api/session')).status, 200)
+    await c.gateway.revoke(device.id)
+    const revoked = await get('/api/session')
+    assert.equal(revoked.status, 401)
+    assert.deepEqual(await revoked.json(), { error: 'Device authorization required' })
+  })
+}
+
+test('revocation before the phone receives approval prevents credential delivery', async t => {
+  const c = await setup(t)
+  const { claim, device } = await c.pair()
+  await c.gateway.revoke(device.id)
+  assert.equal((await c.post('/mobile/v1/claim/status', claim)).status, 410)
 })

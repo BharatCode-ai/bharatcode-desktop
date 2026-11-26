@@ -52,8 +52,16 @@ export async function createGateway(options) {
     const claim = claims.get(id)
     if (claim?.state === 'waiting') claim.state = 'declined'
   }
+  function consumeApproval(deviceID) {
+    for (const claim of claims.values()) {
+      if (claim.state !== 'approved' || claim.device.id !== deviceID) continue
+      claim.state = 'consumed'
+      delete claim.token
+    }
+  }
   async function revoke(id) {
     await registry.remove(id)
+    consumeApproval(id)
     for (const abort of active.get(id) ?? []) abort()
     active.delete(id)
   }
@@ -79,16 +87,16 @@ export async function createGateway(options) {
       if (req.method === 'POST' && req.url === '/mobile/v1/claim/status') {
         const body = await jsonBody(req), claim = claimFor(body)
         if (claim.state === 'approved') {
-          const result = { state: 'approved', token: claim.token, device: claim.device, desktop: metadata() }
-          claim.state = 'consumed'
-          delete claim.token
-          return reply(res, 200, result)
+          if (!registry.authenticate(claim.token)) throw status(410, 'Pairing already consumed')
+          // Retry delivery of the same approved token until the phone uses it.
+          return reply(res, 200, { state: 'approved', token: claim.token, device: claim.device, desktop: metadata() })
         }
         return reply(res, 200, { state: claim.state })
       }
       const bearer = /^Bearer ([A-Za-z0-9_-]{40,})$/.exec(req.headers.authorization ?? '')?.[1]
       const device = bearer && registry.authenticate(bearer)
       if (!device) throw status(401, 'Device authorization required')
+      consumeApproval(device.id)
       if (req.method === 'GET' && req.url === '/mobile/v1/health') return reply(res, 200, {
         protocol: 1, desktop: metadata(), capabilities: { sessions: true, prompts: true, replay: options.runtime !== 'desktop', permissions: true, questions: true, models: true, live: true, changes: true, files: true, terminal: false },
       })
@@ -177,7 +185,11 @@ export async function createGateway(options) {
       }, body: body === undefined ? undefined : JSON.stringify(body), redirect: 'error',
       signal: AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(20_000)]),
     })
-    if (!response.ok) { await response.body?.cancel(); throw status(response.status, 'Computer could not complete the request') }
+    if (!response.ok) {
+      await response.body?.cancel()
+      if (response.status === 401) throw status(502, 'Desktop server authorization is unavailable')
+      throw status(response.status, 'Computer could not complete the request')
+    }
     if (!response.body) return { data: undefined, cursor: response.headers.get('x-next-cursor') ?? undefined }
     const chunks = []; let size = 0
     for await (const chunk of response.body) { size += chunk.length; if (size > 16_777_216) throw status(413, 'Computer response is too large'); chunks.push(chunk) }
@@ -191,6 +203,7 @@ export async function createGateway(options) {
     if (body) { headers['content-type'] = 'application/json'; headers['content-length'] = body.length }
     const remote = httpRequest(target, { method: req.method, headers }, incoming => {
       if (incoming.statusCode >= 300 && incoming.statusCode < 400) { incoming.destroy(); reply(res, 502, { error: 'Unexpected sidecar redirect' }); return }
+      if (incoming.statusCode === 401) { incoming.destroy(); reply(res, 502, { error: 'Desktop server authorization is unavailable' }); return }
       const contentType = incoming.headers['content-type'] ?? 'application/json'
       if (target.pathname === '/api/model' || target.pathname === '/api/agent') {
         const chunks = []; let length = 0
